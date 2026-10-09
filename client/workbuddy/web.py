@@ -86,6 +86,21 @@ def start_settings_server(app, port):
                 except Exception:
                     self._json(200, {"enabled": False, "unsupported": True})
                 return
+            if path == "/api/export":
+                # 导出当前生效配置为 JSON（前端触发浏览器下载）。
+                # 与 /api/save 同源校验结果，保证"导出→导入"可往返。
+                profile = app.status_snapshot().get("profile", {})
+                body = json.dumps(profile, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="workbuddy-profile-'
+                                 f'{time.strftime("%m%d-%H%M")}.json"')
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path not in FILES:
                 self._json(404, {"error": "未找到页面"})
                 return
@@ -126,6 +141,11 @@ def start_settings_server(app, port):
                 elif path == "/api/sync":
                     app.request_sync()
                     self._json(200, {"status": "待同步"})
+                elif path == "/api/import":
+                    # 导入外部配置：复用 save_profile 的严格校验 + 版本自增，
+                    # 非法配置会被 validate_profile 拒绝（400），与 /api/save 一致。
+                    self._json(200, {"profile": app.save_profile(data),
+                                     "status": "已导入，待同步"})
                 else:
                     self._json(404, {"error": "未找到接口"})
             except (ValueError, TypeError) as exc:
