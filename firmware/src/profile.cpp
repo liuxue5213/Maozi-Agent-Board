@@ -35,6 +35,7 @@ WidgetKind widget_kind(const char* name) {
     if (!strcmp(name, "alarm")) return W_ALARM;
     if (!strcmp(name, "weather")) return W_WEATHER;
     if (!strcmp(name, "countdown")) return W_COUNTDOWN;
+    if (!strcmp(name, "ai_cost")) return W_AI_COST;
     return W_INVALID;
 }
 

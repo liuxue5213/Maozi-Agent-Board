@@ -38,9 +38,13 @@ class App:
         self._online_since = 0.0
         self._last_ai_state = ""
         self.ai = None
+        self.usage_scanner = None
         if cfg.ai_watch:
             from .aiwatch import AIWatcher
             self.ai = AIWatcher(cfg)
+            from .aiwatch.usage import UsageScanner
+            self.usage_scanner = UsageScanner(cfg.roots)
+            self.usage_scanner.start()
         if cfg.serial:
             from .serial_link import SerialLink
             self.link = SerialLink(cfg, on_uplink=self._on_uplink)
@@ -103,6 +107,8 @@ class App:
 
     def stop(self):
         self._stop = True
+        if self.usage_scanner:
+            self.usage_scanner.stop()
         self.weather.stop()
 
     def _launch_app(self, app_id: str):
@@ -147,6 +153,7 @@ class App:
                     "profile_error": self.profile_error,
                     "applied_version": self.applied_version,
                     "fw_caps": self.fw_caps,
+                    "usage_error": self.usage_scanner.last_error if self.usage_scanner else "off",
                     "device": self.link.status if self.link else "串口关闭",
                     "tasks": self.tasks[:4], "telemetry": self.last}
 
@@ -247,6 +254,16 @@ class App:
         if state and state != self._last_ai_state:
             self.health.event("ai_state", state=state)
             self._last_ai_state = state
+        if self.usage_scanner:
+            snap = self.usage_scanner.snapshot()
+            day = snap["today"]
+            if day.get("total"):
+                t["ait"] = str(day["total"] // 1000)   # 今日总 token（K）
+            focus = self.tasks[0] if self.tasks else None
+            if focus:
+                model = (snap["models"].get(focus["tool"]) or "")[:15]
+                if model:
+                    t["aiu"] = f"{focus['tool']},{model},{focus['elapsed']}"
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
         t["remind"] = self._next_remind(now)

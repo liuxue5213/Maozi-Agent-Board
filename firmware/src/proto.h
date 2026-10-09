@@ -49,6 +49,10 @@ struct Telemetry {
     float wx_temp = NAN, wx_hi = NAN, wx_lo = NAN;
     int wx_code = -1;
     bool wx_valid = false;
+    // AI 用量（K tokens）
+    char ai_model[16] = "";
+    long ai_tok_out = -1;                      // 焦点会话本轮输出
+    long day_tok_total = -1;                   // 今日总 token
     // 主题色推送（CFG=bg:xxxxxx,card:...,accent:...,text:...,sub:...）
     uint32_t theme_bg = 0, theme_grad = 0, theme_card = 0, theme_accent = 0, theme_text = 0, theme_sub = 0;
     bool theme_changed = false;

@@ -5,7 +5,7 @@ import time
 _ORDER = [
     "time",
     "date",
-    "ai0", "ai1", "ai2", "ai3", "remind",
+    "ai0", "ai1", "ai2", "ai3", "aiu", "ait", "remind",
     "cpu", "cpufreq", "cputemp",
     "mem", "memused", "memtotal",
     "gpu", "gpumem", "gputemp",

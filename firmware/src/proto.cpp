@@ -124,6 +124,26 @@ void Proto::handle(const char* line) {
         handle_ai(key[2] - '0', v);
         return;
     }
+    if (!strcmp(key, "AIU")) {
+        // AIU=<tool>,<model>,<elapsed> → 提取模型名展示
+        char buf[64];
+        strncpy(buf, v, sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = 0;
+        char* c1 = strchr(buf, ',');
+        if (c1) {
+            char* c2 = strchr(c1 + 1, ',');
+            if (c2) *c2 = 0;
+            strncpy(t.ai_model, c1 + 1, sizeof(t.ai_model) - 1);
+            t.ai_model[sizeof(t.ai_model) - 1] = 0;
+        }
+        dirty = true;
+        return;
+    }
+    if (!strcmp(key, "AIT")) {
+        t.day_tok_total = atol(v) * 1000;   // 客户端单位 K → tokens
+        dirty = true;
+        return;
+    }
 
     if      (!strcmp(key, "CPU"))      t.cpu = atoi(v);
     else if (!strcmp(key, "CPUFREQ"))  t.cpufreq = atoi(v);

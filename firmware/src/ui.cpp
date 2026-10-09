@@ -300,6 +300,7 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
     case W_ALARM: title = "闹钟"; break;
     case W_WEATHER: title = "天气"; break;
     case W_COUNTDOWN: title = "倒计时"; break;
+    case W_AI_COST: title = "AI 用量"; break;
     default: break;
     }
     label(view.root, title, 20, sub_color, 12, 12, w - 24);
@@ -633,6 +634,24 @@ void render_generic(WidgetView& view) {
         if (isnan(latest.wx_hi)) strcpy(sub, "等待客户端推送");
         else snprintf(sub, sizeof(sub), "高 %.0f°  低 %.0f°", latest.wx_hi, latest.wx_lo);
         break;
+    case W_AI_COST: {
+        if (latest.day_tok_total < 0) {
+            strcpy(line, "今日暂无用量");
+            strcpy(sub, "AI 会话活动后显示");
+            break;
+        }
+        long k = latest.day_tok_total / 1000;
+        if (k >= 1000) snprintf(line, sizeof(line), "今日 %.1fM", k / 1000.0);
+        else snprintf(line, sizeof(line), "今日 %ldk", k);
+        if (latest.ai_model[0] && latest.ai_tok_out > 0)
+            snprintf(sub, sizeof(sub), "%s · 本轮 %.1fk", latest.ai_model,
+                     latest.ai_tok_out / 1000.0);
+        else if (latest.ai_model[0])
+            snprintf(sub, sizeof(sub), "%s", latest.ai_model);
+        else
+            sub[0] = 0;
+        break;
+    }
     case W_COUNTDOWN: {
         const ScheduleItem* found = nullptr;
         for (uint8_t i = 0; i < g_profile.countdown_count; ++i) {

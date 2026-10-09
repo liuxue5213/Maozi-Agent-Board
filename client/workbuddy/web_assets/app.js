@@ -3,7 +3,8 @@ const widgets = {
   ai_list: ['AI 会话', '✦', 4], hw_cards: ['硬件四卡', '▦', 4],
   clock: ['时钟', '◷', 1], environment: ['温湿度', '◉', 1],
   reminder_list: ['提醒列表', '☷', 2], today_calendar: ['今日日历', '▣', 2],
-  alarm: ['闹钟', '◴', 1], weather: ['天气', '☁', 1], countdown: ['倒计时', '⏳', 1]
+  alarm: ['闹钟', '◴', 1], weather: ['天气', '☁', 1], countdown: ['倒计时', '⏳', 1],
+  ai_cost: ['AI 用量', '∑', 1]
 };
 const stateNames = {THINKING:'思考中',GENERATING:'生成中',TOOL:'执行工具',BUILD:'构建中',DONE:'已完成',ERROR:'出错',WAIT_INPUT:'等你回复',ASK:'等待确认'};
 // 主题预设：card 与 bg 均已拉开亮度差（>=1.5:1），sub 均可读。
@@ -136,6 +137,11 @@ function previewWidget(key, container) {
   if(key==='countdown'){
     const item=(draft.countdowns||[]).find(x=>x.enabled);
     container.append(card('倒计时',item?`${item.date} ${item.time}`:'未设置',item?item.title:'添加目标日期'));
+  }
+  if(key==='ai_cost'){
+    const t=live.telemetry||{};
+    container.append(card('AI 用量',t.ait===undefined?'--':`今日 ${t.ait.split(',')[0]}k tok`,
+      t.aiu?t.aiu.split(',').slice(0,2).join(' · '):'AI 会话活动后显示'));
   }
 }
 function renderPreview(){
