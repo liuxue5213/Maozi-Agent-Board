@@ -423,8 +423,8 @@ void build_page(uint8_t index) {
     int rows = (slots + 1) / 2;
     if (rows < 1) rows = 1;
     if (rows > 2) rows = 2;
-    const int GAP = 8;
-    int card_h = (BODY_H - (rows - 1) * GAP) / rows;
+    const int GRID_GAP = 8;
+    int card_h = (BODY_H - (rows - 1) * GRID_GAP) / rows;
     for (uint8_t i = 0; i < config.count; ++i) {
         WidgetView& widget = page.widgets[i];
         widget.kind = config.widgets[i];
@@ -437,7 +437,7 @@ void build_page(uint8_t index) {
             bool wide = widget.kind == W_REMINDERS || widget.kind == W_CALENDAR;
             if (wide && (cursor % 2)) ++cursor;
             int x = 8 + (cursor % 2) * 156;
-            int y = BODY_Y + (cursor / 2) * (card_h + GAP);
+            int y = BODY_Y + (cursor / 2) * (card_h + GRID_GAP);
             make_generic(widget, page.screen, x, y, wide ? 304 : 148, card_h);
             cursor += wide ? 2 : 1;
         }
