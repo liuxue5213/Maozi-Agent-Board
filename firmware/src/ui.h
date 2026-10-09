@@ -10,4 +10,5 @@ void ui_set_online(bool online);         // 链路状态（心跳超时判断）
 void ui_apply_theme(uint32_t bg, uint32_t card, uint32_t accent,
                     uint32_t text, uint32_t sub, uint32_t grad = 0);
 void ui_theme_tick();                 // 页面切换动画结束后应用待处理主题
+void ui_set_idle_dim(int seconds);    // 空闲息屏阈值（0=关闭）
 void ui_notify_page(const char* page);   // 页面切换后回传 TOUCH

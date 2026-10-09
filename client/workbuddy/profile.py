@@ -192,6 +192,7 @@ def validate_profile(raw):
     if not 5 <= bright <= 100:
         raise ValueError("亮度需为 5–100")
     out["theme"]["bright"] = bright
+    out["theme"]["idledim"] = max(0, min(3600, int(theme.get("idledim", 60))))
     def luminance(hex_color):
         values = [int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4)]
         linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in values]

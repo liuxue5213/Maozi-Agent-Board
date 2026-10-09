@@ -52,6 +52,8 @@ struct Telemetry {
     // 主题色推送（CFG=bg:xxxxxx,card:...,accent:...,text:...,sub:...）
     uint32_t theme_bg = 0, theme_grad = 0, theme_card = 0, theme_accent = 0, theme_text = 0, theme_sub = 0;
     bool theme_changed = false;
+    int idledim = -1;
+    bool idledim_changed = false;
 
     bool cpu_temp_valid = false;
     bool gpu_valid = false;

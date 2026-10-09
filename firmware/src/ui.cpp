@@ -43,6 +43,10 @@ Telemetry latest;
 char pinned_id[9] = "";
 char fired_dates[16][11] = {};
 uint32_t last_clock_ms = 0, last_render_ms = 0, alarm_started_ms = 0;
+int idle_dim_secs = 60;              // 0=关闭；无触摸超时后进入息屏时钟
+bool saver_active = false;
+lv_obj_t* scr_saver = nullptr;
+lv_obj_t* saver_time_lbl = nullptr, *saver_date_lbl = nullptr;
 uint32_t seen_hms = 0;
 
 // ---- 覆盖面板：0 无 1 启动器 2 控制中心 ----
@@ -733,6 +737,7 @@ void ui_rebuild() {
     lv_obj_set_style_bg_color(blank, lv_color_hex(g_profile.bg), 0);
     lv_scr_load(blank);
     overlay = 0;
+    saver_active = false;
     lv_obj_t* old[6] = {};
     uint8_t old_count = view_count;
     for (uint8_t i = 0; i < old_count; ++i) old[i] = views[i].screen;
@@ -793,11 +798,60 @@ void ui_apply_theme(uint32_t new_bg, uint32_t new_card, uint32_t new_accent,
     ui_rebuild();
 }
 
+void close_saver() {
+    if (!saver_active) return;
+    saver_active = false;
+    lv_scr_load(views[current_page].screen);
+    display_brightness(g_profile.bright);
+}
+
 void ui_theme_tick() {
     uint32_t now = millis();
     alarm_tick();
+    // 息屏时钟：无触摸超过阈值 → 暗屏大钟；任何触摸 → 唤醒
+    if (idle_dim_secs > 0 && view_count) {
+        bool should = lv_disp_get_inactive_time(nullptr) > (uint32_t)idle_dim_secs * 1000;
+        if (should && !saver_active && !overlay && !alarm_active) {
+            saver_active = true;
+            if (!scr_saver) {
+                scr_saver = lv_obj_create(nullptr);
+                lv_obj_set_style_bg_color(scr_saver, lv_color_hex(0x000000), 0);
+                lv_obj_set_style_border_width(scr_saver, 0, 0);
+            }
+            lv_obj_t* t = lv_label_create(scr_saver);
+            lv_obj_set_style_text_font(t, &cn_48, 0);
+            lv_obj_set_style_text_color(t, lv_color_hex(0x6B7A8F), 0);   // 暗色防烧屏
+            lv_obj_align(t, LV_ALIGN_CENTER, 0, -20);
+            saver_time_lbl = t;
+            lv_obj_t* d = lv_label_create(scr_saver);
+            lv_obj_set_style_text_font(d, &cn_24, 0);
+            lv_obj_set_style_text_color(d, lv_color_hex(0x3A4A5F), 0);
+            lv_obj_align(d, LV_ALIGN_CENTER, 0, 34);
+            saver_date_lbl = d;
+            lv_scr_load(scr_saver);
+            display_brightness(20);
+        } else if (!should && saver_active) {
+            saver_active = false;
+            lv_scr_load(views[current_page].screen);
+            display_brightness(g_profile.bright);
+        }
+        if (saver_active && saver_time_lbl) {
+            static char st[16], sd[40];
+            int secs = clock_seconds();
+            snprintf(st, sizeof(st), "%02d:%02d", secs / 3600, (secs / 60) % 60);
+            lv_label_set_text(saver_time_lbl, st);
+            int wd = weekday(latest.date);
+            static const char* WD2 = "一二三四五六日";
+            snprintf(sd, sizeof(sd), "%s 星期%c", latest.date, WD2[(wd + 6) % 7]);
+            lv_label_set_text(saver_date_lbl, sd);
+        }
+    }
     if (now - last_render_ms >= 1000) {
         last_render_ms = now;
         render_all();
     }
+}
+
+void ui_set_idle_dim(int seconds) {
+    idle_dim_secs = constrain(seconds, 0, 3600);
 }

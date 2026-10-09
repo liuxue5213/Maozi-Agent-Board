@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <Preferences.h>
 #include "dht11_raw.h"
 #include "src/misc/lv_timer.h"
 #include "config.h"
@@ -10,6 +11,7 @@
 
 DHT11Raw dht(PIN_DHT);   // 自包含读取器，不用 noInterrupts()（那是 INT_WDT 崩溃根因）
 Proto proto;
+Preferences prefs;
 
 // 环境数据（ui.cpp extern 引用）
 float g_temp = NAN, g_hum = NAN;
@@ -78,6 +80,14 @@ void loop() {
                            proto.t.theme_text, proto.t.theme_sub, proto.t.theme_grad);
         }
         ui_update(proto.t);
+        if (proto.t.idledim_changed) {
+            proto.t.idledim_changed = false;
+            ui_set_idle_dim(proto.t.idledim);
+            if (prefs.begin("wb", false)) {
+                prefs.putInt("idledim", proto.t.idledim);
+                prefs.end();
+            }
+        }
         if (proto.t.bright >= 0) display_brightness(proto.t.bright);
     }
 

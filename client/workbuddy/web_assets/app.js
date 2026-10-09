@@ -87,6 +87,7 @@ function renderInspector() {
     root.append(chip);
   });
   $('weather-city').value=(draft.weather&&draft.weather.city)||'';
+  $('idle-dim').value=draft.theme.idledim??60;$('idle-dim-val').textContent=(draft.theme.idledim??60)==0?'关闭':(draft.theme.idledim+' 秒');
   for(const key of ['bg','grad','card','accent','text']) $('theme-'+key).value='#'+draft.theme[key];
   $('theme-bright').value=draft.theme.bright;$('bright-value').textContent=draft.theme.bright+'%';
 }
@@ -215,6 +216,19 @@ function bind(){
   $('preview-next').onclick=()=>{selected=(selected+1)%draft.pages.length;render()};
   for(const key of ['bg','grad','card','accent','text'])$('theme-'+key).oninput=e=>{draft.theme[key]=e.target.value.slice(1).toUpperCase();markDirty()};
   $('theme-bright').oninput=e=>{draft.theme.bright=Number(e.target.value);markDirty()};
+  $('idle-dim').oninput=e=>{draft.theme.idledim=Number(e.target.value);$('idle-dim-val').textContent=Number(e.target.value)==0?'关闭':(e.target.value+' 秒');markDirty()};
+  const startTemplates={
+    '专注模式':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']}],
+    '数据控':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'pc',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']}],
+    '陪伴模式':[{id:'ai',title:'AI',layout:'list',widgets:['ai_list']},{id:'env',title:'环境',layout:'grid_2x2',widgets:['environment','weather']},{id:'today',title:'今天',layout:'grid_2x2',widgets:['today_calendar','reminder_list']}],
+    '极简时钟':[{id:'clock',title:'时钟',layout:'grid_2x2',widgets:['clock']}]
+  };
+  const presetRoot=$('start-templates');presetRoot.replaceChildren();
+  Object.entries(startTemplates).forEach(([name,pages])=>{
+    const b=el('button','button ghost',name);
+    b.onclick=()=>{draft.pages=structuredClone(pages);selected=0;markDirty();notice(`已套用「${name}」模板，保存并同步生效`)};
+    presetRoot.append(b);
+  });
   const presets=$('theme-presets');presets.replaceChildren();
   Object.entries(themePresets).forEach(([name,colors])=>{
     const b=el('button','preset-swatch');b.title=name;
