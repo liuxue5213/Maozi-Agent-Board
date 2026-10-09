@@ -31,6 +31,7 @@ struct WidgetView {
 };
 struct PageView {
     lv_obj_t *screen = nullptr, *conn = nullptr, *alert = nullptr;
+    lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
     WidgetView widgets[4];
 };
 
@@ -39,6 +40,7 @@ uint8_t view_count = 0, current_page = 0;
 uint32_t bg = COL_BG, grad = COL_BG, card = COL_CARD, accent = COL_ACCENT;
 uint32_t text_color = COL_TEXT, sub_color = COL_SUB;
 bool online = false, have_data = false, alarm_active = false;
+bool top_clock = true, top_wx = true;
 Telemetry latest;
 char pinned_id[9] = "";
 char fired_dates[16][11] = {};
@@ -129,6 +131,20 @@ lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
     lv_obj_set_style_text_align(txt, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(txt, LV_ALIGN_CENTER, 0, 0);
     return obj;
+}
+
+const char* weather_text(int code) {
+    if (code == 0) return "晴";
+    if (code <= 2) return "多云";
+    if (code == 3) return "阴";
+    if (code == 45 || code == 48) return "雾";
+    if (code >= 51 && code <= 57) return "毛毛雨";
+    if (code >= 61 && code <= 67) return "雨";
+    if (code >= 71 && code <= 77) return "雪";
+    if (code >= 80 && code <= 82) return "阵雨";
+    if (code >= 85 && code <= 86) return "阵雪";
+    if (code >= 95) return "雷暴";
+    return "未知";
 }
 
 int task_count() {
@@ -398,9 +414,29 @@ void build_page(uint8_t index) {
         lv_obj_set_pos(bgimg, 0, 0);
         lv_obj_move_background(bgimg);
     }
-    label(page.screen, config.title, 20, text_color, 10, HEAD_Y, 200);
-    page.conn = label(page.screen, online ? "在线" : "电脑离线", 20,
-                      online ? 0x34D399 : COL_ERR, 210, HEAD_Y + 2, 100);
+    // 顶栏：标题 | 天气 | 时间 | 在状态点（可配置；关闭时回退文字状态）
+    label(page.screen, config.title, 20, text_color, 10, HEAD_Y, top_wx ? 126 : 200);
+    if (top_wx) {
+        page.topwx = label(page.screen, "", 16, sub_color, 140, HEAD_Y + 4, 96);
+        set_text(page.topwx, latest.wx_valid ? weather_text(latest.wx_code) : "");
+    }
+    if (top_clock) {
+        page.topclock = label(page.screen, "", 20, accent, 244, HEAD_Y, 66);
+    }
+    if (top_clock || top_wx) {
+        page.topdot = lv_obj_create(page.screen);
+        lv_obj_set_pos(page.topdot, 300, HEAD_Y + 6);
+        lv_obj_set_size(page.topdot, 12, 12);
+        lv_obj_set_style_radius(page.topdot, 6, 0);
+        lv_obj_set_style_border_width(page.topdot, 0, 0);
+        lv_obj_set_style_bg_color(page.topdot,
+            lv_color_hex(online ? COL_OK : COL_ERR), 0);
+        page.conn = nullptr;
+    } else {
+        page.topdot = nullptr;
+        page.conn = label(page.screen, online ? "在线" : "电脑离线", 20,
+                          online ? 0x34D399 : COL_ERR, 210, HEAD_Y + 2, 100);
+    }
     if (index == 0) {
         label(page.screen, "下滑启动应用 · 上滑控制中心", 20, sub_color, 10, 32, 300);
     }
@@ -578,20 +614,6 @@ void render_hardware(WidgetView& view) {
     snprintf(line, sizeof(line), "余 %.0f GB", latest.diskfree); set_text(view.extra[7], line);
 }
 
-const char* weather_text(int code) {
-    if (code == 0) return "晴";
-    if (code <= 2) return "多云";
-    if (code == 3) return "阴";
-    if (code == 45 || code == 48) return "雾";
-    if (code >= 51 && code <= 57) return "毛毛雨";
-    if (code >= 61 && code <= 67) return "雨";
-    if (code >= 71 && code <= 77) return "雪";
-    if (code >= 80 && code <= 82) return "阵雨";
-    if (code >= 85 && code <= 86) return "阵雪";
-    if (code >= 95) return "雷暴";
-    return "未知";
-}
-
 // 目标日期时间（date="YYYY-MM-DD" time="HH:MM"）距现在的剩余秒数（负=已过）
 long countdown_seconds(const ScheduleItem* item) {
     int ty = 0, tm = 0, td = 0, th = 0, tmn = 0;
@@ -732,6 +754,19 @@ void render_control() {
 }
 
 void render_all() {
+    // 顶栏：时钟 HH:MM + 天气（各页同源）
+    static char tb[16];
+    int secs = clock_seconds();
+    snprintf(tb, sizeof(tb), "%02d:%02d", secs / 3600, (secs / 60) % 60);
+    const char* wx_txt = latest.wx_valid ? weather_text(latest.wx_code) : "";
+    for (uint8_t p = 0; p < view_count; ++p) {
+        PageView& page = views[p];
+        if (page.topclock) set_text(page.topclock, tb);
+        if (page.topwx) set_text(page.topwx, wx_txt);
+        if (page.topdot)
+            lv_obj_set_style_bg_color(page.topdot,
+                lv_color_hex(online ? COL_OK : COL_ERR), 0);
+    }
     for (uint8_t p = 0; p < view_count; ++p) {
         PageView& page = views[p];
         if (!page.screen) continue;
@@ -822,9 +857,14 @@ void ui_set_online(bool connected) {
     if (online == connected) return;
     online = connected;
     for (uint8_t i = 0; i < view_count; ++i) {
-        set_text(views[i].conn, connected ? "在线" : "电脑离线");
-        lv_obj_set_style_text_color(views[i].conn,
-            lv_color_hex(connected ? 0x34D399 : COL_ERR), 0);
+        if (views[i].topdot)
+            lv_obj_set_style_bg_color(views[i].topdot,
+                lv_color_hex(connected ? COL_OK : COL_ERR), 0);
+        if (views[i].conn) {
+            set_text(views[i].conn, connected ? "在线" : "电脑离线");
+            lv_obj_set_style_text_color(views[i].conn,
+                lv_color_hex(connected ? COL_OK : COL_ERR), 0);
+        }
     }
     render_all();
 }
@@ -973,4 +1013,12 @@ void ui_set_saver(uint8_t style) {
 void ui_set_saver_msg(const char* msg) {
     snprintf(saver_msg, sizeof(saver_msg), "%s", msg ? msg : "");
     if (saver_active && saver_style == 3) { build_saver(); lv_scr_load(scr_saver); }
+}
+
+
+void ui_set_topbar(bool clock_on, bool wx_on) {
+    if (top_clock == clock_on && top_wx == wx_on) return;
+    top_clock = clock_on;
+    top_wx = wx_on;
+    ui_rebuild();
 }

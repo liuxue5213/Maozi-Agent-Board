@@ -53,7 +53,7 @@ function renderPages() {
   const root=$('pages-list'); root.replaceChildren();
   draft.pages.forEach((page,i) => {
     const b=el('button',`page-item${i===selected?' active':''}`); b.draggable=true;
-    b.append(el('span','page-grip','⠿'),el('span','page-number',String(i+1).padStart(2,'0')),el('strong','',page.title),el('small','',`${page.widgets.length} 组件`));
+    b.append(el('span','page-grip','⠿'),el('span','page-number',String(i+1).padStart(2,'0')),el('strong','',page.title+(i===0?' · 首页':'')),el('small','',`${page.widgets.length} 组件`));
     b.onclick=()=>{selected=i;render()};
     b.ondragstart=()=>{dragPage=i;b.classList.add('dragging')};
     b.ondragend=()=>{dragPage=-1;b.classList.remove('dragging')};
@@ -89,6 +89,8 @@ function renderInspector() {
   });
   $('weather-city').value=(draft.weather&&draft.weather.city)||'';
   $('idle-dim').value=draft.theme.idledim??60;$('idle-dim-val').textContent=(draft.theme.idledim??60)==0?'关闭':(draft.theme.idledim+' 秒');
+  $('topclock-toggle').checked=!!Number(draft.theme.topclock??1);
+  $('topwx-toggle').checked=!!Number(draft.theme.topwx??1);
   $('saver-style').value=draft.theme.saver??0;
   $('saver-msg').value=draft.theme.savermsg||'';
   for(const key of ['bg','grad','card','accent','text']) $('theme-'+key).value='#'+draft.theme[key];
@@ -227,6 +229,8 @@ function bind(){
   $('idle-dim').oninput=e=>{draft.theme.idledim=Number(e.target.value);$('idle-dim-val').textContent=Number(e.target.value)==0?'关闭':(e.target.value+' 秒');markDirty()};
   $('saver-style').onchange=e=>{draft.theme.saver=Number(e.target.value);markDirty()};
   $('saver-msg').onchange=e=>{draft.theme.savermsg=e.target.value;markDirty()};
+  $('topclock-toggle').onchange=e=>{draft.theme.topclock=e.target.checked?1:0;markDirty()};
+  $('topwx-toggle').onchange=e=>{draft.theme.topwx=e.target.checked?1:0;markDirty()};
   const startTemplates={
     '专注模式':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']}],
     '数据控':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'pc',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']}],

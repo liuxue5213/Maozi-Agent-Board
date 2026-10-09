@@ -195,6 +195,8 @@ def validate_profile(raw):
     out["theme"]["idledim"] = max(0, min(3600, int(theme.get("idledim", 60))))
     out["theme"]["saver"] = max(0, min(3, int(theme.get("saver", 0))))
     out["theme"]["savermsg"] = _label(theme.get("savermsg", "") or "代码写完了吗？起来喝口水", 60)
+    out["theme"]["topclock"] = 1 if int(theme.get("topclock", 1)) else 0
+    out["theme"]["topwx"] = 1 if int(theme.get("topwx", 1)) else 0
     def luminance(hex_color):
         values = [int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4)]
         linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in values]

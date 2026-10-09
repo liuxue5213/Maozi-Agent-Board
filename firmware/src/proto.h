@@ -60,6 +60,8 @@ struct Telemetry {
     bool idledim_changed = false;
     int saver = -1;
     bool saver_changed = false;
+    int top_clock_cfg = -1, top_wx_cfg = -1;
+    bool topbar_changed = false;
     char savermsg[64] = "";
     bool savermsg_changed = false;
 

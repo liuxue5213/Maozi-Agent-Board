@@ -104,6 +104,15 @@ void loop() {
                 prefs.end();
             }
         }
+        if (proto.t.topbar_changed) {
+            proto.t.topbar_changed = false;
+            ui_set_topbar(proto.t.top_clock_cfg != 0, proto.t.top_wx_cfg != 0);
+            if (prefs.begin("wb", false)) {
+                prefs.putBool("top_clock", proto.t.top_clock_cfg != 0);
+                prefs.putBool("top_wx", proto.t.top_wx_cfg != 0);
+                prefs.end();
+            }
+        }
         if (proto.t.bright >= 0) display_brightness(proto.t.bright);
     }
 
