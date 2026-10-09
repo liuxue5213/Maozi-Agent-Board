@@ -157,6 +157,17 @@ def start_settings_server(app, port):
                 from . import hooks
                 self._json(200, hooks.status(hooks_settings_path()))
                 return
+            if path == "/api/trend":
+                # P1-4 行为遥测趋势：?hours=24（上限 7 天）
+                trend = getattr(app, "trend", None)
+                try:
+                    hours = int(urlsplit(self.path).query.split("hours=")[1]
+                                .split("&")[0])
+                except (IndexError, ValueError):
+                    hours = 24
+                self._json(200, {"hours": hours,
+                                 "series": trend.series(hours) if trend else []})
+                return
             if path == "/api/export":
                 # 导出当前生效配置为 JSON（前端触发浏览器下载）。
                 # 与 /api/save 同源校验结果，保证"导出→导入"可往返。

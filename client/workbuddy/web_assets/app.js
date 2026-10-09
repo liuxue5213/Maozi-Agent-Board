@@ -364,7 +364,7 @@ function renderHistory(){
   let list = [];
   try{ list = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); }catch(e){}
   if(!list.length){ root.append(el('div','empty','暂无记录。保存、同步、主题应用等操作会出现在这里。')); return }
-  const kindNames = {save:'保存', sync:'同步', theme:'主题', bg:'背景图', ota:'固件', diag:'诊断', import:'导入', export:'导出', layout:'布局', saver:'息屏'};
+  const kindNames = {save:'保存', sync:'同步', theme:'主题', bg:'背景图', ota:'固件', diag:'诊断', import:'导入', export:'导出', layout:'布局', saver:'息屏', hook:'Hook', launch:'启动'};
   list.forEach(item=>{
     const row = el('div',`history-item${item.ok?'':' failed'}`);
     const time = new Date(item.t).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
@@ -373,6 +373,73 @@ function renderHistory(){
                el('time','history-time',time));
     root.append(row);
   });
+}
+
+/* ================= 系统趋势（P1-4 行为遥测） ================= */
+const TREND_SERIES = [
+  {key:'cpu',  label:'处理器', colorProp:'--accent'},
+  {key:'mem',  label:'内存',   colorProp:'--info'},
+  {key:'disk', label:'磁盘',   colorProp:'--warn'},
+];
+function drawTrendChart(){
+  const canvas=$('trend-chart');if(!canvas||!canvas.getContext)return;
+  const w=canvas.clientWidth||canvas.width,h=180;
+  const dpr=window.devicePixelRatio||1;
+  if(canvas.width!==Math.round(w*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr)}
+  const ctx=canvas.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  const cs=getComputedStyle(document.documentElement);
+  const cLine=cs.getPropertyValue('--line').trim()||'#e2eae8';
+  const cSub=cs.getPropertyValue('--text-tertiary').trim()||'#5e6e76';
+  // canvas 不认 CSS var()，颜色必须先解析成实际值
+  const seriesColors=Object.fromEntries(TREND_SERIES.map(s=>
+    [s.key, cs.getPropertyValue(s.colorProp).trim()||'#888']));
+  fetch(`/api/trend?hours=${$('trend-range').value}`).then(r=>r.json()).then(d=>{
+    const series=d.series||[];
+    // 图例（含最新值）
+    const legend=$('trend-legend');legend.replaceChildren();
+    TREND_SERIES.forEach(s=>{
+      const last=series.length?series[series.length-1][s.key]:null;
+      const item=el('span','trend-key');
+      const dot=el('i','trend-dot');dot.style.background=seriesColors[s.key];
+      item.append(dot,document.createTextNode(`${s.label} ${last==null?'—':last+'%'}`));
+      legend.append(item);
+    });
+    if(series.length<2){
+      ctx.fillStyle=cSub;ctx.font='12px sans-serif';ctx.textAlign='center';
+      ctx.fillText('趋势数据积累中（客户端每分钟一拍，约 10 分钟后出线）',w/2,h/2);
+      return;
+    }
+    const padL=34,padR=10,padT=10,padH=h-padT-18;
+    ctx.strokeStyle=cLine;ctx.fillStyle=cSub;ctx.font='10px sans-serif';
+    for(let i=0;i<=4;i++){
+      const y=padT+padH*i/4;
+      ctx.beginPath();ctx.moveTo(padL,y);ctx.lineTo(w-padR,y);ctx.stroke();
+      ctx.textAlign='right';ctx.fillText(`${100-i*25}%`,padL-4,y+3);
+    }
+    const t0=series[0].t,t1=series[series.length-1].t,span=Math.max(1,t1-t0);
+    const X=t=>padL+(w-padL-padR)*(t-t0)/span;
+    const Y=v=>padT+padH*(1-Math.max(0,Math.min(100,v))/100);
+    TREND_SERIES.forEach(s=>{
+      ctx.beginPath();
+      let started=false;
+      series.forEach(p=>{
+        const v=p[s.key];
+        if(typeof v!=='number')return;
+        const x=X(p.t),y=Y(v);
+        started?ctx.lineTo(x,y):(ctx.moveTo(x,y),started=true);
+      });
+      if(started){
+        ctx.strokeStyle=seriesColors[s.key];
+        ctx.lineWidth=1.6;ctx.lineJoin='round';ctx.stroke();
+      }
+    });
+    ctx.fillStyle=cSub;ctx.textAlign='left';
+    ctx.fillText(new Date(t0*1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),padL,h-4);
+    ctx.textAlign='right';
+    ctx.fillText(new Date(t1*1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),w-padR,h-4);
+  }).catch(()=>{});
 }
 
 /* ================= 任务视图配置（布局方案） ================= */
@@ -1073,13 +1140,15 @@ function switchView(name){
     if(name==='extras')renderExtras();
   }
   if(name==='overview')renderOverview();
-  if(name==='history')renderHistory();
+  if(name==='history'){renderHistory();drawTrendChart()}
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function renderTaskView(){renderCfgPanels();renderTaskPreview();renderThemeGrid();if(!$('pane-multi').hidden)renderMultiPane()}
 
 /* ================= 轮询与保存 ================= */
 function render(){renderOverview();if(currentView==='tasks')renderTaskView();if(currentView==='saver')renderSaverView();if(currentView==='extras')renderExtras()}
+// 趋势视图：每 60s 重画（新桶会推进曲线）；范围切换立即重画
+setInterval(()=>{if(currentView==='history')drawTrendChart()},60000);
 async function poll(){
   if(polling)return;
   polling=true;
@@ -1481,6 +1550,7 @@ function bind(){
 
   // ---- 历史记录 ----
   $('btn-history-clear').onclick=()=>{localStorage.removeItem(HIST_KEY);renderHistory();notice('历史已清空')};
+  $('trend-range').onchange=()=>drawTrendChart();
 
   // ---- 设置：保存/同步/维护 ----
   $('validate-btn').onclick=pending($('validate-btn'),async()=>{try{await request('/api/validate',draft);notice('配置检查通过，可以保存')}catch(e){notice(e.message,true)}});

@@ -10,6 +10,7 @@ import zlib as _zlib
 
 from .profile import encode_profile, load_profile, save_profile, validate_profile
 from .telemetry import HealthLog
+from .trend import TrendStore
 from .weather import WeatherFetcher
 
 
@@ -24,6 +25,7 @@ class App:
         self.env_seen = {}
         self.control = ControlApp()
         self.health = HealthLog()
+        self.trend = TrendStore()    # P1-4 行为遥测：每分钟一拍趋势样本
         self.weather = WeatherFetcher(lambda: (self.profile.get('weather') or {}).get('city', ''))
         self.fw_caps = None          # 设备能力（来自 FW 握手），None = 未知
         self.profile_lock = threading.Lock()
@@ -415,6 +417,15 @@ class App:
                 t[k] = self.env[k]
         self.last = t
         self._last_tick_at = time.time()
+        # P1-4 趋势采样：内部 60s 节流，暂停时不喂（避免冻结数据入曲线）。
+        # __new__ 直构（单测）可能没有这两个属性，防御性读取。
+        if not getattr(self, "paused", False):
+            trend = getattr(self, "trend", None)
+            if trend:
+                try:
+                    trend.sample(t, tasks=len(self.tasks), now=now)
+                except Exception:
+                    pass
         return t
 
     def render(self, t: dict) -> str:

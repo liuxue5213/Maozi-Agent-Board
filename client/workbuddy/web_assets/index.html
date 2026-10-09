@@ -472,6 +472,22 @@
     <section class="view" id="view-history" aria-labelledby="history-heading">
       <h1 id="history-heading">历史记录</h1>
       <p class="view-sub">本机的保存、同步、主题与升级事件（仅保留在本机浏览器）。</p>
+      <section class="panel" aria-labelledby="trend-heading">
+        <div class="panel-head">
+          <h2 id="trend-heading">系统趋势</h2>
+          <label class="field-inline">范围
+            <select id="trend-range">
+              <option value="6">6 小时</option>
+              <option value="24" selected>24 小时</option>
+              <option value="72">3 天</option>
+              <option value="168">7 天</option>
+            </select>
+          </label>
+        </div>
+        <p class="hint-inline" id="trend-note">每分钟一拍，本机落盘保留 7 天；暂停采集期间不记录。</p>
+        <canvas id="trend-chart" height="180" role="img" aria-label="处理器/内存/磁盘占用趋势图"></canvas>
+        <div class="trend-legend" id="trend-legend"></div>
+      </section>
       <section class="panel" aria-labelledby="history-list-heading">
         <div class="panel-head">
           <h2 id="history-list-heading">操作与同步</h2>
