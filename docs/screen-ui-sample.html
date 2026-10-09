@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>maozi-diy 设备屏 UI 示例（紫夜主题 · 状态聚焦布局）</title>
+<style>
+  :root{
+    --bg:#0F1424; --bg2:#0B0F1C; --card:#1E2740; --card2:#2A2150;
+    --edge:rgba(255,255,255,.06);
+    --accent:#8B7CF6; --accent2:#22D3EE;
+    --text:#E6E9F0; --sub:#8A93A8;
+    --ok:#34D399; --warn:#FBBF24; --err:#F87171; --info:#38BDF8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:#1a1d29; color:#cfd4e2; font-family:"PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex; gap:28px; justify-content:center; align-items:flex-start;
+    padding:24px; flex-wrap:wrap;
+  }
+  .stage{display:flex; flex-direction:column; align-items:center; gap:10px}
+  .cap{font-size:13px; color:#9aa3bd; letter-spacing:.5px}
+
+  /* 设备外壳 */
+  .phone{
+    width:340px; padding:10px; border-radius:26px;
+    background:linear-gradient(160deg,#2a2f42,#161a28);
+    box-shadow:0 20px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  /* 屏幕 320x480 */
+  .screen{
+    width:320px; height:480px; border-radius:18px; overflow:hidden;
+    background:radial-gradient(120% 80% at 50% 0%, var(--bg) 0%, var(--bg2) 100%);
+    display:flex; flex-direction:column; position:relative;
+    padding:10px 10px 8px; gap:8px; color:var(--text);
+    font-size:11px; line-height:1.25;
+  }
+  .tag{font-size:8px; color:#6f7896; letter-spacing:.4px; margin-bottom:1px; text-transform:uppercase}
+
+  /* 状态栏 */
+  .statusbar{display:flex; justify-content:space-between; align-items:center; font-size:9px; color:var(--sub); padding:0 2px}
+  .statusbar .mid{color:var(--text); font-weight:600}
+  .dots{display:flex; gap:3px}
+  .dots i{width:5px;height:5px;border-radius:50%;background:var(--sub);display:inline-block}
+  .dots i.on{background:var(--ok)}
+
+  /* 时钟卡 */
+  .clock{
+    background:linear-gradient(135deg,var(--card2),var(--card));
+    border:1px solid var(--edge); border-radius:14px; padding:10px 12px;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .clock .t{font-size:30px; font-weight:700; letter-spacing:1px; font-variant-numeric:tabular-nums}
+  .clock .d{font-size:10px; color:var(--sub); text-align:right}
+  .clock .d b{color:var(--accent2); font-weight:600}
+
+  /* AI 会话区 */
+  .ai{background:var(--card); border:1px solid var(--edge); border-radius:14px; padding:8px 9px; flex:1; display:flex; flex-direction:column; gap:6px; min-height:0}
+  .ai .head{display:flex; justify-content:space-between; align-items:center}
+  .ai .head .h{font-size:11px; font-weight:700}
+  .ai .head .cnt{font-size:9px; color:var(--sub)}
+  .sess{background:rgba(255,255,255,.03); border:1px solid var(--edge); border-radius:10px; padding:6px 7px; display:flex; flex-direction:column; gap:4px}
+  .sess .row1{display:flex; align-items:center; gap:5px}
+  .st{width:7px;height:7px;border-radius:50%;flex:none}
+  .st.gen{background:var(--accent); box-shadow:0 0 6px var(--accent)}
+  .st.wait{background:var(--info)}
+  .st.err{background:var(--err)}
+  .tool{font-size:10px; font-weight:600}
+  .proj{font-size:8.5px; color:var(--sub); margin-left:auto}
+  .elapsed{font-size:8px; color:var(--sub)}
+  .bar{height:4px; border-radius:3px; background:rgba(255,255,255,.08); overflow:hidden}
+  .bar i{display:block; height:100%; border-radius:3px; background:linear-gradient(90deg,var(--accent),var(--accent2))}
+
+  /* 硬件卡片 2x2 */
+  .hw{display:grid; grid-template-columns:1fr 1fr; gap:6px}
+  .metric{background:var(--card); border:1px solid var(--edge); border-radius:10px; padding:6px 7px}
+  .metric .lbl{font-size:8.5px; color:var(--sub); display:flex; justify-content:space-between}
+  .metric .val{font-size:14px; font-weight:700; margin-top:1px; font-variant-numeric:tabular-nums}
+  .metric .mini{height:3px; border-radius:2px; background:rgba(255,255,255,.08); margin-top:4px; overflow:hidden}
+  .metric .mini i{display:block; height:100%; background:var(--accent2)}
+
+  /* 底部分页 */
+  .pager{display:flex; justify-content:center; gap:5px; padding-top:2px}
+  .pager i{width:14px;height:3px;border-radius:2px;background:rgba(255,255,255,.18)}
+  .pager i.on{background:var(--accent); width:18px}
+
+  /* 图例 */
+  .legend{width:400px; background:#12151f; border:1px solid #232838; border-radius:14px; padding:16px 18px; font-size:12px; color:#c2c8da}
+  .legend h3{font-size:14px; color:#fff; margin-bottom:10px; letter-spacing:.5px}
+  .legend table{width:100%; border-collapse:collapse; table-layout:fixed}
+  .legend th,.legend td{text-align:left; padding:6px 8px; border-bottom:1px solid #20242f; vertical-align:top; line-height:1.55; word-break:break-word}
+  .legend th{color:#8b93ad; font-weight:600; font-size:10.5px}
+  .legend col.c1{width:74px} .legend col.c2{width:120px}
+  .legend td.n{color:var(--accent); font-weight:600; white-space:nowrap}
+  .legend td.s{color:var(--sub); font-size:10.5px}
+  .legend .note{margin-top:12px; font-size:10.5px; color:#7b839c; line-height:1.6}
+  .legend .note b{color:#cdd3e6}
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="cap">设备屏实拍示意 · 320×480 竖屏 · 主题「紫夜」· 布局「状态聚焦」</div>
+    <div class="phone">
+      <div class="screen">
+        <div class="statusbar">
+          <span>Wi-Fi 已连接</span>
+          <span class="mid">14:23</span>
+          <span class="dots"><i class="on"></i><i class="on"></i><i></i> 61%</span>
+        </div>
+
+        <div>
+          <div class="tag">时钟组件 clock</div>
+          <div class="clock">
+            <div class="t">14:23:45</div>
+            <div class="d">周五<br><b>2026/10/9</b></div>
+          </div>
+        </div>
+
+        <div class="ai">
+          <div class="tag">AI 会话列表 ai_list（最多 4 条）</div>
+          <div class="head"><span class="h">AI 会话</span><span class="cnt">进行中 2 · 共 3</span></div>
+
+          <div class="sess">
+            <div class="row1">
+              <span class="st gen"></span><span class="tool">Claude Code</span>
+              <span class="proj">demo-app</span><span class="elapsed">1m35s</span>
+            </div>
+            <div class="bar"><i style="width:40%"></i></div>
+          </div>
+
+          <div class="sess">
+            <div class="row1">
+              <span class="st wait"></span><span class="tool">Codex</span>
+              <span class="proj">fix-auth</span><span class="elapsed">10m</span>
+            </div>
+            <div class="bar"><i style="width:100%; background:var(--info)"></i></div>
+          </div>
+
+          <div class="sess">
+            <div class="row1">
+              <span class="st err"></span><span class="tool">WorkBuddy</span>
+              <span class="proj">maozi-diy</span><span class="elapsed">err</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="tag">硬件指标 hw_cards（2×2）</div>
+          <div class="hw">
+            <div class="metric"><div class="lbl"><span>CPU</span><span>15%</span></div><div class="val">15%</div><div class="mini"><i style="width:15%"></i></div></div>
+            <div class="metric"><div class="lbl"><span>内存</span><span>19.2/32G</span></div><div class="val">60%</div><div class="mini"><i style="width:60%"></i></div></div>
+            <div class="metric"><div class="lbl"><span>磁盘</span><span>29.5G 可用</span></div><div class="val">93%</div><div class="mini"><i style="width:93%; background:var(--warn)"></i></div></div>
+            <div class="metric"><div class="lbl"><span>网络</span><span>↑1.8 ↓1.2</span></div><div class="val">Mb/s</div><div class="mini"><i style="width:30%"></i></div></div>
+          </div>
+        </div>
+
+        <div class="pager"><i class="on"></i><i></i><i></i><i></i></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <h3>屏幕组件图例（给开发看）</h3>
+    <table>
+      <colgroup><col class="c1"><col class="c2"><col></colgroup>
+      <tr><th>组件</th><th>数据来源</th><th>说明</th></tr>
+      <tr><td class="n">状态栏</td><td class="s">client 连接态 + 系统时间 + 电池</td><td class="s">左=连接/WiFi；中=短时钟；右=电池%</td></tr>
+      <tr><td class="n">clock</td><td class="s">client 下发时间</td><td class="s">大号时分秒 + 日期/星期</td></tr>
+      <tr><td class="n">ai_list</td><td class="s">aiwatch 聚合 claude/codex/zcode/workbuddy</td><td class="s">状态点：生成中(紫)/等待(蓝)/出错(红)；含工具名、项目、耗时、进度条；最多 4 条</td></tr>
+      <tr><td class="n">hw_cards</td><td class="s">collect + psutil</td><td class="s">CPU/内存/磁盘/网络 四卡，磁盘&gt;90% 转警告色</td></tr>
+      <tr><td class="n">pager</td><td class="s">profile.pages 数量</td><td class="s">底部页码指示，可切多页</td></tr>
+    </table>
+    <div class="note">
+      <b>配色（紫夜主题）：</b>屏底 <code>#0F1424</code> · 卡片 <code>#1E2740/#2A2150</code> · 主色 <code>#8B7CF6</code> · 辅色 <code>#22D3EE</code> ·
+      状态 生成中=<code>#8B7CF6</code> 等待=<code>#38BDF8</code> 出错=<code>#F87171</code> 警告=<code>#FBBF24</code> 正常=<code>#34D399</code>。<br>
+      <b>注意：</b>真机 ST7796 存在 G/B 通道错位待烧录定论（见 PANEL_COLOR_SELFTEST），此图为设计稿真色，非实机直拍。
+      其它可选布局：任务时间线 / 角色陪伴 / 数据看板（见 Web 设置页「任务视图」）。
+    </div>
+  </div>
+</body>
+</html>

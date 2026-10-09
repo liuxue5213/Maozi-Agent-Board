@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "version": 3,
+  "pages": [
+    {
+      "id": "ai",
+      "title": "帽子工作台",
+      "layout": "list",
+      "widgets": [
+        "ai_list"
+      ]
+    },
+    {
+      "id": "computer",
+      "title": "电脑",
+      "layout": "grid_2x2",
+      "widgets": [
+        "hw_cards"
+      ]
+    },
+    {
+      "id": "environment",
+      "title": "环境",
+      "layout": "grid_2x2",
+      "widgets": [
+        "environment",
+        "clock"
+      ]
+    }
+  ],
+  "reminders": [],
+  "calendar": [],
+  "alarms": [],
+  "apps": [],
+  "theme": {
+    "bg": "05080F",
+    "grad": "0C1626",
+    "card": "223650",
+    "accent": "6AA0FF",
+    "text": "EEF3FB",
+    "sub": "9FB4D2",
+    "card_edge": "36588C",
+    "bright": 90
+  }
+}
