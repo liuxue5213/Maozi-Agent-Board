@@ -1,6 +1,8 @@
 #include "proto.h"
 #include "profile.h"
 
+extern void send_fw_handshake();   // main.cpp 提供：收到 CAPS（客户端问候）时回握手
+
 void Proto::feed(char c) {
     if (c == '\r') return;
     if (c == '\n') {
@@ -103,7 +105,7 @@ void Proto::handle(const char* line) {
     const char* v = eq + 1;
 
     if (!strcmp(key, "CFG"))  { handle_cfg(v); return; }
-    if (!strcmp(key, "CAPS")) return;   // 能力位图：固件侧暂不消费
+    if (!strcmp(key, "CAPS")) { send_fw_handshake(); return; }   // 客户端问候 → 回能力握手
     if (!strcmp(key, "HB"))   return;   // 心跳由 main 的时间戳逻辑处理
     if (!strcmp(key, "TIME"))  { t.clock_hms = (uint32_t)atol(v); dirty = true; return; }
     if (!strcmp(key, "DATE"))  { snprintf(t.date, sizeof(t.date), "%s", v); dirty = true; return; }
