@@ -16,3 +16,9 @@ client/tools/smc/maozi-smcd
 # 系统杂物
 .DS_Store
 firmware/tools/.font-cache/*.otf
+
+# 本地运行时目录/杂物
+.workbuddy/
+.workbuddy-ai/
+.zcodeignore
+firmware-diag/.pio/
