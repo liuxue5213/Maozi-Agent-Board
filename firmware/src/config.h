@@ -41,5 +41,5 @@
 #define COL_WARN      0xFBBF24
 #define COL_ERR       0xF87171
 
-#define DEFAULT_BRIGHT 90   // 0-100
+#define DEFAULT_BRIGHT 50   // 0-100
 #define LINK_TIMEOUT_MS 12000  // 超过该时间无客户端心跳判定离线

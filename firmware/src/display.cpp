@@ -135,7 +135,9 @@ void display_brightness(int percent) {
     percent = constrain(percent, 0, 100);
     if (percent == _brightness) return;
     _brightness = percent;
-    _gfx.setBrightness(_brightness);
+    // LovyanGFX setBrightness 期望 0-255（PWM 占空比），不是 0-100
+    // PWM 范围 10-230：下限防全黑，上限防过驱
+    _gfx.setBrightness(10 + percent * 220 / 100);
 }
 
 int display_brightness_get() { return _brightness; }

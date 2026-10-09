@@ -124,7 +124,14 @@ void loop() {
                 prefs.end();
             }
         }
-        if (proto.t.bright >= 0) { bright_manual_val = proto.t.bright; display_brightness(proto.t.bright); }
+        if (proto.t.bright >= 0) {
+            bright_manual_val = proto.t.bright;
+            display_brightness(proto.t.bright);
+            if (prefs.begin("wb", false)) {
+                prefs.putUChar("bright_manual", bright_manual_val);
+                prefs.end();
+            }
+        }
         if (proto.t.brightauto_changed) {
             proto.t.brightauto_changed = false;
             bright_auto = proto.t.bright_auto_val;
