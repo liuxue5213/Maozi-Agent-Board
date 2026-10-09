@@ -43,7 +43,6 @@ struct WidgetView {
 struct PageView {
     lv_obj_t *screen = nullptr, *conn = nullptr, *alert = nullptr;
     lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
-    lv_obj_t *topbat = nullptr;   // 电池 %（遥测缺 BAT 时隐藏，绝不显示假值）
     lv_obj_t *offbar = nullptr;   // 离线状态条（顶部 4px 红条）
     WidgetView widgets[4];
 };
@@ -73,7 +72,7 @@ uint32_t seen_hms = 0;
 
 // ---- 覆盖面板：0 无 1 启动器 2 控制中心 ----
 uint8_t overlay = 0;
-lv_obj_t *scr_launcher = nullptr, *scr_control = nullptr;
+lv_obj_t *scr_settings = nullptr;
 lv_obj_t *launch_cells[12] = {};
 char launch_ids[12][13];
 uint8_t launch_count = 0;
@@ -261,10 +260,11 @@ void page_click(lv_event_t* event) {
 }
 
 void open_overlay(uint8_t which);
-void open_launcher_cb(lv_event_t*) { open_overlay(1); }
-void open_control_cb(lv_event_t*) { open_overlay(2); }
+void close_overlay();
+void open_settings_cb(lv_event_t*) { open_overlay(1); }
+void close_overlay_cb(lv_event_t*) { close_overlay(); }
 
-// ---------- 覆盖面板开合 ----------
+// ---------- 覆盖面板开合（设置页 = 原启动器 + 控制中心 合并） ----------
 void close_overlay() {
     if (!overlay) return;
     overlay = 0;
@@ -272,42 +272,28 @@ void close_overlay() {
 }
 
 void open_overlay(uint8_t which) {
-    if (overlay == which) return;
+    if (overlay == which || !scr_settings) return;
     overlay = which;
-    lv_scr_load_anim(which == 1 ? scr_launcher : scr_control,
-                     LV_SCR_LOAD_ANIM_FADE_ON, 150, 0, false);
-    send_touch(which == 1 ? "LAUNCHER_OPEN" : "CONTROL_OPEN");
+    lv_scr_load_anim(scr_settings, LV_SCR_LOAD_ANIM_FADE_ON, 150, 0, false);
+    send_touch("SETTINGS_OPEN");
 }
 
-void launcher_close_gesture(lv_event_t*) {
+void settings_close_gesture(lv_event_t*) {
     lv_indev_t* input = lv_indev_get_act();
     if (!input) return;
-    if (lv_indev_get_gesture_dir(input) == LV_DIR_TOP) close_overlay();
+    lv_dir_t direction = lv_indev_get_gesture_dir(input);
+    if (direction == LV_DIR_TOP || direction == LV_DIR_BOTTOM) close_overlay();
 }
 
-void control_close_gesture(lv_event_t*) {
-    lv_indev_t* input = lv_indev_get_act();
-    if (!input) return;
-    if (lv_indev_get_gesture_dir(input) == LV_DIR_BOTTOM) close_overlay();
-}
-
-// 页面手势：竖滑开面板（下拉=启动器，上滑=控制中心），横滑切页
+// 页面手势：横滑切页；面板打开时竖滑收起。
+// 原竖滑开启动器/控制中心的手势移除——入口统一为左下角 ⚙（避免误触发）。
 void gesture(lv_event_t* event) {
     lv_indev_t* input = lv_indev_get_act();
     if (!input) return;
     lv_dir_t direction = lv_indev_get_gesture_dir(input);
-    if (overlay) {   // 面板打开时：反方向滑动收起
-        if ((overlay == 1 && direction == LV_DIR_TOP) ||
-            (overlay == 2 && direction == LV_DIR_BOTTOM))
+    if (overlay) {   // 面板打开时：竖滑收起
+        if (direction == LV_DIR_TOP || direction == LV_DIR_BOTTOM)
             close_overlay();
-        return;
-    }
-    if (direction == LV_DIR_TOP && launch_count) {
-        open_overlay(1);
-        return;
-    }
-    if (direction == LV_DIR_BOTTOM) {
-        open_overlay(2);
         return;
     }
     if (direction == LV_DIR_LEFT && current_page + 1 < view_count)
@@ -502,25 +488,39 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
 }
 
 // ---------- 覆盖面板构建 ----------
-void build_launcher() {
-    scr_launcher = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(scr_launcher, lv_color_hex(bg), 0);
-    lv_obj_set_style_bg_grad_color(scr_launcher, lv_color_hex(grad), 0);
-    lv_obj_set_style_bg_grad_dir(scr_launcher, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_border_width(scr_launcher, 0, 0);
-    lv_obj_clear_flag(scr_launcher, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(scr_launcher, launcher_close_gesture, LV_EVENT_GESTURE, nullptr);
+// ---------- 设置页（原启动器 + 控制中心 合并；内容超高可滚动） ----------
+void build_settings() {
+    scr_settings = lv_obj_create(nullptr);
+    lv_obj_set_style_bg_color(scr_settings, lv_color_hex(bg), 0);
+    lv_obj_set_style_bg_grad_color(scr_settings, lv_color_hex(grad), 0);
+    lv_obj_set_style_bg_grad_dir(scr_settings, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_border_width(scr_settings, 0, 0);
+    lv_obj_clear_flag(scr_settings, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(scr_settings, settings_close_gesture, LV_EVENT_GESTURE, nullptr);
 
-    label(scr_launcher, "应用启动器", 20, text_color, 10, HEAD_Y, 180);
-    label(scr_launcher, "上滑收起", 16, sub_color, 230, HEAD_Y + 4, 80);
-    label(scr_launcher, "点击图标在电脑上打开", 16, sub_color, 10, 32, 260);
+    // 固定头：标题 + 收起按钮
+    label(scr_settings, "设置", 20, text_color, 10, HEAD_Y, 120);
+    lv_obj_t* close_btn = button(scr_settings, "收起", 260, HEAD_Y - 4, 52, 26,
+                                 close_overlay_cb, nullptr);
+    (void)close_btn;
 
+    // 可滚动内容区（快捷应用 + 音量/媒体 + 亮度）
+    lv_obj_t* page = lv_obj_create(scr_settings);
+    lv_obj_set_pos(page, 0, 36);
+    lv_obj_set_size(page, 320, SCR_H - 36);
+    lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 0, 0);
+    // lv_obj 默认可滚动：子对象超出 444px 高度即可上下滑
+
+    // ---- 快捷应用（原启动器）----
+    label(page, "快捷应用", 20, sub_color, 10, 8, 160);
     launch_count = 0;
     for (uint8_t i = 0; i < g_profile.app_count && launch_count < 12; ++i) {
         const AppEntry& app = g_profile.apps[i];
         uint8_t row = launch_count / 3, col = launch_count % 3;
-        int x = 8 + col * 102, y = 62 + row * 100;
-        lv_obj_t* cell = button(scr_launcher, app.name, x, y, 96, 90,
+        int x = 8 + col * 102, y = 34 + row * 68;
+        lv_obj_t* cell = button(page, app.name, x, y, 96, 60,
                                 launch_app, (void*)(uintptr_t)launch_count);
         (void)cell;
         launch_cells[launch_count] = cell;
@@ -528,57 +528,35 @@ void build_launcher() {
         ++launch_count;
     }
     if (!launch_count) {
-        // 空态设计（实机配色核验 §3.2 / §4 P1）：原本只有一行字悬在屏幕中部，
-        // 主体 70% 是空白，用户看不出"这里本该有东西"。改为居中成组的卡片。
-        // ⚠️ 文案用字必须在字库内：cn_32/cn_48 只收界面文案字（见 tools/gen_fonts.py），
-        //    用字库外的字会渲染成空白。改文案后必须重跑 gen_fonts.py。
-        lv_obj_t* empty = box(scr_launcher, 30, 168, 260, 164);
-        lv_obj_t* icon = label(empty, "▦", 40, accent, 0, 12, 260);
-        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_t* why = label(empty, "还没有配置快捷应用", 28, text_color, 0, 62, 260);
-        lv_obj_set_style_text_align(why, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_t* tip = label(empty, "在电脑工作台的\n快捷应用中添加", 20, sub_color, 0, 108, 260);
-        lv_obj_set_style_text_align(tip, LV_TEXT_ALIGN_CENTER, 0);
+        // 空态一行带过（整页还有音量/媒体要放，不再用大卡片占位）
+        // ⚠️ 文案用字必须在字库内（cn_20/24 全 GB2312 覆盖，安全）
+        label(page, "还没有快捷应用，在电脑工作台添加", 20, sub_color, 10, 40, 300);
     }
-}
+    int y = 34 + ((launch_count + 2) / 3) * 68 + 6;
+    if (!launch_count) y = 34 + 36 + 6;
 
-void build_control() {
-    scr_control = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(scr_control, lv_color_hex(bg), 0);
-    lv_obj_set_style_bg_grad_color(scr_control, lv_color_hex(grad), 0);
-    lv_obj_set_style_bg_grad_dir(scr_control, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_border_width(scr_control, 0, 0);
-    lv_obj_clear_flag(scr_control, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(scr_control, control_close_gesture, LV_EVENT_GESTURE, nullptr);
-
-    label(scr_control, "控制中心", 20, text_color, 10, HEAD_Y, 160);
-    label(scr_control, "下滑收起", 16, sub_color, 230, HEAD_Y + 4, 80);
-
-    // 音量组
-    lv_obj_t* vol_box = box(scr_control, 8, 44, 304, 96);
-    label(vol_box, "电脑音量", 16, sub_color, 10, 8, 120);
-    button(vol_box, "-", 10, 40, 64, 44, send_key_cb, (void*)"VOL-");
-    ctrl_vol_lbl = label(vol_box, "--", 24, text_color, 84, 46, 92);
+    // ---- 音量 / 媒体（原控制中心，紧凑三行）----
+    label(page, "电脑音量", 20, sub_color, 10, y, 160);
+    button(page, "-", 10, y + 26, 64, 40, send_key_cb, (void*)"VOL-");
+    ctrl_vol_lbl = label(page, "--", 24, text_color, 84, y + 34, 92);
     lv_obj_set_style_text_align(ctrl_vol_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    button(vol_box, "+", 184, 40, 64, 44, send_key_cb, (void*)"VOL+");
-    ctrl_mute_lbl = button(scr_control, "静音", 254, 44, 58, 96, send_key_cb, (void*)"MUTE");
+    button(page, "+", 178, y + 26, 64, 40, send_key_cb, (void*)"VOL+");
+    ctrl_mute_lbl = button(page, "静音", 250, y + 26, 62, 40, send_key_cb, (void*)"MUTE");
+    y += 78;
 
-    // 媒体组
-    lv_obj_t* media_box = box(scr_control, 8, 150, 304, 96);
-    label(media_box, "媒体播放", 16, sub_color, 10, 8, 120);
-    button(media_box, "上一首", 10, 40, 88, 44, send_key_cb, (void*)"PREV");
-    button(media_box, "播放暂停", 104, 40, 96, 44, send_key_cb, (void*)"PLAY", accent);
-    button(media_box, "下一首", 206, 40, 88, 44, send_key_cb, (void*)"NEXT");
+    button(page, "上一首", 10, y, 88, 40, send_key_cb, (void*)"PREV");
+    button(page, "播放暂停", 104, y, 96, 40, send_key_cb, (void*)"PLAY", accent);
+    button(page, "下一首", 206, y, 88, 40, send_key_cb, (void*)"NEXT");
+    y += 52;
 
-    // 屏幕亮度组（本地生效）
-    lv_obj_t* bl_box = box(scr_control, 8, 256, 304, 96);
-    label(bl_box, "屏幕亮度", 16, sub_color, 10, 8, 120);
-    button(bl_box, "-", 10, 40, 64, 44, bright_down, nullptr);
-    ctrl_bright_lbl = label(bl_box, "90%", 24, text_color, 84, 46, 92);
+    label(page, "屏幕亮度", 20, sub_color, 10, y, 160);
+    button(page, "-", 10, y + 26, 64, 40, bright_down, nullptr);
+    ctrl_bright_lbl = label(page, "90%", 24, text_color, 84, y + 34, 92);
     lv_obj_set_style_text_align(ctrl_bright_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    button(bl_box, "+", 184, 40, 64, 44, bright_up, nullptr);
+    button(page, "+", 178, y + 26, 64, 40, bright_up, nullptr);
+    y += 78;
 
-    label(scr_control, "音量与媒体由电脑执行 · 实时生效", 16, sub_color, 10, 372, 300);
+    label(page, "音量与媒体由电脑执行 · 实时生效", 16, sub_color, 10, y, 300);
 }
 
 void build_page(uint8_t index) {
@@ -623,19 +601,6 @@ void build_page(uint8_t index) {
         lv_obj_set_style_text_align(page.topwx, LV_TEXT_ALIGN_RIGHT, 0);
         set_text(page.topwx, latest.wx_valid ? weather_text(latest.wx_code) : "");
     }
-    // 电池标签只在状态栏模式（时钟或天气至少一个开启）创建；
-    // 两开关全关的回退模式里右侧是「在线/电脑离线」文字，避免重叠。
-    if (top_clock || top_wx) {
-        page.topbat = label(page.screen, "", 20, text_color, 240, HEAD_Y + 2, 52);
-        lv_obj_set_style_text_align(page.topbat, LV_TEXT_ALIGN_RIGHT, 0);
-        if (latest.bat >= 0 && latest.bat <= 100) {
-            char bat_text[12];
-            snprintf(bat_text, sizeof(bat_text), "%d%%", latest.bat);
-            set_text(page.topbat, bat_text);
-        } else {
-            lv_obj_add_flag(page.topbat, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
     if (top_clock || top_wx) {
         page.topdot = lv_obj_create(page.screen);
         lv_obj_set_pos(page.topdot, 300, HEAD_Y + 6);
@@ -659,8 +624,9 @@ void build_page(uint8_t index) {
     const int DOT_W = 32, DOT_H = 22, HIT = 44, GAP = 10;
     int total = n * DOT_W + (n - 1) * GAP;
     int x0 = (SCR_W - total) / 2;
-    button(page.screen, "☰", 4, FOOT_Y - 2, 40, 28, open_launcher_cb, nullptr);
-    button(page.screen, "⚙", SCR_W - 44, FOOT_Y - 2, 40, 28, open_control_cb, nullptr);
+    // 左下角单 ⚙：打开设置页（快捷应用 + 音量/媒体 + 亮度 合并）。
+    // 原左 ☰ 右 ⚙ 双按钮按需求合并；右侧留白给页码呼吸。
+    button(page.screen, "⚙", 4, FOOT_Y - 2, 40, 28, open_settings_cb, nullptr);
     for (uint8_t k = 0; k < n; ++k) {
         int cx = x0 + k * (DOT_W + GAP);
         // 透明外扩热区：保证每颗圆点实际可触面积 >= 44x44。
@@ -760,6 +726,16 @@ uint32_t state_color(const char* s) {
 bool state_running(const char* s) {
     return !strcmp(s, "THINKING") || !strcmp(s, "GENERATING") ||
            !strcmp(s, "TOOL") || !strcmp(s, "BUILD");
+}
+
+// 任务活跃 = 任一会话处于运行/等待用户状态（非 DONE/IDLE）。
+// 用于屏保门控：盯着长任务时屏幕不能自己睡掉。
+bool tasks_active() {
+    for (const AITask& t : latest.tasks) {
+        if (!t.used) continue;
+        if (strcmp(t.state, "DONE") && strcmp(t.state, "IDLE")) return true;
+    }
+    return false;
 }
 
 void render_ai(WidgetView& view) {
@@ -1073,7 +1049,7 @@ void render_generic(WidgetView& view) {
 }
 
 void render_control() {
-    if (!scr_control) return;
+    if (!scr_settings) return;
     char text[16];
     if (latest.vol >= 0) snprintf(text, sizeof(text), "%d%%", latest.vol);
     else snprintf(text, sizeof(text), "--");
@@ -1090,24 +1066,10 @@ void render_all() {
     int secs = clock_seconds();
     snprintf(tb, sizeof(tb), "%02d:%02d", secs / 3600, (secs / 60) % 60);
     const char* wx_txt = latest.wx_valid ? weather_text(latest.wx_code) : "";
-    bool bat_ok = latest.bat >= 0 && latest.bat <= 100;
     for (uint8_t p = 0; p < view_count; ++p) {
         PageView& page = views[p];
         if (page.topclock) set_text(page.topclock, tb);
         if (page.topwx) set_text(page.topwx, wx_txt);
-        if (page.topbat) {
-            if (bat_ok) {
-                char bat_text[12];
-                snprintf(bat_text, sizeof(bat_text), "%d%%", latest.bat);
-                set_text(page.topbat, bat_text);
-                // 低电量转警告色；正常的电池文字用主题文字色
-                lv_obj_set_style_text_color(page.topbat, lv_color_hex(
-                    latest.bat <= 20 ? COL_WARN : text_color), 0);
-                lv_obj_clear_flag(page.topbat, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_add_flag(page.topbat, LV_OBJ_FLAG_HIDDEN);
-            }
-        }
         if (page.topdot)
             lv_obj_set_style_bg_color(page.topdot,
                 lv_color_hex(online ? COL_OK : COL_ERR), 0);
@@ -1167,12 +1129,11 @@ void ui_rebuild() {
     lv_obj_t* old[6] = {};
     uint8_t old_count = view_count;
     for (uint8_t i = 0; i < old_count; ++i) old[i] = views[i].screen;
-    lv_obj_t* old_launcher = scr_launcher, *old_control = scr_control;
+    lv_obj_t* old_settings = scr_settings;
     memset(views, 0, sizeof(views));
-    scr_launcher = scr_control = nullptr;
+    scr_settings = nullptr;
     for (uint8_t i = 0; i < old_count; ++i) if (old[i]) lv_obj_del(old[i]);
-    if (old_launcher) lv_obj_del(old_launcher);
-    if (old_control) lv_obj_del(old_control);
+    if (old_settings) lv_obj_del(old_settings);
     view_count = g_profile.page_count;
     if (current_page >= view_count) current_page = 0;
     bg = g_profile.bg; grad = g_profile.grad; card = g_profile.card; accent = g_profile.accent;
@@ -1182,8 +1143,7 @@ void ui_rebuild() {
     memset(fired_dates, 0, sizeof(fired_dates));
     alarm_active = false;
     for (uint8_t i = 0; i < view_count; ++i) build_page(i);
-    build_launcher();
-    build_control();
+    build_settings();
     lv_scr_load(views[current_page].screen);
     lv_obj_del(blank);
     render_all();
@@ -1339,15 +1299,17 @@ void update_saver() {
 void ui_theme_tick() {
     uint32_t now = millis();
     alarm_tick();
-    // 息屏主题：无触摸超过阈值 → 息屏（4 款样式）；任何触摸 → 唤醒
+    // 息屏门控：无触摸超阈值才息屏，且任务活跃时不息屏（盯长任务是核心场景）；
+    // 已息屏后任务恢复 → 自动唤醒，避免"任务跑着、屏幕睡着"。
     if (idle_dim_secs > 0 && view_count) {
-        bool should = lv_disp_get_inactive_time(nullptr) > (uint32_t)idle_dim_secs * 1000;
+        bool should = lv_disp_get_inactive_time(nullptr) > (uint32_t)idle_dim_secs * 1000
+                      && !tasks_active();
         if (should && !saver_active && !overlay && !alarm_active) {
             saver_active = true;
             build_saver();
             lv_scr_load(scr_saver);
             display_brightness(20);
-        } else if (!should && saver_active) {
+        } else if (saver_active && (!should || tasks_active())) {
             saver_active = false;
             lv_scr_load(views[current_page].screen);
             display_brightness(g_profile.bright);
