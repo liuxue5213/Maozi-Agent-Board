@@ -25,6 +25,7 @@ void send_touch(const char* page) {
 }
 
 void setup() {
+    Serial.setRxBufferSize(2048);   // 突发事务（背景图/配置分帧）防 RX 溢出丢字节
     Serial.begin(115200);
     delay(200);
     profile_init();
@@ -110,6 +111,14 @@ void loop() {
             if (prefs.begin("wb", false)) {
                 prefs.putBool("top_clock", proto.t.top_clock_cfg != 0);
                 prefs.putBool("top_wx", proto.t.top_wx_cfg != 0);
+                prefs.end();
+            }
+        }
+        if (proto.t.cardopa_changed) {
+            proto.t.cardopa_changed = false;
+            ui_set_card_opa((uint8_t)proto.t.cardopa_cfg);
+            if (prefs.begin("wb", false)) {
+                prefs.putUChar("card_opa", (uint8_t)proto.t.cardopa_cfg);
                 prefs.end();
             }
         }

@@ -99,7 +99,11 @@ class App:
     def push_theme(self, theme: dict | None = None):
         """把配置里的主题色 + 亮度推送到屏幕。"""
         th = theme or self.profile["theme"]
-        parts = [f"{k}:{v}" for k, v in th.items() if k != "bright"]
+        parts = []
+        for k, v in th.items():
+            if k == "bright":
+                continue
+            parts.append(f"cardopa:{v}" if k == "card_opa" else f"{k}:{v}")
         if th.get("bright") is not None:
             parts.append(f"bright:{th['bright']}")
         if self.link:
@@ -184,8 +188,10 @@ class App:
             self.sync_sent_at = time.monotonic()
             self.profile_status = "传输中"
             self.health.event("sync_sent", version=profile["version"])
+        # 限速发送：115200 下设备串口缓冲有限，突发会丢字节导致 NAK
         for line in encode_profile(profile):
             self.link.send(line)
+            time.sleep(0.012)
 
     def send_bg_image(self, data: bytes) -> bool:
         """背景图分帧下发（IMG=BEGIN/DATA/END，同 CFG 事务风格）。"""
@@ -196,8 +202,10 @@ class App:
         for seq, start in enumerate(range(0, len(data), 90)):
             chunk = _b64.b64encode(data[start:start + 90]).decode("ascii")
             self.link.send(f"IMG=DATA,{seq},{chunk}\n".encode())
+            time.sleep(0.012)
         self.link.send("IMG=END,bg.jpg\n".encode())
         self.health.event("bgimg_sent", size=len(data))
+        time.sleep(0.3)   # 等设备落盘/解码完成再允许后续流量
         return True
 
     def clear_bg_image(self) -> bool:
@@ -205,6 +213,22 @@ class App:
             return False
         self.link.send("IMG=DELETE\n".encode())
         self.health.event("bgimg_cleared")
+        return True
+
+    def send_ota(self, data: bytes) -> bool:
+        """OTA 固件分帧下发（OTA=BEGIN/DATA/END）。成功后设备自动重启。"""
+        if not self.link or not self.link.status.startswith("connected:"):
+            return False
+        import base64 as _b64
+        self.link.send(f"OTA=BEGIN,{len(data)}\n".encode())
+        time.sleep(0.1)
+        for seq, start in enumerate(range(0, len(data), 90)):
+            chunk = _b64.b64encode(data[start:start + 90]).decode("ascii")
+            self.link.send(f"OTA=DATA,{seq},{chunk}\n".encode())
+            time.sleep(0.012)
+        time.sleep(0.3)
+        self.link.send("OTA=END\n".encode())
+        self.health.event("ota_sent", size=len(data))
         return True
 
     def check_sync_timeout(self):

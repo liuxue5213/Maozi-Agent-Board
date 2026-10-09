@@ -1,4 +1,6 @@
 #include "proto.h"
+#include <Update.h>
+#include <mbedtls/base64.h>
 #include "profile.h"
 #include "bgimg.h"
 
@@ -137,6 +139,51 @@ void Proto::handle(const char* line) {
             t.ai_model[sizeof(t.ai_model) - 1] = 0;
         }
         dirty = true;
+        return;
+    }
+    if (!strcmp(key, "OTA")) {
+        static uint32_t ota_size = 0, ota_seq = 0;
+        static bool ota_active = false;
+        static uint8_t bin_buf[96]; size_t bin_len = 0;
+        if (!strncmp(v, "BEGIN,", 6)) {
+            ota_size = strtoul(strchr(v, ',') + 1, nullptr, 10);
+            if (!ota_size || ota_size > 3 * 1024 * 1024 || !Update.begin(ota_size)) {
+                Serial.println("NAK=OTA,BEGIN"); return;
+            }
+            ota_active = true; ota_seq = 0;
+            Serial.println("ACK=OTA,BEGIN");
+            return;
+        }
+        if (!strncmp(v, "DATA,", 5) && ota_active) {
+            const char* b64_start = v + 5;
+            while (*b64_start == ',') ++b64_start;
+            if (strtoul(b64_start, (char**)&b64_start, 10) != ota_seq) {
+                Update.abort(); ota_active = false;
+                Serial.println("NAK=OTA,SEQ"); return;
+            }
+            while (*b64_start == ',') ++b64_start;
+            uint8_t bin[96]; size_t bin_len = 0;
+            if (mbedtls_base64_decode(bin, sizeof(bin), &bin_len,
+                (const unsigned char*)b64_start, strlen(b64_start)) != 0) {
+                Update.abort(); ota_active = false;
+                Serial.println("NAK=OTA,DECODE"); return;
+            }
+            Update.write(bin, bin_len);
+            ++ota_seq;
+            return;
+        }
+        if (!strncmp(v, "END", 3) && ota_active) {
+            if (!Update.end(true)) {
+                ota_active = false;
+                Serial.println("NAK=OTA,VERIFY"); return;
+            }
+            ota_active = false;
+            Serial.println("ACK=OTA,REBOOTING");
+            Serial.flush();
+            delay(500);
+            ESP.restart();
+            return;
+        }
         return;
     }
     if (!strcmp(key, "AIT")) {

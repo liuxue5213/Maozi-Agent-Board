@@ -19,6 +19,91 @@ const themePresets = {
 let draft = null, saved = null, live = {tasks:[],telemetry:{},device:'等待设备'};
 let selected = 0, dirty = false, dragPage = -1, dragWidget = -1, toastTimer = null;
 
+
+// ---------- 主题画廊：8 款程序绘制背景（一键推送+配色） ----------
+function srng(seed){let s=seed;return()=>{s=(s*9301+49297)%233280;return s/233280}};
+const galleryThemes = {
+  aurora:{name:'极光',card_opa:70,colors:{bg:'060A14',grad:'0B1428',card:'13223C',card_edge:'1E3A5F',accent:'5EEAD4',text:'E9FFFA',sub:'8FB6D9'}},
+  synthwave:{name:'赛博霓虹',card_opa:70,colors:{bg:'0D0221',grad:'1A0533',card:'260945',card_edge:'7B2CBF',accent:'F72585',text:'FFF8FE',sub:'B39DDB'}},
+  dusk:{name:'山峦黄昏',card_opa:65,colors:{bg:'221028',grad:'40203A',card:'33203F',card_edge:'7A4A63',accent:'FF9E64',text:'FFF3E9',sub:'D4A88F'}},
+  starry:{name:'星空',card_opa:70,colors:{bg:'050914',grad:'0A1230',card:'101C3C',card_edge:'27408B',accent:'8AB8FF',text:'EEF4FF',sub:'8FA3C9'}},
+  garden:{name:'像素花园',card_opa:70,colors:{bg:'0C1810',grad:'122418',card:'1A3322',card_edge:'2E5C40',accent:'A3E635',text:'F0FDF0',sub:'94C9A3'}},
+  waves:{name:'深海波浪',card_opa:70,colors:{bg:'03121E',grad:'062033',card:'0A2A42',card_edge:'1D5C7A',accent:'22D3EE',text:'E8FBFF',sub:'89B8C9'}},
+  ink:{name:'墨韵',card_opa:88,colors:{bg:'F2EFE9',grad:'E8E4DA',card:'FFFFFF',card_edge:'C9C2B4',accent:'B03A2E',text:'2B2B2B',sub:'6B6B60'}},
+  ember:{name:'熔岩余烬',card_opa:70,colors:{bg:'0F0505',grad:'1F0808',card:'2A0E0E',card_edge:'6B2020',accent:'FF6B35',text:'FFF0E8',sub:'C9947E'}}
+};
+function drawGallery(ctx,w,h,key){
+  const R=srng(key.length*1337+42);
+  const lg=ctx.createLinearGradient(0,0,0,h);
+  const C=galleryThemes[key].colors;
+  lg.addColorStop(0,'#'+C.bg); lg.addColorStop(1,'#'+C.grad);
+  ctx.fillStyle=lg; ctx.fillRect(0,0,w,h);
+  if(key==='aurora'||key==='starry'){
+    for(let i=0;i<140;i++){ctx.globalAlpha=.2+R()*.7;ctx.fillStyle='#FFF';
+      ctx.fillRect(R()*w,R()*h,R()>.9?2:1,R()>.9?2:1)}
+    ctx.globalAlpha=1;
+    const blob=(x,y,r,c)=>{const g=ctx.createRadialGradient(x,y,0,x,y,r);
+      g.addColorStop(0,c);g.addColorStop(1,'transparent');ctx.fillStyle=g;
+      ctx.fillRect(x-r,y-r,r*2,r*2)};
+    if(key==='aurora'){blob(w*.7,h*.25,w*.8,'rgba(94,234,212,.16)');blob(w*.3,h*.35,w*.7,'rgba(167,139,250,.14)');blob(w*.5,h*.15,w*.6,'rgba(94,234,212,.10)')}
+    else{blob(w*.3,h*.3,w*.7,'rgba(138,184,255,.10)');blob(w*.7,h*.6,w*.6,'rgba(167,139,250,.08)')}
+  }
+  if(key==='synthwave'){
+    const g=ctx.createRadialGradient(w/2,h*.34,10,w/2,h*.34,h*.28);
+    g.addColorStop(0,'#FFD319');g.addColorStop(.7,'#FF2975');g.addColorStop(1,'transparent');
+    ctx.fillStyle=g;ctx.fillRect(0,0,w,h*.5);
+    ctx.strokeStyle='rgba(247,37,133,.5)';ctx.lineWidth=1;
+    for(let i=0;i<12;i++){const y=h*.52+i*i*1.1+8;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+    for(let i=-6;i<=6;i++){ctx.beginPath();ctx.moveTo(w/2+i*8,h*.52);ctx.lineTo(w/2+i*w*.16,h);ctx.stroke()}
+  }
+  if(key==='dusk'){
+    ctx.fillStyle='rgba(255,158,100,.35)';ctx.fillRect(0,h*.3,w,h*.25);
+    const layers=['rgba(40,16,40,.55)','rgba(28,10,30,.75)','#160818'];
+    layers.forEach((c,li)=>{ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(0,h);
+      const base=h*.55+li*h*.09;
+      for(let x=0;x<=w;x+=w/8){const pk=base-R()*(h*.14);ctx.lineTo(x,pk);ctx.lineTo(x+w/16,base)}
+      ctx.lineTo(w,h);ctx.fill()});
+  }
+  if(key==='garden'){
+    const cols=['#F472B6','#FBBF24','#A78BFA','#5EEAD4'];
+    for(let i=0;i<26;i++){const x=R()*w,y=h*.55+R()*h*.45,c=cols[i%4];
+      ctx.fillStyle='#2E5C40';ctx.fillRect(x-1,y,3,10);
+      ctx.fillStyle=c;ctx.fillRect(x-4,y-6,4,4);ctx.fillRect(x+1,y-6,4,4);
+      ctx.fillRect(x-4,y-2,4,4);ctx.fillRect(x+1,y-2,4,4);
+      ctx.fillStyle='#FFF3';ctx.fillRect(x-1,y-3,3,3)}
+    for(let i=0;i<20;i++){ctx.globalAlpha=.3+R()*.5;ctx.fillStyle='#D9F99D';
+      ctx.fillRect(R()*w,R()*h*.5,2,2)}
+    ctx.globalAlpha=1;
+  }
+  if(key==='waves'){
+    ctx.strokeStyle='rgba(232,251,255,.25)';ctx.lineWidth=2;
+    for(let i=0;i<8;i++){ctx.beginPath();
+      for(let x=0;x<=w;x+=8){const y=h*.2+i*h*.09+Math.sin(x*.03+i*1.7)*12;
+        x===0?ctx.moveTo(x,y):ctx.lineTo(x,y)}
+      ctx.stroke()}
+    for(let i=0;i<24;i++){ctx.globalAlpha=.15+R()*.3;ctx.fillStyle='#A5F3FC';
+      ctx.beginPath();ctx.arc(R()*w,h*.55+R()*h*.45,1+R()*2.5,0,7);ctx.fill()}
+    ctx.globalAlpha=1;
+  }
+  if(key==='ink'){
+    ctx.fillStyle='rgba(43,43,43,.14)';
+    const layers=[[.62,.18],[.72,.26],[.84,.36]];
+    layers.forEach(([base,amp],li)=>{ctx.globalAlpha=.35+li*.2;
+      ctx.beginPath();ctx.moveTo(0,h);ctx.lineTo(0,h*base);
+      for(let x=0;x<=w;x+=w/10){const pk=h*base-R()*h*amp;ctx.lineTo(x,pk);ctx.lineTo(x+w/20,h*base)}
+      ctx.lineTo(w,h);ctx.fill()});
+    ctx.globalAlpha=1;ctx.fillStyle='#B03A2E';ctx.fillRect(w-52,h-64,26,26);
+  }
+  if(key==='ember'){
+    for(let i=0;i<60;i++){ctx.globalAlpha=.15+R()*.6;
+      ctx.fillStyle=R()>.4?'#FF6B35':'#FFB86B';
+      ctx.beginPath();ctx.arc(R()*w,h-R()*h*.8,1+R()*3,0,7);ctx.fill()}
+    ctx.globalAlpha=1;ctx.strokeStyle='rgba(255,107,53,.25)';
+    for(let i=0;i<6;i++){ctx.beginPath();ctx.moveTo(R()*w,h);
+      ctx.lineTo(R()*w,h*.3+R()*h*.3);ctx.stroke()}
+  }
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -91,6 +176,7 @@ function renderInspector() {
   $('idle-dim').value=draft.theme.idledim??60;$('idle-dim-val').textContent=(draft.theme.idledim??60)==0?'关闭':(draft.theme.idledim+' 秒');
   $('topclock-toggle').checked=!!Number(draft.theme.topclock??1);
   $('topwx-toggle').checked=!!Number(draft.theme.topwx??1);
+  $('card-opa').value=draft.theme.card_opa??100;$('opa-value').textContent=(draft.theme.card_opa??100)+'%';
   $('saver-style').value=draft.theme.saver??0;
   $('saver-msg').value=draft.theme.savermsg||'';
   for(const key of ['bg','grad','card','accent','text']) $('theme-'+key).value='#'+draft.theme[key];
@@ -216,6 +302,24 @@ async function save(){
   const result=await request('/api/save',check.profile);
   saved=result.profile;draft=structuredClone(saved);dirty=false;localStorage.removeItem('workbuddy-draft');render();notice('配置已保存，等待同步到设备');
 }
+async function applyGallery(key){
+  const th=galleryThemes[key];
+  try{
+    if(live.device?.startsWith('connected:')){
+      notice(`正在生成「${th.name}」背景并推送…`);
+      const c=document.createElement('canvas');c.width=320;c.height=480;
+      th.draw(c.getContext('2d'),320,480);
+      const blob=await new Promise(ok=>c.toBlob(ok,'image/jpeg',0.82));
+      const r=await fetch('/api/bgimg',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:await blob.arrayBuffer()});
+      if(!r.ok){const d=await r.json();throw new Error(d.error||'背景推送失败')}
+    }else{notice('设备未连接：已应用配色，背景图待连接后重新点击主题')}
+    Object.assign(draft.theme,th.colors,{card_opa:th.card_opa});
+    markDirty();
+    await save();await request('/api/sync',{});
+    notice(`「${th.name}」主题已应用：背景+配色+卡片透明度`);
+    poll();
+  }catch(err){notice(err.message,true)}
+}
 function bind(){
   $('add-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);draft.pages.push({id:uniqueId('p'),title:'新页面',layout:'grid_2x2',widgets:['clock']});selected=draft.pages.length-1;markDirty()};
   $('page-title').onchange=e=>{current().title=e.target.value;markDirty()};
@@ -231,13 +335,27 @@ function bind(){
   $('saver-msg').onchange=e=>{draft.theme.savermsg=e.target.value;markDirty()};
   $('topclock-toggle').onchange=e=>{draft.theme.topclock=e.target.checked?1:0;markDirty()};
   $('topwx-toggle').onchange=e=>{draft.theme.topwx=e.target.checked?1:0;markDirty()};
+  $('card-opa').oninput=e=>{draft.theme.card_opa=Number(e.target.value);$('opa-value').textContent=e.target.value+'%';markDirty()};
   const startTemplates={
     '专注模式':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']}],
     '数据控':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'pc',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']}],
     '陪伴模式':[{id:'ai',title:'AI',layout:'list',widgets:['ai_list']},{id:'env',title:'环境',layout:'grid_2x2',widgets:['environment','weather']},{id:'today',title:'今天',layout:'grid_2x2',widgets:['today_calendar','reminder_list']}],
     '极简时钟':[{id:'clock',title:'时钟',layout:'grid_2x2',widgets:['clock']}]
   };
-  const presetRoot=$('start-templates');presetRoot.replaceChildren();
+  const gal=$('theme-gallery');gal.replaceChildren();
+  Object.entries(galleryThemes).forEach(([key,th])=>{
+    const cell=el('div','gallery-item');
+    const thumb=document.createElement('canvas');thumb.width=64;thumb.height=96;
+    thumb.className='gallery-thumb';
+    const ctx=thumb.getContext('2d');ctx.save();ctx.scale(64/320,96/480);
+    try{th.draw(ctx,320,480)}catch(e){}
+    ctx.restore();
+    cell.append(thumb,el('span','',th.name));
+    cell.onclick=()=>applyGallery(key);
+    cell.title='点击应用：推送背景+自动配色';
+    gal.append(cell);
+  });
+    const presetRoot=$('start-templates');presetRoot.replaceChildren();
   Object.entries(startTemplates).forEach(([name,pages])=>{
     const b=el('button','button ghost',name);
     b.onclick=()=>{draft.pages=structuredClone(pages);selected=0;markDirty();notice(`已套用「${name}」模板，保存并同步生效`)};

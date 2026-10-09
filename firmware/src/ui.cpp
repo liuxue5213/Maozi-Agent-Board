@@ -38,6 +38,7 @@ struct PageView {
 PageView views[6];
 uint8_t view_count = 0, current_page = 0;
 uint32_t bg = COL_BG, grad = COL_BG, card = COL_CARD, accent = COL_ACCENT;
+uint8_t card_opa = 255;              // 卡片不透明度（0-255），背景图模式下 70% 左右最有层次
 uint32_t text_color = COL_TEXT, sub_color = COL_SUB;
 bool online = false, have_data = false, alarm_active = false;
 bool top_clock = true, top_wx = true;
@@ -49,7 +50,11 @@ int idle_dim_secs = 60;              // 0=关闭；无触摸超时后进入息�
 bool saver_active = false;
 lv_obj_t* scr_saver = nullptr;
 lv_obj_t* saver_time_lbl = nullptr, *saver_date_lbl = nullptr;
-uint8_t saver_style = 0;             // 0 极简 1 仪表 2 像素夜色 3 诗词短句
+uint8_t saver_style = 0;
+// AI 页像素小机器人（LVGL 原生对象，表情联动 AI 状态）
+lv_obj_t *bot_root = nullptr, *bot_body = nullptr, *bot_eye_l = nullptr, *bot_eye_r = nullptr;
+lv_obj_t *bot_mouth = nullptr, *bot_antenna = nullptr, *bot_badge = nullptr;
+int bot_last_state_hash = 0;             // 0 极简 1 仪表 2 像素夜色 3 诗词短句
 char saver_msg[64] = "代码写完了吗？起来喝口水";
 uint32_t seen_hms = 0;
 
@@ -292,6 +297,58 @@ void make_ai(WidgetView& view, lv_obj_t* screen) {
         view.extra[i + 1] = label(row, "", 20, sub_color,  8,  5, 268, 26);   // 行1 工具·项目
         view.extra[i + 4] = label(row, "", 20, text_color, 8, 33, 268, 26);   // 行2 会话·状态
     }
+    // 像素小机器人（右下角）
+    bot_root = lv_obj_create(view.root);
+    lv_obj_set_pos(bot_root, 226, 288);
+    lv_obj_set_size(bot_root, 60, 76);
+    lv_obj_set_style_bg_opa(bot_root, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bot_root, 0, 0);
+    lv_obj_clear_flag(bot_root, LV_OBJ_FLAG_SCROLLABLE);
+    bot_body = lv_obj_create(bot_root);
+    lv_obj_set_pos(bot_body, 8, 18);
+    lv_obj_set_size(bot_body, 44, 44);
+    lv_obj_set_style_bg_color(bot_body, lv_color_hex(0x1A2A4A), 0);
+    lv_obj_set_style_radius(bot_body, 14, 0);
+    lv_obj_set_style_border_width(bot_body, 2, 0);
+    lv_obj_set_style_border_color(bot_body, lv_color_hex(accent), 0);
+    lv_obj_clear_flag(bot_body, LV_OBJ_FLAG_SCROLLABLE);
+    // 天线
+    lv_obj_t* ant = lv_line_create(bot_root);
+    static lv_point_t ant_pts[] = {{30, 4}, {30, 16}};
+    lv_line_set_points(ant, ant_pts, 2);
+    lv_obj_set_style_line_color(ant, lv_color_hex(accent), 0);
+    lv_obj_set_style_line_width(ant, 2, 0);
+    bot_antenna = lv_obj_create(bot_root);
+    lv_obj_set_pos(bot_antenna, 26, 0);
+    lv_obj_set_size(bot_antenna, 8, 8);
+    lv_obj_set_style_radius(bot_antenna, 4, 0);
+    lv_obj_set_style_bg_color(bot_antenna, lv_color_hex(COL_OK), 0);
+    lv_obj_set_style_border_width(bot_antenna, 0, 0);
+    // 眼睛
+    bot_eye_l = lv_obj_create(bot_body);
+    lv_obj_set_pos(bot_eye_l, 8, 12);
+    lv_obj_set_size(bot_eye_l, 10, 10);
+    lv_obj_set_style_radius(bot_eye_l, 5, 0);
+    lv_obj_set_style_bg_color(bot_eye_l, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_style_border_width(bot_eye_l, 0, 0);
+    lv_obj_clear_flag(bot_eye_l, LV_OBJ_FLAG_SCROLLABLE);
+    bot_eye_r = lv_obj_create(bot_body);
+    lv_obj_set_pos(bot_eye_r, 26, 12);
+    lv_obj_set_size(bot_eye_r, 10, 10);
+    lv_obj_set_style_radius(bot_eye_r, 5, 0);
+    lv_obj_set_style_bg_color(bot_eye_r, lv_color_hex(COL_TEXT), 0);
+    lv_obj_set_style_border_width(bot_eye_r, 0, 0);
+    lv_obj_clear_flag(bot_eye_r, LV_OBJ_FLAG_SCROLLABLE);
+    // 嘴巴
+    bot_mouth = lv_obj_create(bot_body);
+    lv_obj_set_pos(bot_mouth, 16, 30);
+    lv_obj_set_size(bot_mouth, 12, 3);
+    lv_obj_set_style_radius(bot_mouth, 2, 0);
+    lv_obj_set_style_bg_color(bot_mouth, lv_color_hex(accent), 0);
+    lv_obj_set_style_border_width(bot_mouth, 0, 0);
+    // 状态徽标（! ? ✓ ×）
+    bot_badge = label(bot_root, "", 24, COL_WARN, 0, 8, 60);
+    lv_obj_set_style_text_align(bot_badge, LV_TEXT_ALIGN_CENTER, 0);
 }
 
 void make_hardware(WidgetView& view, lv_obj_t* screen) {
@@ -588,6 +645,34 @@ void render_ai(WidgetView& view) {
         lv_obj_add_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
         set_text(view.extra[row + 1], "");
         set_text(view.extra[row + 4], "");
+    }
+    // 角色表情
+    const char* st = focus >= 0 ? latest.tasks[focus].state : "IDLE";
+    int hash = (int)(st[0]) * 31 + (int)(st[1] ? st[1] : 0);
+    if (hash != bot_last_state_hash) {
+        bot_last_state_hash = hash;
+        bool is_err = !strcmp(st, "ERROR");
+        bool is_done = !strcmp(st, "DONE");
+        bool is_wait = !strcmp(st, "WAIT_INPUT") || !strcmp(st, "ASK");
+        bool is_idle = !strcmp(st, "IDLE");
+        uint32_t eye_col = is_err ? COL_ERR : is_done ? COL_OK : COL_TEXT;
+        uint32_t body_col = is_err ? 0x2A1A1A : is_done ? 0x1A2A1A : 0x1A2A4A;
+        uint32_t border_col = is_err ? COL_ERR : is_done ? COL_OK : accent;
+        lv_obj_set_style_bg_color(bot_body, lv_color_hex(body_col), 0);
+        lv_obj_set_style_border_color(bot_body, lv_color_hex(border_col), 0);
+        lv_obj_set_style_bg_color(bot_eye_l, lv_color_hex(eye_col), 0);
+        lv_obj_set_style_bg_color(bot_eye_r, lv_color_hex(eye_col), 0);
+        // 眼睛形状：IDLE 压扁(睡)、DONE 压扁(笑)、其他圆
+        int eye_h = is_idle || is_done ? 4 : 10;
+        lv_obj_set_height(bot_eye_l, eye_h);
+        lv_obj_set_height(bot_eye_r, eye_h);
+        lv_obj_set_y(bot_eye_l, 12 + (10 - eye_h) / 2);
+        lv_obj_set_y(bot_eye_r, 12 + (10 - eye_h) / 2);
+        // 嘴巴：ERROR 宽扁 / WAIT_INPUT 小圆嘴 / 其他正常
+        lv_obj_set_width(bot_mouth, is_err ? 18 : 12);
+        lv_obj_set_style_bg_color(bot_mouth,
+            lv_color_hex(is_err ? COL_ERR : is_done ? COL_OK : accent), 0);
+        set_text(bot_badge, is_wait ? "!" : is_err ? "×" : "");
     }
 }
 
@@ -1020,5 +1105,11 @@ void ui_set_topbar(bool clock_on, bool wx_on) {
     if (top_clock == clock_on && top_wx == wx_on) return;
     top_clock = clock_on;
     top_wx = wx_on;
+    ui_rebuild();
+}
+
+
+void ui_set_card_opa(uint8_t opa) {
+    card_opa = opa;
     ui_rebuild();
 }

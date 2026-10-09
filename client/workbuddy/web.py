@@ -51,6 +51,18 @@ def start_settings_server(app, port):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if path == "/api/ota":
+                length = int(self.headers.get("Content-Length", "0"))
+                if not (0 < length <= 3 * 1024 * 1024):
+                    self._json(413, {"error": "固件需在 3MB 内"})
+                    return
+                if not app.link or not app.link.status.startswith("connected:"):
+                    self._json(503, {"error": "设备未连接"})
+                    return
+                data = self.rfile.read(length)
+                app.send_ota(data)
+                self._json(200, {"status": "固件已发送，设备将自动重启并切分区"})
+                return
             if path == "/api/bgimg":
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > 120 * 1024:
