@@ -10,6 +10,7 @@ import zlib as _zlib
 
 from .profile import encode_profile, load_profile, save_profile, validate_profile
 from .telemetry import HealthLog
+from .weather import WeatherFetcher
 
 
 class App:
@@ -23,6 +24,7 @@ class App:
         self.env_seen = {}
         self.control = ControlApp()
         self.health = HealthLog()
+        self.weather = WeatherFetcher(lambda: (self.profile.get('weather') or {}).get('city', ''))
         self.fw_caps = None          # 设备能力（来自 FW 握手），None = 未知
         self.profile_lock = threading.Lock()
         self.profile = load_profile()
@@ -101,6 +103,7 @@ class App:
 
     def stop(self):
         self._stop = True
+        self.weather.stop()
 
     def _launch_app(self, app_id: str):
         with self.profile_lock:
@@ -248,6 +251,10 @@ class App:
         t["date"] = time.strftime("%Y-%m-%d")
         t["remind"] = self._next_remind(now)
         t.update(self.control.snapshot())  # VOL/MUT（不可用平台自动省略）
+        with self.weather._lock:
+            w = dict(self.weather.data)
+        if w.get("temp") is not None:
+            t["wx"] = f"{w['temp']},{w['code']},{w['hi']},{w['lo']}"
         for k in ("temp", "hum"):
             if (self.env.get(k) is not None
                     and time.monotonic() - self.env_seen.get(k, 0) < 6.0
@@ -286,6 +293,7 @@ class App:
     def run(self, duration: float = 0.0):
         if self.link:
             self.link.start()
+        self.weather.start()
         web_server = None
         if self.cfg.web:
             try:

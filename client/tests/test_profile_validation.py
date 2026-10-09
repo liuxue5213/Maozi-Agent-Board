@@ -34,7 +34,7 @@ class PageRuleTests(unittest.TestCase):
             validate_profile(base(pages=pages))
 
     def test_unknown_widget_rejected(self):
-        pages = [{"id": "p", "title": "页", "layout": "grid_2x2", "widgets": ["weather"]}]
+        pages = [{"id": "p", "title": "页", "layout": "grid_2x2", "widgets": ["news_feed"]}]
         with self.assertRaisesRegex(ValueError, "组件"):
             validate_profile(base(pages=pages))
 

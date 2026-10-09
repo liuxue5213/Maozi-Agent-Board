@@ -29,6 +29,11 @@ class _Control:
         return {}
 
 
+class _Weather:
+    _lock = __import__("threading").Lock()
+    data = {}
+
+
 class _Cfg:
     reminders = []
 
@@ -57,6 +62,7 @@ class StateProtocolTests(unittest.TestCase):
         app.cfg = _Cfg()
         app.link = _Link()
         app.control = _Control()
+        app.weather = _Weather()
         app.env = {"temp": 25.0, "hum": 40}
         app.env_seen = {"temp": time.monotonic() - 7, "hum": time.monotonic() - 7}
         self.assertNotIn("temp", app.tick(time.time()))

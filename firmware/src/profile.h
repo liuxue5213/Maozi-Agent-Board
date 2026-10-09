@@ -3,7 +3,7 @@
 
 enum WidgetKind : uint8_t {
     W_AI_LIST, W_HW_CARDS, W_CLOCK, W_ENVIRONMENT,
-    W_REMINDERS, W_CALENDAR, W_ALARM, W_INVALID
+    W_REMINDERS, W_CALENDAR, W_ALARM, W_WEATHER, W_COUNTDOWN, W_INVALID
 };
 
 struct PageConfig {
@@ -33,8 +33,8 @@ struct DeviceProfile {
     uint32_t version = 1;
     uint8_t page_count = 0;
     PageConfig pages[6];
-    uint8_t reminder_count = 0, calendar_count = 0, alarm_count = 0, app_count = 0;
-    ScheduleItem reminders[20], calendar[50], alarms[16];
+    uint8_t reminder_count = 0, calendar_count = 0, alarm_count = 0, app_count = 0, countdown_count = 0;
+    ScheduleItem reminders[20], calendar[50], alarms[16], countdowns[8];
     AppEntry apps[12];
     uint32_t bg = 0x0B1220, grad = 0x0E1B33, card = 0x274064, accent = 0x22D3EE;
     uint32_t text = 0xF3F7FF, sub = 0xA8BDD9;

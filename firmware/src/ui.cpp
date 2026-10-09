@@ -288,6 +288,8 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
     case W_REMINDERS: title = "提醒列表"; break;
     case W_CALENDAR: title = "今日日历"; break;
     case W_ALARM: title = "闹钟"; break;
+    case W_WEATHER: title = "天气"; break;
+    case W_COUNTDOWN: title = "倒计时"; break;
     default: break;
     }
     label(view.root, title, 20, sub_color, 12, 12, w - 24);
@@ -544,6 +546,43 @@ void render_hardware(WidgetView& view) {
     snprintf(line, sizeof(line), "余 %.0f GB", latest.diskfree); set_text(view.extra[7], line);
 }
 
+const char* weather_text(int code) {
+    if (code == 0) return "晴";
+    if (code <= 2) return "多云";
+    if (code == 3) return "阴";
+    if (code == 45 || code == 48) return "雾";
+    if (code >= 51 && code <= 57) return "毛毛雨";
+    if (code >= 61 && code <= 67) return "雨";
+    if (code >= 71 && code <= 77) return "雪";
+    if (code >= 80 && code <= 82) return "阵雨";
+    if (code >= 85 && code <= 86) return "阵雪";
+    if (code >= 95) return "雷暴";
+    return "未知";
+}
+
+// 目标日期时间（date="YYYY-MM-DD" time="HH:MM"）距现在的剩余秒数（负=已过）
+long countdown_seconds(const ScheduleItem* item) {
+    int ty = 0, tm = 0, td = 0, th = 0, tmn = 0;
+    if (sscanf(item->date, "%d-%d-%d", &ty, &tm, &td) != 3) return -1;
+    if (sscanf(item->time, "%d:%d", &th, &tmn) != 2) return -1;
+    // 天数差（Howard Hinnant days_from_civil）
+    auto days_civil = [](int y, int m, int d) -> long {
+        y -= m <= 2;
+        long era = (y >= 0 ? y : y - 399) / 400;
+        unsigned yoe = (unsigned)(y - era * 400);
+        unsigned doy = (153u * (unsigned)(m + (m > 2 ? -3 : 9)) + 2u) / 5u + (unsigned)d - 1u;
+        unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+        return era * 146097L + (long)doe - 719468L;
+    };
+    if (!latest.date[0]) return -1;
+    int ny = 0, nm = 0, nd = 0;
+    if (sscanf(latest.date, "%d-%d-%d", &ny, &nm, &nd) != 3) return -1;
+    long day_diff = (days_civil(ty, tm, td) - days_civil(ny, nm, nd)) * 86400L;
+    int now_secs = clock_seconds();
+    long target_secs = (long)th * 3600 + tmn * 60;
+    return day_diff + target_secs - now_secs;
+}
+
 void render_generic(WidgetView& view) {
     if (!view.root) return;
     char line[96], sub[96];
@@ -552,9 +591,32 @@ void render_generic(WidgetView& view) {
     case W_CLOCK: {
         if (!latest.date[0]) {strcpy(line, "时间未同步"); break;}
         int secs = clock_seconds();
-        snprintf(line, sizeof(line), "%02d:%02d", secs / 3600, (secs / 60) % 60);
-        snprintf(sub, sizeof(sub), "%s%s", latest.date,
-                 online ? "" : " · 离线估算");
+        snprintf(line, sizeof(line), "%02d:%02d:%02d", secs / 3600, (secs / 60) % 60, secs % 60);
+        int wd = weekday(latest.date);
+        static const char* WD = "一二三四五六日";
+        snprintf(sub, sizeof(sub), "%s 星期%c%s", latest.date,
+                 WD[(wd + 6) % 7], online ? "" : " · 离线估算");
+        break;
+    }
+    case W_WEATHER:
+        if (!latest.wx_valid) strcpy(line, "天气未配置");
+        else snprintf(line, sizeof(line), "%.1f℃ %s", latest.wx_temp, weather_text(latest.wx_code));
+        if (isnan(latest.wx_hi)) strcpy(sub, "等待客户端推送");
+        else snprintf(sub, sizeof(sub), "高 %.0f°  低 %.0f°", latest.wx_hi, latest.wx_lo);
+        break;
+    case W_COUNTDOWN: {
+        const ScheduleItem* found = nullptr;
+        for (uint8_t i = 0; i < g_profile.countdown_count; ++i) {
+            const ScheduleItem& item = g_profile.countdowns[i];
+            if (item.enabled && !found) found = &item;   // 取第一条
+        }
+        if (!found) { strcpy(line, "未设置"); strcpy(sub, "在工作台添加倒计时"); break; }
+        long remain = countdown_seconds(found);
+        if (remain < 0) { snprintf(line, sizeof(line), "%s", found->text);
+                          strcpy(sub, "已结束"); break; }
+        snprintf(line, sizeof(line), "%ld天 %02ld:%02ld:%02ld", remain / 86400,
+                 (remain / 3600) % 24, (remain / 60) % 60, remain % 60);
+        snprintf(sub, sizeof(sub), "%s %s", found->text, found->time);
         break;
     }
     case W_ENVIRONMENT:

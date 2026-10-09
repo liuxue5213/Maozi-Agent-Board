@@ -10,7 +10,7 @@ _ORDER = [
     "mem", "memused", "memtotal",
     "gpu", "gpumem", "gputemp",
     "disk", "diskfree", "disktotal", "bat",
-    "netrx", "nettx", "uptime",
+    "netrx", "nettx", "uptime", "wx",
     "vol", "mut",
     "aistate", "aitool", "aitask", "aiprog", "aitime", "aierr",
     "temp", "hum",

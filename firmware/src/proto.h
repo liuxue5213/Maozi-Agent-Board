@@ -45,6 +45,10 @@ struct Telemetry {
     // 电脑控制状态（控制中心显示；-1 = 未知/不可用）
     int vol = -1;
     int mut = -1;
+    // 天气（客户端 30 分钟刷新）
+    float wx_temp = NAN, wx_hi = NAN, wx_lo = NAN;
+    int wx_code = -1;
+    bool wx_valid = false;
     // 主题色推送（CFG=bg:xxxxxx,card:...,accent:...,text:...,sub:...）
     uint32_t theme_bg = 0, theme_grad = 0, theme_card = 0, theme_accent = 0, theme_text = 0, theme_sub = 0;
     bool theme_changed = false;

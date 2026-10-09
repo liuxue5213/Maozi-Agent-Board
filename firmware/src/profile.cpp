@@ -33,6 +33,8 @@ WidgetKind widget_kind(const char* name) {
     if (!strcmp(name, "reminder_list")) return W_REMINDERS;
     if (!strcmp(name, "today_calendar")) return W_CALENDAR;
     if (!strcmp(name, "alarm")) return W_ALARM;
+    if (!strcmp(name, "weather")) return W_WEATHER;
+    if (!strcmp(name, "countdown")) return W_COUNTDOWN;
     return W_INVALID;
 }
 
@@ -130,6 +132,13 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
     if (!schedule_array(doc["reminders"], out.reminders, 20, out.reminder_count, false) ||
         !schedule_array(doc["calendar"], out.calendar, 50, out.calendar_count, true) ||
         !schedule_array(doc["alarms"], out.alarms, 16, out.alarm_count, false)) return false;
+    JsonArrayConst cds = doc["countdowns"].as<JsonArrayConst>();
+    if (!cds.isNull()) {
+        if (!schedule_array(doc["countdowns"], out.countdowns, 8, out.countdown_count, true))
+            return false;
+    } else {
+        out.countdown_count = 0;
+    }
     JsonArrayConst apps = doc["apps"].as<JsonArrayConst>();
     if (!apps.isNull()) {
         if (apps.size() > 12) return false;

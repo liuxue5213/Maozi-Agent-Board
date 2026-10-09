@@ -141,6 +141,22 @@ void Proto::handle(const char* line) {
     else if (!strcmp(key, "UPTIME"))   t.uptime = (uint32_t)atol(v);
     else if (!strcmp(key, "VOL"))      t.vol = atoi(v);
     else if (!strcmp(key, "MUT"))      t.mut = atoi(v);
+    else if (!strcmp(key, "WX")) {
+        // WX=<temp>,<code>,<tmax>,<tmin>
+        char buf[48];
+        strncpy(buf, v, sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = 0;
+        char* save = nullptr;
+        char* f1 = strtok_r(buf, ",", &save);
+        char* f2 = f1 ? strtok_r(nullptr, ",", &save) : nullptr;
+        char* f3 = f2 ? strtok_r(nullptr, ",", &save) : nullptr;
+        char* f4 = f3 ? strtok_r(nullptr, ",", &save) : nullptr;
+        t.wx_temp = f1 ? atof(f1) : NAN;
+        t.wx_code = f2 ? atoi(f2) : -1;
+        t.wx_hi = f3 ? atof(f3) : NAN;
+        t.wx_lo = f4 ? atof(f4) : NAN;
+        t.wx_valid = !isnan(t.wx_temp);
+    }
     else if (!strcmp(key, "AISTATE"))  strncpy(t.aistate, v, sizeof(t.aistate) - 1);
     else if (!strcmp(key, "AITOOL"))   strncpy(t.aitool, v, sizeof(t.aitool) - 1);
     else if (!strcmp(key, "AITASK"))   strncpy(t.aitask, v, sizeof(t.aitask) - 1);

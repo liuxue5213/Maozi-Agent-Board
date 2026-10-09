@@ -3,7 +3,7 @@ const widgets = {
   ai_list: ['AI 会话', '✦', 4], hw_cards: ['硬件四卡', '▦', 4],
   clock: ['时钟', '◷', 1], environment: ['温湿度', '◉', 1],
   reminder_list: ['提醒列表', '☷', 2], today_calendar: ['今日日历', '▣', 2],
-  alarm: ['闹钟', '◴', 1]
+  alarm: ['闹钟', '◴', 1], weather: ['天气', '☁', 1], countdown: ['倒计时', '⏳', 1]
 };
 const stateNames = {THINKING:'思考中',GENERATING:'生成中',TOOL:'执行工具',BUILD:'构建中',DONE:'已完成',ERROR:'出错',WAIT_INPUT:'等你回复',ASK:'等待确认'};
 // 主题预设：card 与 bg 均已拉开亮度差（>=1.5:1），sub 均可读。
@@ -86,6 +86,7 @@ function renderInspector() {
     chip.ondragover=e=>e.preventDefault();chip.ondrop=e=>{e.preventDefault();reorder(page.widgets,dragWidget,i)};
     root.append(chip);
   });
+  $('weather-city').value=(draft.weather&&draft.weather.city)||'';
   for(const key of ['bg','grad','card','accent','text']) $('theme-'+key).value='#'+draft.theme[key];
   $('theme-bright').value=draft.theme.bright;$('bright-value').textContent=draft.theme.bright+'%';
 }
@@ -127,6 +128,14 @@ function previewWidget(key, container) {
   if(key==='alarm'){
     const item=draft.alarms.find(x=>x.enabled);container.append(card('闹钟',item?item.time:'未设置',item?item.label:'到点屏幕提醒'));
   }
+  if(key==='weather'){
+    const w=live.telemetry||{};
+    container.append(card('天气',w.wx_temp===undefined?'-- ℃':`${w.wx_temp} ℃`,'在工作台输入城市后显示'));
+  }
+  if(key==='countdown'){
+    const item=(draft.countdowns||[]).find(x=>x.enabled);
+    container.append(card('倒计时',item?`${item.date} ${item.time}`:'未设置',item?item.title:'添加目标日期'));
+  }
 }
 function renderPreview(){
   const page=current(),screen=$('screen'),body=$('screen-body');
@@ -152,18 +161,18 @@ function renderTasks(){
 }
 function renderEntries(key){
   const root=$(key+'-list');root.replaceChildren();
-  const items=draft[key];if(!items.length){root.append(el('div','empty',key==='calendar'?'暂无日程':key==='apps'?'尚未添加应用':'尚未添加'));return}
+  const items=draft[key];if(!items.length){root.append(el('div','empty',key==='calendar'?'暂无日程':key==='apps'?'尚未添加应用':key==='countdowns'?'尚未添加倒计时':'尚未添加'));return}
   items.forEach((item,i)=>{
-    const row=el('div',`entry${key==='calendar'?' calendar':''}${key==='apps'?' app':''}`);
+    const row=el('div',`entry${key==='calendar'?' calendar':''}${key==='apps'?' app':key==='countdowns'?' countdowns':''}`);
     function input(type,value,field,placeholder){const n=el('input');n.type=type;n.value=value;n.placeholder=placeholder||'';n.onchange=()=>{item[field]=n.value;markDirty()};return n}
     if(key==='apps'){
       row.append(input('text',item.name,'name','应用名'),input('text',item.command,'command','启动命令，如 open -a Safari'));
     }else{
-      if(key==='calendar')row.append(input('date',item.date,'date'));
-      row.append(input('time',item.time,'time'),input('text',item[key==='calendar'?'title':key==='alarms'?'label':'text'],key==='calendar'?'title':key==='alarms'?'label':'text'));
+      if(key==='calendar'||key==='countdowns')row.append(input('date',item.date,'date'));
+      row.append(input('time',item.time,'time'),input('text',item[key==='calendar'||key==='countdowns'?'title':key==='alarms'?'label':'text'],key==='calendar'||key==='countdowns'?'title':key==='alarms'?'label':'text'));
     }
     const del=el('button','', '×');del.title='删除';del.onclick=()=>{items.splice(i,1);markDirty()};row.append(del);
-    if(key!=='calendar'&&key!=='apps'){
+    if(key!=='calendar'&&key!=='apps'&&key!=='countdowns'){
       const repeat=el('label','repeat','重复');const sel=el('select');
       for(const [name,days] of [['每天',[1,2,3,4,5,6,7]],['工作日',[1,2,3,4,5]],['周末',[6,7]]]){
         const opt=el('option','',name);opt.value=days.join(',');sel.append(opt)
@@ -174,7 +183,7 @@ function renderEntries(key){
     root.append(row);
   });
 }
-function render(){if(!draft)return;renderPages();renderPalette();renderInspector();renderPreview();renderTasks();for(const key of ['reminders','calendar','alarms','apps'])renderEntries(key);$('version-label').textContent=`v${saved?.version||'—'}`}
+function render(){if(!draft)return;renderPages();renderPalette();renderInspector();renderPreview();renderTasks();for(const key of ['reminders','calendar','alarms','apps','countdowns'])renderEntries(key);$('version-label').textContent=`v${saved?.version||'—'}`}
 async function poll(){
   try{
     const next=await request('/api/status');live=next;
@@ -247,11 +256,13 @@ function bind(){
     draft[key].push(key==='calendar'?{id:uniqueId('e'),date:today,time:'09:00',title:'新日程',enabled:true}:
       key==='alarms'?{id:uniqueId('a'),time:'09:00',label:'新闹钟',weekdays:[1,2,3,4,5,6,7],enabled:true}:
       key==='apps'?{id:uniqueId('app'),name:'新应用',command:'open -a Finder'}:
+      key==='countdowns'?{id:uniqueId('c'),date:today,time:'20:00',title:'新目标',enabled:true}:
         {id:uniqueId('r'),time:'09:00',text:'新提醒',weekdays:[1,2,3,4,5,6,7],enabled:true});markDirty()
   });
   $('validate-btn').onclick=async()=>{try{await request('/api/validate',draft);notice('配置检查通过，可以保存')}catch(e){notice(e.message,true)}};
   $('save-btn').onclick=async()=>{try{await save()}catch(e){notice(e.message,true)}};
   $('sync-btn').onclick=async()=>{try{if(dirty)await save();await request('/api/sync',{});notice('已请求同步，等待设备应用回执');poll()}catch(e){notice(e.message,true)}};
+  $('weather-city').onchange=e=>{if(!draft.weather)draft.weather={};draft.weather.city=e.target.value.trim();markDirty()};
   $('reset-btn').onclick=()=>{if(!confirm('恢复默认档案？当前未保存修改会丢失。'))return;draft={schema:1,version:saved.version,pages:[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'computer',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']},{id:'environment',title:'环境',layout:'grid_2x2',widgets:['environment','clock']}],reminders:[],calendar:[],alarms:[],apps:[],theme:{bg:'0B1220',grad:'0E1B33',card:'274064',card_edge:'3E506E',accent:'22D3EE',text:'F3F7FF',sub:'A8BDD9',bright:90}};selected=0;markDirty()};
 }
 bind();poll();setInterval(poll,2500);setInterval(()=>{if(draft)renderPreview()},15000);

@@ -14,6 +14,7 @@ PROFILE_PATH = Path.home() / ".workbuddy" / "profile.json"
 WIDGET_UNITS = {
     "ai_list": 4, "hw_cards": 4, "clock": 1, "environment": 1,
     "reminder_list": 2, "today_calendar": 2, "alarm": 1,
+    "weather": 1, "countdown": 1,
 }
 DEFAULT_PROFILE = {
     "schema": 1, "version": 1,
@@ -23,7 +24,8 @@ DEFAULT_PROFILE = {
         {"id": "environment", "title": "环境", "layout": "grid_2x2",
          "widgets": ["environment", "clock"]},
     ],
-    "reminders": [], "calendar": [], "alarms": [], "apps": [],
+    "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
+    "weather": {"city": ""},
     "theme": {"bg": "0B1220", "grad": "0E1B33", "card": "274064", "accent": "22D3EE",
               "text": "F3F7FF", "sub": "A8BDD9", "card_edge": "3E506E", "bright": 90},
 }
@@ -67,7 +69,8 @@ def validate_profile(raw):
     if not isinstance(pages, list) or not 1 <= len(pages) <= 6:
         raise ValueError("页面数量需为 1–6")
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
-           "reminders": [], "calendar": [], "alarms": [], "apps": [], "theme": {}}
+           "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
+    "weather": {"city": ""}, "theme": {}}
     if out["version"] < 1:
         raise ValueError("版本号无效")
     ids = set()
@@ -129,6 +132,33 @@ def validate_profile(raw):
                 clean["text" if key == "reminders" else "label"] = _label(
                     item.get("text" if key == "reminders" else "label", ""), 48)
             out[key].append(clean)
+
+    countdowns = raw.get("countdowns", [])
+    if not isinstance(countdowns, list) or len(countdowns) > 8:
+        raise ValueError("倒计时最多 8 条")
+    cd_ids = set()
+    for item in countdowns:
+        if not isinstance(item, dict):
+            raise ValueError("倒计时格式无效")
+        cid = str(item.get("id", ""))
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,16}", cid) or cid in cd_ids:
+            raise ValueError("倒计时 ID 无效或重复")
+        cd_ids.add(cid)
+        clean = {"id": cid, "enabled": bool(item.get("enabled", True))}
+        try:
+            clean["date"] = date.fromisoformat(str(item.get("date"))).isoformat()
+        except ValueError as exc:
+            raise ValueError("倒计时日期需为 YYYY-MM-DD") from exc
+        clean["time"] = _clock(item.get("time"))
+        clean["title"] = _label(item.get("title", ""), 48)
+        out["countdowns"].append(clean)
+
+    weather = raw.get("weather", {})
+    if not isinstance(weather, dict):
+        raise ValueError("天气配置格式无效")
+    city = str(weather.get("city", "")).strip()
+    if city:
+        out["weather"]["city"] = _label(city, 20)
 
     apps = raw.get("apps", [])
     if not isinstance(apps, list) or len(apps) > 12:
