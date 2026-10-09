@@ -176,6 +176,10 @@ void page_click(lv_event_t* event) {
     switch_page(target, false);
 }
 
+void open_overlay(uint8_t which);
+void open_launcher_cb(lv_event_t*) { open_overlay(1); }
+void open_control_cb(lv_event_t*) { open_overlay(2); }
+
 // ---------- 覆盖面板开合 ----------
 void close_overlay() {
     if (!overlay) return;
@@ -214,11 +218,11 @@ void gesture(lv_event_t* event) {
             close_overlay();
         return;
     }
-    if (direction == LV_DIR_BOTTOM && launch_count) {
+    if (direction == LV_DIR_TOP && launch_count) {
         open_overlay(1);
         return;
     }
-    if (direction == LV_DIR_TOP) {
+    if (direction == LV_DIR_BOTTOM) {
         open_overlay(2);
         return;
     }
@@ -494,9 +498,7 @@ void build_page(uint8_t index) {
         page.conn = label(page.screen, online ? "在线" : "电脑离线", 20,
                           online ? 0x34D399 : COL_ERR, 210, HEAD_Y + 2, 100);
     }
-    if (index == 0) {
-        label(page.screen, "下滑启动应用 · 上滑控制中心", 20, sub_color, 10, 32, 300);
-    }
+
     // 页码按钮（底部居中）。
     // 原实现两处不一致：总宽按 6px 间距算、绘制按 40px 步进，导致圆点组
     // 实际偏左且页数越多偏移越大。同时 34x24 的热区远低于 44x44 可触下限。
@@ -505,6 +507,8 @@ void build_page(uint8_t index) {
     const int DOT_W = 32, DOT_H = 22, HIT = 44, GAP = 10;
     int total = n * DOT_W + (n - 1) * GAP;
     int x0 = (SCR_W - total) / 2;
+    button(page.screen, "☰", 4, FOOT_Y - 2, 40, 28, open_launcher_cb, nullptr);
+    button(page.screen, "⚙", SCR_W - 44, FOOT_Y - 2, 40, 28, open_control_cb, nullptr);
     for (uint8_t k = 0; k < n; ++k) {
         int cx = x0 + k * (DOT_W + GAP);
         // 透明外扩热区：保证每颗圆点实际可触面积 >= 44x44。
