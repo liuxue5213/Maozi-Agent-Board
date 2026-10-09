@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -37,6 +38,18 @@ def start_settings_server(app, port):
             path = urlsplit(self.path).path
             if path == "/api/status":
                 self._json(200, app.status_snapshot())
+                return
+            if path == "/api/diagnose":
+                from .diagnose import build_bundle
+                body = build_bundle(app)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="workbuddy-diagnose-{time.strftime("%m%d-%H%M")}.zip"')
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
                 return
             if path == "/api/autostart-status":
                 try:

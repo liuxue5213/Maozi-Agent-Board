@@ -6,6 +6,7 @@ from .collect import create
 from .control import ControlApp
 from .protocol import encode_caps, encode_hb, encode_telemetry
 from .profile import encode_profile, load_profile, save_profile, validate_profile
+from .telemetry import HealthLog
 
 
 class App:
@@ -18,6 +19,8 @@ class App:
         self.env = {}  # ESP32 上行（temp/hum 等）
         self.env_seen = {}
         self.control = ControlApp()
+        self.health = HealthLog()
+        self.fw_caps = None          # 设备能力（来自 FW 握手），None = 未知
         self.profile_lock = threading.Lock()
         self.profile = load_profile()
         self.profile_status = "待同步"
@@ -26,6 +29,9 @@ class App:
         self.sync_requested = False
         self.sync_sent_at = 0.0
         self.tasks = []
+        self._was_online = False
+        self._online_since = 0.0
+        self._last_ai_state = ""
         self.ai = None
         if cfg.ai_watch:
             from .aiwatch import AIWatcher
@@ -40,10 +46,18 @@ class App:
         self._stop = False
 
     def _on_uplink(self, d: dict):
+        if "firmware" in d:
+            self._parse_fw_caps(d["firmware"])
+        if "slow_loop" in d:
+            self.health.event("slow_loop", us=d["slow_loop"])
         if "launch" in d:
             self._launch_app(d["launch"])
+            self.health.event("launch", app=d["launch"][:16])
         elif "key" in d:
             self._handle_key(d["key"])
+            self.health.event("key", action=d["key"])
+        if "touch" in d:
+            self.health.event("touch", target=d["touch"][:16])
         if "config_reply" in d:
             reply = d["config_reply"]
             with self.profile_lock:
@@ -52,11 +66,23 @@ class App:
                     self.profile_error = "" if reply["ok"] else reply["reason"]
                     if reply["ok"]:
                         self.applied_version = self.profile["version"]
+            self.health.event("sync_ack" if reply["ok"] else "sync_nak",
+                              version=reply["version"], reason=reply["reason"])
         self.env.update(d)
         seen = time.monotonic()
         for key in ("temp", "hum"):
             if key in d:
                 self.env_seen[key] = seen
+
+    def _parse_fw_caps(self, raw: str):
+        """FW=0.3.1,n16r8,schema:1,pages:6,widgets:7,apps:12,... → 能力字典。"""
+        caps = {"raw": raw[:64]}
+        for part in raw.split(","):
+            if ":" in part:
+                key, _, value = part.partition(":")
+                caps[key.strip()] = int(value) if value.strip().isdigit() else value.strip()
+        self.fw_caps = caps
+        self.health.event("fw", raw=raw[:64])
 
     def push_theme(self, theme: dict | None = None):
         """把配置里的主题色 + 亮度推送到屏幕。"""
@@ -111,6 +137,7 @@ class App:
             return {"profile": self.profile, "profile_status": self.profile_status,
                     "profile_error": self.profile_error,
                     "applied_version": self.applied_version,
+                    "fw_caps": self.fw_caps,
                     "device": self.link.status if self.link else "串口关闭",
                     "tasks": self.tasks[:4], "telemetry": self.last}
 
@@ -119,9 +146,28 @@ class App:
             return
         with self.profile_lock:
             profile = self.profile
-            self.sync_requested = False
-            self.profile_status = "传输中"
+            # 能力握手（PROTOCOL §5）：固件能力未知或schema不符时拒绝推送，
+            # 避免"静默推送+无ACK+永久传输中"的死局。
+            caps = self.fw_caps
+            if caps is not None:
+                if caps.get("schema") != 1:
+                    self.profile_status = "同步失败"
+                    self.profile_error = "固件 schema 不兼容，请升级固件"
+                    self.health.event("sync_refused", reason="schema")
+                    return
+                if len(profile["pages"]) > caps.get("pages", 6):
+                    self.profile_status = "同步失败"
+                    self.profile_error = f"页面数超过固件上限（{caps.get('pages', 6)}）"
+                    self.health.event("sync_refused", reason="pages")
+                    return
+                if len(profile.get("apps", [])) > caps.get("apps", 12):
+                    self.profile_status = "同步失败"
+                    self.profile_error = f"快捷应用超过固件上限（{caps.get('apps', 12)}）"
+                    self.health.event("sync_refused", reason="apps")
+                    return
             self.sync_sent_at = time.monotonic()
+            self.profile_status = "传输中"
+            self.health.event("sync_sent", version=profile["version"])
         for line in encode_profile(profile):
             self.link.send(line)
 
@@ -168,6 +214,10 @@ class App:
             for i, tk in enumerate(tasks[:4]):
                 t[f"ai{i}"] = (f"{tk['tool']},{tk['state']},{tk['prog']},"
                                f"{tk['elapsed']},{tk['project']},{tk['id']},{tk['age']}")
+        state = t.get("aistate", "")
+        if state and state != self._last_ai_state:
+            self.health.event("ai_state", state=state)
+            self._last_ai_state = state
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
         t["remind"] = self._next_remind(now)
@@ -230,6 +280,15 @@ class App:
                 t = self.tick(now)
                 text = encode_telemetry(t)
                 if self.link:
+                    online = self.link.status.startswith("connected:")
+                    if online != self._was_online:
+                        if online:
+                            self.health.event("device_online")
+                        else:
+                            secs = int(now - self._online_since) if self._online_since else 0
+                            self.health.event("device_offline", seconds=secs)
+                        self._was_online = online
+                        self._online_since = now if online else 0.0
                     if self.link.consume_connected():
                         self.link.send(encode_caps(self.collector.caps))
                         self.push_theme()

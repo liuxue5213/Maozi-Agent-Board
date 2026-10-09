@@ -88,4 +88,9 @@ def parse_uplink(line: str):
                                      "reason": fields[2]}}
     if key == "FW":
         return {"firmware": value}
+    if key == "SLOW":
+        try:
+            return {"slow_loop": int(value.split()[0])}
+        except (ValueError, IndexError):
+            return None
     return None

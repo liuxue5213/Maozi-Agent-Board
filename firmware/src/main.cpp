@@ -27,7 +27,13 @@ void setup() {
     profile_init();
     display_init();
     ui_init();
-    Serial.println("FW=0.3.0,n16r8,schema:1,pages:6");
+}
+
+void send_fw_handshake() {
+    // 真实能力握手（PROTOCOL §5）：客户端据此拒绝不兼容的配置推送。
+    // 开机 + 每次"新客户端接入"（链路超时后再次收到数据）都会重发。
+    Serial.printf("FW=0.3.1,n16r8,schema:1,pages:%u,widgets:7,apps:12,reminders:20,calendar:50,alarms:16\n",
+                  (unsigned)(sizeof(((DeviceProfile*)0)->pages) / sizeof(((DeviceProfile*)0)->pages[0])));
 }
 
 void loop() {
@@ -35,7 +41,22 @@ void loop() {
     uint32_t now = millis();
 
     // 1) 解析下行
+    if (Serial.available() > 0) {
+        // 任何下行字节都证明客户端在线（HB/CAPS 等行在 handle 中提前返回，
+        // 不能依赖 dirty 标志判断在线）。
+        last_client_data = now;
+        ever_linked = true;
+    }
     while (Serial.available()) proto.feed((char)Serial.read());
+    static bool fw_pending = true;   // 开机发一次；链路超时后复位，等待新客户端
+    if (fw_pending && ever_linked) {
+        send_fw_handshake();
+        fw_pending = false;
+    }
+    if (ever_linked && now - last_client_data > LINK_TIMEOUT_MS) {
+        ever_linked = false;         // 链路断开：复位握手，下个客户端接入时重发
+        fw_pending = true;
+    }
     if (proto.profile_changed) {
         proto.profile_changed = false;
         ui_rebuild();
