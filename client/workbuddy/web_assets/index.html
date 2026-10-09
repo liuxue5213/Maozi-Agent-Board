@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WorkBuddy · 设备工作台</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">W</span><div><strong>WorkBuddy</strong><small>AI 触摸状态屏 · 设备工作台</small></div></div>
+      <div class="top-actions"><span id="device-badge" class="badge muted">正在检测设备</span><span id="sync-badge" class="badge">读取配置中</span><button id="validate-btn" class="button ghost">检查布局</button><button id="save-btn" class="button secondary">保存配置</button><button id="sync-btn" class="button primary">同步到屏幕</button></div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div><div class="eyebrow">PERSONAL DESK DISPLAY</div><h1>让你的工作状态，一眼就懂。</h1><p>拖排页面、选择组件，查看真实任务状态。保存后同步到设备，只有收到设备应用回执才算生效。</p></div>
+        <div class="intro-meta"><span class="meta-label">当前档案</span><strong id="version-label">v—</strong><span id="applied-label">设备未确认</span></div>
+      </section>
+
+      <div class="workspace">
+        <aside class="panel page-panel">
+          <div class="panel-head"><div><span class="eyebrow">01 / PAGES</span><h2>页面</h2></div><button id="add-page" class="icon-button" title="添加页面" aria-label="添加页面">＋</button></div>
+          <p class="hint">拖动页面调整顺序。最多 6 页。</p>
+          <div id="pages-list" class="pages-list"></div>
+          <div class="section-rule"></div>
+          <div class="panel-head compact"><div><span class="eyebrow">WIDGETS</span><h3>添加组件</h3></div></div>
+          <div id="widget-palette" class="widget-palette"></div>
+        </aside>
+
+        <section class="preview-column">
+          <div class="preview-head"><div><span class="eyebrow">LIVE PREVIEW</span><h2>屏幕预览</h2></div><div class="preview-controls"><button id="preview-prev" class="icon-button" aria-label="上一页">‹</button><span id="preview-page-number">1 / 3</span><button id="preview-next" class="icon-button" aria-label="下一页">›</button></div></div>
+          <div class="screen-wrap"><div id="screen" class="screen"><div class="screen-top"><span id="screen-title">AI 工作台</span><span id="screen-clock">--:--</span></div><div id="screen-body" class="screen-body"></div><div class="screen-foot"><span id="screen-source">演示预览</span><div id="screen-dots" class="screen-dots"></div><span id="screen-connection">设备离线</span></div></div></div>
+          <div class="preview-note"><span class="note-dot"></span><span>按 320 × 480 竖屏比例预览。无真实进度时显示状态和耗时，不显示猜测百分比。</span></div>
+
+          <div class="live-section"><div class="live-head"><div><span class="eyebrow">MULTI SESSION</span><h2>多个编辑器 · 多个项目</h2></div><span id="task-count" class="count-pill">0 个会话</span></div><p class="hint">同一项目的不同对话由会话 ID 区分；等待确认与错误优先展示。屏幕上点选会话可固定焦点。</p><div id="task-list" class="task-list"></div></div>
+        </section>
+
+        <aside class="panel inspector">
+          <div class="panel-head"><div><span class="eyebrow">02 / INSPECTOR</span><h2>页面设置</h2></div></div>
+          <label class="field">页面名称<input id="page-title" maxlength="12" placeholder="例如：AI 工作台"></label>
+          <label class="field">布局<select id="page-layout"><option value="list">列表布局</option><option value="grid_2x2">2 × 2 网格</option></select></label>
+          <div class="field-heading"><span>页面组件</span><small>拖动排序</small></div>
+          <div id="selected-widgets" class="selected-widgets"></div>
+          <div class="inspector-actions"><button id="duplicate-page" class="button ghost">复制页面</button><button id="delete-page" class="button danger">删除页面</button></div>
+          <div class="section-rule"></div>
+          <div class="panel-head compact"><div><span class="eyebrow">APPEARANCE</span><h3>主题</h3></div></div>
+          <div class="theme-presets" id="theme-presets"></div>
+          <div class="theme-grid"><label>背景色<input id="theme-bg" type="color"></label><label>渐变底<input id="theme-grad" type="color"></label><label>卡片色<input id="theme-card" type="color"></label><label>强调色<input id="theme-accent" type="color"></label><label>文字色<input id="theme-text" type="color"></label></div>
+          <label class="field">亮度 <span id="bright-value">90%</span><input id="theme-bright" type="range" min="5" max="100"></label>
+          <label class="field toggle"><input id="autostart-toggle" type="checkbox"><span>开机自动启动客户端</span></label>
+          <button id="reset-btn" class="text-button">恢复默认档案</button>
+        </aside>
+      </div>
+
+      <section class="schedule-grid">
+        <div class="panel schedule-panel"><div class="panel-head"><div><span class="eyebrow">03 / REMINDERS</span><h2>提醒列表</h2></div><button class="icon-button" data-add="reminders" aria-label="添加提醒">＋</button></div><p class="hint">提醒展示在组件中，不触发屏幕闪烁。</p><div id="reminders-list" class="entry-list"></div></div>
+        <div class="panel schedule-panel"><div class="panel-head"><div><span class="eyebrow">04 / CALENDAR</span><h2>今日日历</h2></div><button class="icon-button" data-add="calendar" aria-label="添加日程">＋</button></div><p class="hint">手动录入日程；设备只显示今天的条目。</p><div id="calendar-list" class="entry-list"></div></div>
+        <div class="panel schedule-panel"><div class="panel-head"><div><span class="eyebrow">05 / ALARMS</span><h2>闹钟</h2></div><button class="icon-button" data-add="alarms" aria-label="添加闹钟">＋</button></div><p class="hint">到点时设备提示，可触摸停止。</p><div id="alarms-list" class="entry-list"></div></div>
+        <div class="panel schedule-panel"><div class="panel-head"><div><span class="eyebrow">06 / APPS</span><h2>快捷应用</h2></div><button class="icon-button" data-add="apps" aria-label="添加应用">＋</button></div><p class="hint">显示在屏幕顶部下拉启动器，点击即在电脑上打开。命令示例：macOS <code>open -a Safari</code>，Windows <code>start notepad</code>，Linux <code>firefox</code>。</p><div id="apps-list" class="entry-list"></div></div>
+      </section>
+      <div id="message" class="message" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+</body>
+</html>

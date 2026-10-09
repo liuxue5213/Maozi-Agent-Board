@@ -1,0 +1,25 @@
+# espressif32 v7.1.3 macOS x64 依赖包
+
+toolchain-xtensa-esp32  v8.4.0+2021r2-patch5  [无 macOS x64 包]
+toolchain-xtensa-esp32s2  v8.4.0+2021r2-patch5  [无 macOS x64 包]
+toolchain-xtensa-esp32s3  v8.4.0+2021r2-patch5  [无 macOS x64 包]
+toolchain-riscv32-esp  v8.4.0+2021r2-patch5  [无 macOS x64 包]
+toolchain-xtensa-esp-elf  v15.2.0+20251204  [无 macOS x64 包]
+toolchain-esp32ulp  v1.23800.240113  [无 macOS x64 包]
+tool-xtensa-esp-elf-gdb  v12.1.0+20221002  [无 macOS x64 包]
+tool-riscv32-esp-elf-gdb  v11.2.0+20220823  [无 macOS x64 包]
+framework-arduinoespressif32  v4.30312.261001  [无 macOS x64 包]
+framework-espidf  v4.50505.0  [无 macOS x64 包]
+tool-esptoolpy  v2.41100.260830  [无 macOS x64 包]
+tool-dfuutil-arduino  v1.11.0  [无 macOS x64 包]
+tool-openocd-esp32  v2.1200.20230419  [无 macOS x64 包]
+tool-mkspiffs  v1.200.0  [无 macOS x64 包]
+tool-mklittlefs  v1.203.210628  [无 macOS x64 包]
+tool-mkfatfs  v2.0.1  [无 macOS x64 包]
+tool-cmake  v3.30.2  [无 macOS x64 包]
+tool-ninja  v1.13.2  [无 macOS x64 包]
+tool-mconf  v1.4060000.20190628  [无 macOS x64 包]
+tool-idf  v1.0.1  [无 macOS x64 包]
+tool-esp-rom-elfs  v0.0.1+20241011  [无 macOS x64 包]
+
+# 共 0 个包，0 MB

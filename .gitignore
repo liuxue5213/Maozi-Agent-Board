@@ -1,0 +1,16 @@
+.pio/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+firmware/tools/.font-cache/*.ttf
+firmware/tools/.font-cache/*.otf
+firmware/tools/.font-cache/*.zip
+firmware/tools/.font-cache/*.tgz
+client/dist/
+outputs/*.html
+.workbuddy*/
+.zcodeignore

@@ -1,0 +1,4 @@
+psutil>=5.9
+pyserial>=3.5
+# Windows 可选：GPU 数据（N 卡）
+# pynvml ; sys_platform == "win32"
