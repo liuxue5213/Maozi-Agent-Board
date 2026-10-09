@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 # 必须用 TTF（TrueType 轮廓）；OTF/CFF 会让 lv_font_conv 产出碎点字库
-FONT = ROOT / "tools" / ".font-cache" / "NotoSansSC-Regular.ttf"
+FONT = ROOT / "tools" / ".font-cache" / "NotoSansSC-Medium.ttf"
 FONT_CONV = "lv_font_conv@1.4.0"
 EXTRA = "℃·…°，。：！？（）【】"
 

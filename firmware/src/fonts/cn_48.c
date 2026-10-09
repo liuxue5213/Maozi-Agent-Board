@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 48 px
  * Bpp: 4
- * Opts: --font /Users/liuxue/Desktop/www/maozi-diy/firmware/tools/.font-cache/NotoSansSC-Regular.ttf --size 48 --bpp 4 --format lvgl --no-compress -r 0x20-0x7F --symbols °·…℃。【】一三上下不与个中了二云五亮今代仪件任会传估低体余作供倒值停像入全六内写出击列到制前加动半占卡历反取口只可台同名后吗吧启命哪喝器四回图在地境处复多天失媒存完实客容寸屏工已幕应度开影待心思恢意感成户打执据接控推提摸播收放效数新方无日时明星是显晴暂暴更有期未本束条来标桌止步毛气水没活添温湿滑点环理生用由电白的盘目知码确磁示离秒程空端等算纯线组结编置考脑自色行表触计认设话说读负败起跃轮载辑运送配醒里重量钟错间闹阴阵雨雪雷雾静面音页项题首高！（），：？ -o /Users/liuxue/Desktop/www/maozi-diy/firmware/src/fonts/cn_48.c
+ * Opts: --font /Users/liuxue/Desktop/www/maozi-diy/firmware/tools/.font-cache/NotoSansSC-Medium.ttf --size 48 --bpp 4 --format lvgl --no-compress -r 0x20-0x7F --symbols °·…℃。【】一三上下不与个中了二云五亮今代仪件任会传估低体余作供倒值停像入全六内写出击列到制前加动半占卡历反取口只可台同名后吗吧启命哪喝器四回图在地境处复多天失媒存完实客容寸屏工已幕应度开影待心思恢意感成户打执据接控推提摸播收放效数新方无日时明星是显晴暂暴更有期未本束条来标桌止步毛气水没活添温湿滑点环理生用由电白的盘目知码确磁示离秒程空端等算纯线组结编置考脑自色行表触计认设话说读负败起跃轮载辑运送配醒里重量钟错间闹阴阵雨雪雷雾静面音页项题首高！（），：？ -o /Users/liuxue/Desktop/www/maozi-diy/firmware/src/fonts/cn_48.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
