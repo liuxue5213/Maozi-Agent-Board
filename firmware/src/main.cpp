@@ -124,6 +124,11 @@ void loop() {
                 prefs.end();
             }
         }
+        if (proto.t.page_req_changed) {
+            proto.t.page_req_changed = false;
+            // PAGE 为 1 基；ui_set_page 自带越界保护
+            if (proto.t.page_req > 0) ui_set_page((uint8_t)(proto.t.page_req - 1));
+        }
         if (proto.t.bright >= 0) {
             bright_manual_val = proto.t.bright;
             display_brightness(proto.t.bright);

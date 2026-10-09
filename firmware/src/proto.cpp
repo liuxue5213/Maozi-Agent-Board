@@ -57,6 +57,13 @@ void Proto::handle_cfg(const char* value) {
         else if (!strcmp(k, "accent"))       { t.theme_accent = hex6(v); t.theme_changed = true; }
         else if (!strcmp(k, "text"))         { t.theme_text = hex6(v); t.theme_changed = true; }
         else if (!strcmp(k, "sub"))          { t.theme_sub = hex6(v); t.theme_changed = true; }
+        // 卡片不透明度：客户端下发的是百分比(30-100)，LVGL 需要 0-255。
+        // 之前这个键根本没被解析，cardopa_changed 永远是 false，
+        // 于是工作台的不透明度滑杆和主题画廊的半透明卡片在设备上完全无效。
+        else if (!strcmp(k, "cardopa")) {
+            t.cardopa_cfg = constrain(atoi(v), 30, 100) * 255 / 100;
+            t.cardopa_changed = true;
+        }
     }
     dirty = true;
 }
@@ -204,6 +211,8 @@ void Proto::handle(const char* line) {
     else if (!strcmp(key, "DISK"))     t.disk = atoi(v);
     else if (!strcmp(key, "DISKFREE")) t.diskfree = atof(v);
     else if (!strcmp(key, "DISKTOTAL")) t.disktotal = atof(v);
+    else if (!strcmp(key, "NETRX"))    t.netrx = atof(v);
+    else if (!strcmp(key, "NETTX"))    t.nettx = atof(v);
     else if (!strcmp(key, "BAT"))      t.bat = atoi(v);
     else if (!strcmp(key, "UPTIME"))   t.uptime = (uint32_t)atol(v);
     else if (!strcmp(key, "VOL"))      t.vol = atoi(v);
@@ -230,6 +239,7 @@ void Proto::handle(const char* line) {
     else if (!strcmp(key, "AIPROG"))   t.aiprog = atoi(v);
     else if (!strcmp(key, "AITIME"))   t.aitime = atoi(v);
     else if (!strcmp(key, "AIERR"))    strncpy(t.aierr, v, sizeof(t.aierr) - 1);
+    else if (!strcmp(key, "PAGE"))   { t.page_req = atoi(v); t.page_req_changed = true; }
     dirty = true;
 }
 

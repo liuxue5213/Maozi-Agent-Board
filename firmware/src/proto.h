@@ -29,6 +29,7 @@ struct Telemetry {
     int disk = 0;
     float diskfree = NAN;
     float disktotal = NAN;
+    float netrx = NAN, nettx = NAN;   // 网速 Mbps（NAN = 未提供）
     int bat = -1;
     uint32_t uptime = 0;
     // AI
@@ -42,6 +43,9 @@ struct Telemetry {
     int bright = -1;
     char lang[8] = "en";
     char theme[16] = "dark";
+    // 托盘/上位机请求切页（1 基；0=无效），main 循环转给 ui_set_page
+    int page_req = 0;
+    bool page_req_changed = false;
     // 电脑控制状态（控制中心显示；-1 = 未知/不可用）
     int vol = -1;
     int mut = -1;

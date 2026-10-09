@@ -28,10 +28,22 @@ struct WidgetView {
     lv_obj_t* extra[8] = {};
     lv_obj_t* rows[3] = {};
     uint8_t row_slot[3] = {};
+    uint16_t card_w = 0;              // 卡片实际宽度：窄卡需换用短文案（见 render_generic）
+    // 状态聚焦布局构件（对齐 docs/screen-ui-sample 效果图）：
+    lv_obj_t* ai_count = nullptr;     // 顶部右侧「进行中 N · 共 M」
+    lv_obj_t* ai_bar = nullptr;       // 焦点任务进度条
+    lv_obj_t* ai_bar_fill = nullptr;
+    lv_obj_t* ai_dot = nullptr;       // 焦点状态点
+    lv_obj_t* row_dot[3] = {};        // 其他会话行状态点
+    lv_obj_t* row_bar[3] = {};        // 其他会话行进度条
+    lv_obj_t* row_fill[3] = {};
+    lv_obj_t* hw_bar[4] = {};         // 硬件卡迷你条
+    lv_obj_t* hw_fill[4] = {};
 };
 struct PageView {
     lv_obj_t *screen = nullptr, *conn = nullptr, *alert = nullptr;
     lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
+    lv_obj_t *topbat = nullptr;   // 电池 %（遥测缺 BAT 时隐藏，绝不显示假值）
     lv_obj_t *offbar = nullptr;   // 离线状态条（顶部 4px 红条）
     WidgetView widgets[4];
 };
@@ -96,6 +108,18 @@ void set_text(lv_obj_t* obj, const char* value) {
     if (!old || strcmp(old, value)) lv_label_set_text(obj, value);
 }
 
+/** 字号请求 → 字库的渲染行高。固定高度必须按渲染字号给，否则 LVGL 会裁字。 */
+int render_line_h(int size) {
+    const lv_font_t* f = size >= 40 ? &cn_48 : size >= 28 ? &cn_32 : size >= 20 ? &cn_24 : &cn_20;
+    return (int)f->line_height;
+}
+
+/** 单行标签：显式给一行行高，LONG_DOT 才会横向截断，杜绝折行压字。 */
+lv_obj_t* label1(lv_obj_t* parent, const char* value, int size, uint32_t color,
+                 int x, int y, int width) {
+    return label(parent, value, size, color, x, y, width, render_line_h(size));
+}
+
 lv_obj_t* box(lv_obj_t* parent, int x, int y, int w, int h) {
     if (!parent) return nullptr;
     lv_obj_t* obj = lv_obj_create(parent);
@@ -103,6 +127,9 @@ lv_obj_t* box(lv_obj_t* parent, int x, int y, int w, int h) {
     lv_obj_set_pos(obj, x, y);
     lv_obj_set_size(obj, w, h);
     lv_obj_set_style_bg_color(obj, lv_color_hex(card), 0);
+    // 卡片不透明度：工作台「卡片不透明度」滑杆与主题画廊的 card_opa 都靠它生效。
+    // 半透明卡片让背景图/渐变透出来，是主题体系里除色相外的第二个维度。
+    lv_obj_set_style_bg_opa(obj, card_opa, 0);
     lv_obj_set_style_border_width(obj, 1, 0);
     // 卡片与背景亮度差过小时（深色主题尤甚），纯填充色差不足以让用户
     // 看出"哪里是内容、哪里是空白"。描边提供独立于填充色的边界线索。
@@ -121,6 +148,61 @@ static uint32_t shade(uint32_t color, int percent) {
     g = constrain(g * (100 + percent) / 100, 0, 255);
     b = constrain(b * (100 + percent) / 100, 0, 255);
     return (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
+}
+
+// ---------- 进度条 / 状态点（效果图构件） ----------
+// 进度条轨道：低对比凹槽。填充条按百分比改宽度，prog<0（未知）时为 0 宽，
+// 绝不拿假进度填充。
+lv_obj_t* bar_track(lv_obj_t* parent, int x, int y, int w) {
+    if (!parent) return nullptr;
+    lv_obj_t* obj = lv_obj_create(parent);
+    if (!obj) return nullptr;
+    lv_obj_set_pos(obj, x, y);
+    lv_obj_set_size(obj, w, 4);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(bg), 0);
+    lv_obj_set_style_bg_opa(obj, 170, 0);
+    lv_obj_set_style_radius(obj, 2, 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    return obj;
+}
+
+lv_obj_t* bar_fill(lv_obj_t* track) {
+    if (!track) return nullptr;
+    lv_obj_t* obj = lv_obj_create(track);
+    if (!obj) return nullptr;
+    lv_obj_set_pos(obj, 0, 0);
+    lv_obj_set_size(obj, 0, 4);
+    lv_obj_set_style_radius(obj, 2, 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    return obj;
+}
+
+void bar_set(lv_obj_t* fill, lv_obj_t* track, int pct, uint32_t color) {
+    if (!fill || !track) return;
+    int w = (int)lv_obj_get_width(track);
+    int fw = (pct <= 0 || w <= 0) ? 0 : w * constrain(pct, 0, 100) / 100;
+    lv_obj_set_style_bg_color(fill, lv_color_hex(color), 0);
+    lv_obj_set_style_bg_opa(fill, fw ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_set_size(fill, fw, 4);
+}
+
+lv_obj_t* dot_obj(lv_obj_t* parent, int x, int y, int d) {
+    if (!parent) return nullptr;
+    lv_obj_t* obj = lv_obj_create(parent);
+    if (!obj) return nullptr;
+    lv_obj_set_pos(obj, x, y);
+    lv_obj_set_size(obj, d, d);
+    lv_obj_set_style_radius(obj, d / 2, 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(sub_color), 0);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    return obj;
 }
 
 lv_obj_t* button(lv_obj_t* parent, const char* text, int x, int y, int w, int h,
@@ -287,33 +369,42 @@ void choose_task(lv_event_t* event) {
 // ---------- 页面构建（竖屏） ----------
 void make_ai(WidgetView& view, lv_obj_t* screen) {
     view.root = box(screen, 8, BODY_Y, 304, BODY_H);
-    // 信息金字塔（每行固定高度 + 水平截断）：
-    //   元数据 20px（工具·任务类型）→ 主标识 32px（项目名）
-    //   → 状态 32px 强调色 → 运行信息 20px → 3 条其他会话行（双行）
-    view.extra[0] = label(view.root, "", 20, sub_color,  14,  10, 276, 26);
-    view.main     = label(view.root, "暂无会话", 32, text_color, 14,  42, 276, 42);
-    // 状态（次信息）用 20px，低于主标识 32px，形成清晰信息金字塔：
-    //   元数据20 → 项目名32 → 状态20 → 运行信息20
-    view.sub      = label(view.root, "等待 AI 编辑器活动", 20, accent, 14, 96, 276, 28);
-    view.extra[7] = label(view.root, "", 20, sub_color,  14, 138, 276, 26);
+    // 对齐 docs/screen-ui-sample「状态聚焦」效果图：
+    //   头行  工具·会话号（左） + 进行中 N · 共 M（右）
+    //   焦点  项目名 32px → 状态点 + 状态 20px → 运行信息 20px → 进度条
+    //   其他  3 行会话（状态点 + 工具 + 项目·用时 + 进度条）
+    view.extra[0] = label(view.root, "", 20, sub_color,  14,  10, 178, 26);
+    view.ai_count = label(view.root, "", 20, sub_color, 192,  10,  98, 26);
+    lv_obj_set_style_text_align(view.ai_count, LV_TEXT_ALIGN_RIGHT, 0);
+    view.main     = label(view.root, "暂无会话", 32, text_color, 14,  42, 208, 42);
+    view.ai_dot   = dot_obj(view.root, 14, 102, 10);
+    view.sub      = label(view.root, "等待 AI 编辑器活动", 20, accent, 30,  96, 196, 28);
+    view.extra[7] = label(view.root, "", 20, sub_color,  14, 134, 276, 26);
+    view.ai_bar = bar_track(view.root, 14, 166, 276);
+    view.ai_bar_fill = bar_fill(view.ai_bar);
     for (int i = 0; i < 3; ++i) {
         lv_obj_t* row = box(view.root, 10, 174 + 68 * i, 284, 62);
         lv_obj_set_style_bg_color(row, lv_color_hex(bg), 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, choose_task, LV_EVENT_CLICKED, &view);
         view.rows[i] = row;
-        view.extra[i + 1] = label(row, "", 20, sub_color,  8,  5, 268, 26);   // 行1 工具·项目
-        view.extra[i + 4] = label(row, "", 20, text_color, 8, 33, 268, 26);   // 行2 会话·状态
+        view.row_dot[i] = dot_obj(row, 8, 10, 8);
+        view.extra[i + 1] = label(row, "", 20, text_color, 22,  4, 104, 26);  // 行1 工具
+        view.extra[i + 4] = label(row, "", 20, sub_color, 126,  4, 150, 26);  // 行1 右：项目·用时
+        lv_obj_set_style_text_align(view.extra[i + 4], LV_TEXT_ALIGN_RIGHT, 0);
+        view.row_bar[i] = bar_track(row, 8, 40, 268);
+        view.row_fill[i] = bar_fill(view.row_bar[i]);
     }
-    // 像素小机器人（右下角）
+    // 像素小机器人（焦点区右侧，表情联动 AI 状态）。
+    // 原位置 (226,288) 压在第三行会话上，文字被机器人盖住；挪进焦点区空白。
     bot_root = lv_obj_create(view.root);
-    lv_obj_set_pos(bot_root, 226, 288);
-    lv_obj_set_size(bot_root, 60, 76);
+    lv_obj_set_pos(bot_root, 236, 44);
+    lv_obj_set_size(bot_root, 56, 70);
     lv_obj_set_style_bg_opa(bot_root, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(bot_root, 0, 0);
     lv_obj_clear_flag(bot_root, LV_OBJ_FLAG_SCROLLABLE);
     bot_body = lv_obj_create(bot_root);
-    lv_obj_set_pos(bot_body, 8, 18);
+    lv_obj_set_pos(bot_body, 6, 16);
     lv_obj_set_size(bot_body, 44, 44);
     lv_obj_set_style_bg_color(bot_body, lv_color_hex(0x1A2A4A), 0);
     lv_obj_set_style_radius(bot_body, 14, 0);
@@ -322,12 +413,12 @@ void make_ai(WidgetView& view, lv_obj_t* screen) {
     lv_obj_clear_flag(bot_body, LV_OBJ_FLAG_SCROLLABLE);
     // 天线
     lv_obj_t* ant = lv_line_create(bot_root);
-    static lv_point_t ant_pts[] = {{30, 4}, {30, 16}};
+    static lv_point_t ant_pts[] = {{28, 4}, {28, 16}};
     lv_line_set_points(ant, ant_pts, 2);
     lv_obj_set_style_line_color(ant, lv_color_hex(accent), 0);
     lv_obj_set_style_line_width(ant, 2, 0);
     bot_antenna = lv_obj_create(bot_root);
-    lv_obj_set_pos(bot_antenna, 26, 0);
+    lv_obj_set_pos(bot_antenna, 24, 0);
     lv_obj_set_size(bot_antenna, 8, 8);
     lv_obj_set_style_radius(bot_antenna, 4, 0);
     lv_obj_set_style_bg_color(bot_antenna, lv_color_hex(COL_OK), 0);
@@ -355,25 +446,27 @@ void make_ai(WidgetView& view, lv_obj_t* screen) {
     lv_obj_set_style_bg_color(bot_mouth, lv_color_hex(accent), 0);
     lv_obj_set_style_border_width(bot_mouth, 0, 0);
     // 状态徽标（! ? ✓ ×）
-    bot_badge = label(bot_root, "", 24, COL_WARN, 0, 8, 60);
+    bot_badge = label(bot_root, "", 24, COL_WARN, 0, 6, 56);
     lv_obj_set_style_text_align(bot_badge, LV_TEXT_ALIGN_CENTER, 0);
 }
 
 void make_hardware(WidgetView& view, lv_obj_t* screen) {
-    const char* titles[4] = {"处理器", "内存", "显卡", "磁盘"};
-    // 竖屏 2×2：每卡 148×186，间距统一 8px（原来水平 8 / 垂直 6 不一致）。
-    // 卡内元素按"标题 / 数值 / 说明"成组垂直居中，不再把说明锚在卡底
-    // 导致数值与说明相隔 94px、看起来互不相关。
+    // 四卡对齐效果图：处理器/内存/磁盘/网络（GPU 上位机网页可见）。
+    // 卡内：标题 → 大数值 → 迷你进度条 → 说明。磁盘 ≥90% 条转警告色。
+    const char* titles[4] = {"处理器", "内存", "磁盘", "网络"};
     for (int i = 0; i < 4; ++i) {
         lv_obj_t* panel = box(screen, 8 + (i % 2) * 156, BODY_Y + (i / 2) * 194, 148, 186);
-        label(panel, titles[i], 20, sub_color, 12, 34, 124);
-        view.extra[i * 2] = label(panel, "--", 32, text_color, 12, 78, 124);
-        view.extra[i * 2 + 1] = label(panel, "", 20, sub_color, 12, 128, 124);
+        label(panel, titles[i], 20, sub_color, 12, 28, 124);
+        view.extra[i * 2] = label(panel, "--", 32, text_color, 12, 64, 124, 44);
+        view.hw_bar[i] = bar_track(panel, 12, 120, 124);
+        view.hw_fill[i] = bar_fill(view.hw_bar[i]);
+        view.extra[i * 2 + 1] = label(panel, "", 20, sub_color, 12, 136, 124);
     }
 }
 
 void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h) {
     view.root = box(screen, x, y, w, h);
+    view.card_w = (uint16_t)w;
     const char* title = "";
     switch (view.kind) {
     case W_CLOCK: title = "本地时间"; break;
@@ -386,12 +479,26 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
     case W_AI_COST: title = "AI 用量"; break;
     default: break;
     }
-    label(view.root, title, 20, sub_color, 12, 12, w - 24);
+    // 每行都给「恰好一行」的高度：LVGL 的 LONG_DOT 只在高度固定时横向截断，
+    // 高度自适应则会把长文本折行压到下一行（实机配色核验 §3.2 记录的
+    // 「16:12:27 被折成两行、2026-10- 后被截断」即由此而来）。
+    label1(view.root, title, 20, sub_color, 12, 12, w - 24);
     // compact 阈值随字号上调：20px 正文需要约 76px 才不挤，90 太贴近。
     bool compact = h < 110;
-    view.main = label(view.root, "--", compact ? 20 : 28, text_color,
-                      12, compact ? 44 : 68, w - 24);
-    if (!compact) view.sub = label(view.root, "", 20, sub_color, 12, h - 40, w - 24);
+    if (view.kind == W_CLOCK && !compact && w >= 280) {
+        // 大时钟卡（效果图样式）：左=48px 时分秒，右=星期 + 日期。
+        // 48px 字库只收界面文案字（ASCII 数字冒号必然在 0x20-0x7F 内），
+        // 中文一律不进该标签；宽度按 8 字符 ≈ 184px 预留，与右侧块不重叠。
+        view.main = label(view.root, "--:--:--", 48, text_color, 12, 46, w - 112, 60);
+        view.extra[6] = label(view.root, "", 24, sub_color, w - 96, 50, 84);
+        lv_obj_set_style_text_align(view.extra[6], LV_TEXT_ALIGN_RIGHT, 0);
+        view.extra[7] = label(view.root, "", 20, accent, w - 96, 86, 84);
+        lv_obj_set_style_text_align(view.extra[7], LV_TEXT_ALIGN_RIGHT, 0);
+        return;
+    }
+    view.main = label1(view.root, "--", compact ? 20 : 28, text_color,
+                       12, compact ? 44 : 68, w - 24);
+    if (!compact) view.sub = label1(view.root, "", 20, sub_color, 12, h - 40, w - 24);
 }
 
 // ---------- 覆盖面板构建 ----------
@@ -420,8 +527,19 @@ void build_launcher() {
         snprintf(launch_ids[launch_count], 13, "%s", app.id);
         ++launch_count;
     }
-    if (!launch_count)
-        label(scr_launcher, "未配置应用\n在电脑设置页添加", 24, sub_color, 30, 180, 260);
+    if (!launch_count) {
+        // 空态设计（实机配色核验 §3.2 / §4 P1）：原本只有一行字悬在屏幕中部，
+        // 主体 70% 是空白，用户看不出"这里本该有东西"。改为居中成组的卡片。
+        // ⚠️ 文案用字必须在字库内：cn_32/cn_48 只收界面文案字（见 tools/gen_fonts.py），
+        //    用字库外的字会渲染成空白。改文案后必须重跑 gen_fonts.py。
+        lv_obj_t* empty = box(scr_launcher, 30, 168, 260, 164);
+        lv_obj_t* icon = label(empty, "▦", 40, accent, 0, 12, 260);
+        lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_t* why = label(empty, "还没有配置快捷应用", 28, text_color, 0, 62, 260);
+        lv_obj_set_style_text_align(why, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_t* tip = label(empty, "在电脑工作台的\n快捷应用中添加", 20, sub_color, 0, 108, 260);
+        lv_obj_set_style_text_align(tip, LV_TEXT_ALIGN_CENTER, 0);
+    }
 }
 
 void build_control() {
@@ -491,14 +609,32 @@ void build_page(uint8_t index) {
     lv_obj_add_flag(page.offbar, LV_OBJ_FLAG_GESTURE_BUBBLE);
     if (online) lv_obj_add_flag(page.offbar, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_clear_flag(page.offbar, LV_OBJ_FLAG_HIDDEN);
-    // 顶栏：标题 | 天气 | 时间 | 在状态点（可配置；关闭时回退文字状态）
-    label(page.screen, config.title, 20, text_color, 10, HEAD_Y, top_wx ? 126 : 200);
+    // 状态栏（对齐效果图）：左=页面冠名 · 中=短时钟 · 右=天气 + 电池% + 状态点。
+    // 电池缺 BAT 遥测时隐藏百分比，绝不显示占位假值。
+    label(page.screen, config.title, 20, text_color, 10, HEAD_Y,
+          top_clock ? 118 : (top_wx ? 160 : 200));
+    if (top_clock) {
+        // 中置短时钟：HH:MM 20px 约 45px 宽，x=132..196 与左标题/右天气都不相交
+        page.topclock = label(page.screen, "", 20, accent, 132, HEAD_Y, 60);
+        lv_obj_set_style_text_align(page.topclock, LV_TEXT_ALIGN_CENTER, 0);
+    }
     if (top_wx) {
-        page.topwx = label(page.screen, "", 16, sub_color, 140, HEAD_Y + 4, 96);
+        page.topwx = label(page.screen, "", 16, sub_color, 178, HEAD_Y + 4, 56);
+        lv_obj_set_style_text_align(page.topwx, LV_TEXT_ALIGN_RIGHT, 0);
         set_text(page.topwx, latest.wx_valid ? weather_text(latest.wx_code) : "");
     }
-    if (top_clock) {
-        page.topclock = label(page.screen, "", 20, accent, 244, HEAD_Y, 66);
+    // 电池标签只在状态栏模式（时钟或天气至少一个开启）创建；
+    // 两开关全关的回退模式里右侧是「在线/电脑离线」文字，避免重叠。
+    if (top_clock || top_wx) {
+        page.topbat = label(page.screen, "", 20, text_color, 240, HEAD_Y + 2, 52);
+        lv_obj_set_style_text_align(page.topbat, LV_TEXT_ALIGN_RIGHT, 0);
+        if (latest.bat >= 0 && latest.bat <= 100) {
+            char bat_text[12];
+            snprintf(bat_text, sizeof(bat_text), "%d%%", latest.bat);
+            set_text(page.topbat, bat_text);
+        } else {
+            lv_obj_add_flag(page.topbat, LV_OBJ_FLAG_HIDDEN);
+        }
     }
     if (top_clock || top_wx) {
         page.topdot = lv_obj_create(page.screen);
@@ -621,6 +757,11 @@ uint32_t state_color(const char* s) {
     return sub_color;
 }
 
+bool state_running(const char* s) {
+    return !strcmp(s, "THINKING") || !strcmp(s, "GENERATING") ||
+           !strcmp(s, "TOOL") || !strcmp(s, "BUILD");
+}
+
 void render_ai(WidgetView& view) {
     if (!view.root) return;
     int focus = -1;
@@ -629,34 +770,56 @@ void render_ai(WidgetView& view) {
             focus = i;
     if (focus < 0)
         for (int i = 0; i < 4 && focus < 0; ++i) if (latest.tasks[i].used) focus = i;
+    // 头行右侧：进行中 N · 共 M（效果图头行）
+    int total = 0, running = 0;
+    for (const AITask& task : latest.tasks) {
+        if (!task.used) continue;
+        ++total;
+        if (state_running(task.state)) ++running;
+    }
+    char line[96];
+    if (!total) strcpy(line, "空闲中");
+    else snprintf(line, sizeof(line), "进行中 %d · 共 %d", running, total);
+    set_text(view.ai_count, line);
     if (focus < 0) {
         set_text(view.extra[0], "Claude / Codex / ZCode");
         set_text(view.main, "暂无活跃会话");
         set_text(view.sub, "等待编辑器活动");
         set_text(view.extra[7], "有会话活动时自动显示");
+        if (view.ai_dot)
+            lv_obj_set_style_bg_color(view.ai_dot, lv_color_hex(sub_color), 0);
+        bar_set(view.ai_bar_fill, view.ai_bar, 0, accent);
     } else {
         const AITask& task = latest.tasks[focus];
-        char line[96];
-        snprintf(line, sizeof(line), "%s · %s · #%s", task.tool,
-                 task.proj[0] ? task.proj : "未命名项目", task.id);
+        snprintf(line, sizeof(line), "%s · #%s", task.tool, task.id);
         set_text(view.extra[0], line);
         set_text(view.main, task.proj[0] ? task.proj : "未命名项目");
         set_text(view.sub, state_short(task.state));
         lv_obj_set_style_text_color(view.sub, lv_color_hex(state_color(task.state)), 0);
+        if (view.ai_dot)
+            lv_obj_set_style_bg_color(view.ai_dot,
+                lv_color_hex(state_color(task.state)), 0);
         snprintf(line, sizeof(line), "运行 %d:%02d · %d 秒前更新",
                  task.elapse / 60, task.elapse % 60, task.age);
         set_text(view.extra[7], line);
+        bar_set(view.ai_bar_fill, view.ai_bar, task.prog, accent);
     }
     int row = 0;
     for (int i = 0; i < 4 && row < 3; ++i) {
         if (!latest.tasks[i].used || i == focus) continue;
         const AITask& task = latest.tasks[i];
-        char l1[80], l2[48];
-        snprintf(l1, sizeof(l1), "%s · %s", task.tool,
-                 task.proj[0] ? task.proj : "未命名");
-        snprintf(l2, sizeof(l2), "#%s · %s", task.id, state_short(task.state));
-        set_text(view.extra[row + 1], l1);
-        set_text(view.extra[row + 4], l2);
+        bool is_err = !strcmp(task.state, "ERROR");
+        set_text(view.extra[row + 1], task.tool);
+        // 出错行工具名转错误色，与状态点同义（行内没有放状态文字的空间）
+        lv_obj_set_style_text_color(view.extra[row + 1],
+            lv_color_hex(is_err ? COL_ERR : text_color), 0);
+        snprintf(line, sizeof(line), "%s · %d:%02d",
+                 task.proj[0] ? task.proj : "未命名", task.elapse / 60, task.elapse % 60);
+        set_text(view.extra[row + 4], line);
+        if (view.row_dot[row])
+            lv_obj_set_style_bg_color(view.row_dot[row],
+                lv_color_hex(state_color(task.state)), 0);
+        bar_set(view.row_fill[row], view.row_bar[row], task.prog, accent);
         view.row_slot[row] = i;
         lv_obj_clear_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
         ++row;
@@ -665,6 +828,9 @@ void render_ai(WidgetView& view) {
         lv_obj_add_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
         set_text(view.extra[row + 1], "");
         set_text(view.extra[row + 4], "");
+        if (view.row_dot[row])
+            lv_obj_set_style_bg_color(view.row_dot[row], lv_color_hex(sub_color), 0);
+        bar_set(view.row_fill[row], view.row_bar[row], 0, accent);
     }
     // 角色表情
     const char* st = focus >= 0 ? latest.tasks[focus].state : "IDLE";
@@ -698,25 +864,52 @@ void render_ai(WidgetView& view) {
 
 void render_hardware(WidgetView& view) {
     if (!view.root) return;
-    char line[48];
+    char line[48], tag[48];
     if (!have_data || !online) {
         for (int i = 0; i < 4; ++i) {
             set_text(view.extra[i*2], "--"); set_text(view.extra[i*2+1], "数据不可用");
+            bar_set(view.hw_fill[i], view.hw_bar[i], 0, accent);
         }
         return;
     }
-    snprintf(line, sizeof(line), "%d%%", latest.cpu); set_text(view.extra[0], line);
-    snprintf(line, sizeof(line), "负载%s", latest.cpu_temp_valid ? " · 温度可用" : "");
-    set_text(view.extra[1], line);
-    snprintf(line, sizeof(line), "%d%%", latest.mem); set_text(view.extra[2], line);
-    snprintf(line, sizeof(line), "%.1f/%.1f GB", latest.memused, latest.memtotal);
-    set_text(view.extra[3], line);
-    if (latest.gpu_valid) {
-        snprintf(line, sizeof(line), "%d%%", latest.gpu); set_text(view.extra[4], line);
-        set_text(view.extra[5], "负载");
-    } else {set_text(view.extra[4], "未提供"); set_text(view.extra[5], "GPU 不可用");}
-    snprintf(line, sizeof(line), "%d%%", latest.disk); set_text(view.extra[6], line);
-    snprintf(line, sizeof(line), "余 %.0f GB", latest.diskfree); set_text(view.extra[7], line);
+    snprintf(line, sizeof(line), "%d%%", latest.cpu);
+    set_text(view.extra[0], line);
+    if (latest.cpu_temp_valid) snprintf(tag, sizeof(tag), "%.0f ℃", latest.cputemp);
+    else strcpy(tag, "即时负载");
+    set_text(view.extra[1], tag);
+    bar_set(view.hw_fill[0], view.hw_bar[0], latest.cpu, accent);
+
+    snprintf(line, sizeof(line), "%d%%", latest.mem);
+    set_text(view.extra[2], line);
+    if (!isnan(latest.memtotal))
+        snprintf(tag, sizeof(tag), "%.1f/%.1f G", latest.memused, latest.memtotal);
+    else strcpy(tag, "即时负载");
+    set_text(view.extra[3], tag);
+    bar_set(view.hw_fill[1], view.hw_bar[1], latest.mem, accent);
+
+    snprintf(line, sizeof(line), "%d%%", latest.disk);
+    set_text(view.extra[4], line);
+    if (!isnan(latest.diskfree)) snprintf(tag, sizeof(tag), "余 %.0f G", latest.diskfree);
+    else strcpy(tag, "使用率");
+    set_text(view.extra[5], tag);
+    // 磁盘 ≥90% 迷你条转警告色（效果图规则），一眼看出空间告急
+    bar_set(view.hw_fill[2], view.hw_bar[2], latest.disk,
+            latest.disk >= 90 ? COL_WARN : accent);
+
+    // 网络：大数值=上下行合计（Mbps），迷你条按 50 Mbps 满刻度，明细放说明行。
+    // 条形只是相对快慢的视觉线索，数值本身始终是真实遥测。
+    bool net_ok = !isnan(latest.netrx) && !isnan(latest.nettx);
+    if (net_ok) {
+        snprintf(line, sizeof(line), "%.1f", latest.netrx + latest.nettx);
+        snprintf(tag, sizeof(tag), "下 %.1f 上 %.1f Mb", latest.netrx, latest.nettx);
+        int pct = (int)((latest.netrx + latest.nettx) * 100.0f / 50.0f);
+        bar_set(view.hw_fill[3], view.hw_bar[3], pct, accent);
+    } else {
+        strcpy(line, "--"); strcpy(tag, "网速未提供");
+        bar_set(view.hw_fill[3], view.hw_bar[3], 0, accent);
+    }
+    set_text(view.extra[6], line);
+    set_text(view.extra[7], tag);
 }
 
 // 目标日期时间（date="YYYY-MM-DD" time="HH:MM"）距现在的剩余秒数（负=已过）
@@ -748,13 +941,46 @@ void render_generic(WidgetView& view) {
     line[0] = 0; sub[0] = 0;
     switch (view.kind) {
     case W_CLOCK: {
-        if (!latest.date[0]) {strcpy(line, "时间未同步"); break;}
+        // 主值必须写进 line，由函数尾部 set_text(view.main, line) 统一上屏；
+        // 直接 set_text(main) 会被尾部空串 line 覆盖，时钟卡会整块变白。
         int secs = clock_seconds();
-        snprintf(line, sizeof(line), "%02d:%02d:%02d", secs / 3600, (secs / 60) % 60, secs % 60);
+        if (!latest.date[0]) strcpy(line, "--:--:--");
+        else snprintf(line, sizeof(line), "%02d:%02d:%02d",
+                      secs / 3600, (secs / 60) % 60, secs % 60);
         int wd = weekday(latest.date);
         static const char* WD = "一二三四五六日";
-        snprintf(sub, sizeof(sub), "%s 星期%c%s", latest.date,
-                 WD[(wd + 6) % 7], online ? "" : " · 离线估算");
+        if (view.extra[6]) {
+            // 大时钟卡：右侧=星期 + 2026/10/9（效果图右栏）。主标签只承载
+            // 数字冒号（48px 字库不含中文），未同步提示走 24px 全量字库块。
+            if (!latest.date[0] || !wd) {
+                set_text(view.extra[6], latest.date[0] ? "" : "时间未同步");
+                set_text(view.extra[7], "");
+                break;
+            }
+            char wd_buf[8], date_buf[16];
+            snprintf(wd_buf, sizeof(wd_buf), "周%c", WD[(wd + 6) % 7]);
+            set_text(view.extra[6], wd_buf);
+            int y2, m2, d2;
+            if (sscanf(latest.date, "%d-%d-%d", &y2, &m2, &d2) == 3)
+                snprintf(date_buf, sizeof(date_buf), "%d/%d/%d", y2, m2, d2);
+            else
+                snprintf(date_buf, sizeof(date_buf), "%s", latest.date);
+            set_text(view.extra[7], date_buf);
+            break;
+        }
+        // 半宽卡（148px）放不下「2026-10-09 星期五 · 离线估算」——20px 正文字宽
+        // 约需 300px，硬给宽度只会截成「2026-…」。故窄卡改用短格式，
+        // 信息量不减反增：年月日的主值时间已经承载了「今天」这一事实。
+        if (view.card_w && view.card_w < 300) {
+            int y2, m2, d2;
+            if (sscanf(latest.date, "%d-%d-%d", &y2, &m2, &d2) == 3)
+                snprintf(sub, sizeof(sub), "%02d-%02d 周%c", m2, d2, WD[(wd + 6) % 7]);
+            else
+                snprintf(sub, sizeof(sub), "星期%c", WD[(wd + 6) % 7]);
+        } else {
+            snprintf(sub, sizeof(sub), "%s 星期%c%s", latest.date,
+                     WD[(wd + 6) % 7], online ? "" : " · 离线估算");
+        }
         break;
     }
     case W_WEATHER:
@@ -859,15 +1085,29 @@ void render_control() {
 }
 
 void render_all() {
-    // 顶栏：时钟 HH:MM + 天气（各页同源）
+    // 状态栏：短时钟 HH:MM + 天气 + 电池%（各页同源）
     static char tb[16];
     int secs = clock_seconds();
     snprintf(tb, sizeof(tb), "%02d:%02d", secs / 3600, (secs / 60) % 60);
     const char* wx_txt = latest.wx_valid ? weather_text(latest.wx_code) : "";
+    bool bat_ok = latest.bat >= 0 && latest.bat <= 100;
     for (uint8_t p = 0; p < view_count; ++p) {
         PageView& page = views[p];
         if (page.topclock) set_text(page.topclock, tb);
         if (page.topwx) set_text(page.topwx, wx_txt);
+        if (page.topbat) {
+            if (bat_ok) {
+                char bat_text[12];
+                snprintf(bat_text, sizeof(bat_text), "%d%%", latest.bat);
+                set_text(page.topbat, bat_text);
+                // 低电量转警告色；正常的电池文字用主题文字色
+                lv_obj_set_style_text_color(page.topbat, lv_color_hex(
+                    latest.bat <= 20 ? COL_WARN : text_color), 0);
+                lv_obj_clear_flag(page.topbat, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(page.topbat, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
         if (page.topdot)
             lv_obj_set_style_bg_color(page.topdot,
                 lv_color_hex(online ? COL_OK : COL_ERR), 0);
@@ -938,6 +1178,7 @@ void ui_rebuild() {
     bg = g_profile.bg; grad = g_profile.grad; card = g_profile.card; accent = g_profile.accent;
     text_color = g_profile.text; sub_color = g_profile.sub;
     card_edge = g_profile.card_edge;
+    card_opa = g_profile.card_opa;
     memset(fired_dates, 0, sizeof(fired_dates));
     alarm_active = false;
     for (uint8_t i = 0; i < view_count; ++i) build_page(i);
@@ -973,8 +1214,10 @@ void ui_set_online(bool connected) {
         // 离线：顶部红条显示 + 卡片描边转红；在线：红条隐藏 + 描边恢复主题色。
         // 仅重着色已存在的卡片根（AI 页与通用组件的根 box）；硬件卡面板因未
         // 存入 view.root 此处不动，由顶栏红条与状态点统一提示。
-        if (views[i].offbar)
-            lv_obj_set_hidden(views[i].offbar, connected);
+        if (views[i].offbar) {
+            if (connected) lv_obj_add_flag(views[i].offbar, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_clear_flag(views[i].offbar, LV_OBJ_FLAG_HIDDEN);
+        }
         for (uint8_t w = 0; w < g_profile.pages[i].count; ++w) {
             lv_obj_t* root = views[i].widgets[w].root;
             if (root)
@@ -1143,4 +1386,9 @@ void ui_set_topbar(bool clock_on, bool wx_on) {
 void ui_set_card_opa(uint8_t opa) {
     card_opa = opa;
     ui_rebuild();
+}
+
+void ui_set_page(uint8_t page) {
+    // 上位机/托盘请求切页（PAGE=N，0 基）。同页号会被 switch_page 拦截。
+    if (page < view_count) switch_page(page, true);
 }

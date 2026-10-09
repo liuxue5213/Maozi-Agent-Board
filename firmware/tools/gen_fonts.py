@@ -26,7 +26,10 @@ SRC = ROOT / "src"
 # 必须用 TTF（TrueType 轮廓）；OTF/CFF 会让 lv_font_conv 产出碎点字库
 FONT = ROOT / "tools" / ".font-cache" / "NotoSansSC-Medium.ttf"
 FONT_CONV = "lv_font_conv@1.4.0"
-EXTRA = "℃·…°，。：！？（）【】"
+EXTRA = "℃·…°，。：！？（）【】▦☰⚙"
+# 说明：▦（宫格图标）、☰（启动器）、⚙（设置）都不在 GB2312 里，
+# 不写进 EXTRA 就会被字库漏掉，在实机上渲染成空白方块——
+# 底部两个固定按钮会「有边框没字」。改 UI 图标时务必同步这里并重跑本脚本。
 
 # 全量字库覆盖的字号（GB2312 全字）。20/24 两档足以覆盖所有正文与标题。
 FULL_SIZES = (20, 24)

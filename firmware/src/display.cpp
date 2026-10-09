@@ -44,7 +44,9 @@ public:
             cfg.memory_height = 480;
             cfg.offset_rotation = 0;
             cfg.invert = false;          // 该屏不需要反色（反了会变黄底）
-            cfg.rgb_order = false;       // 若红蓝互换改为 true
+            // MADCTL BGR 位。开关与验证步骤集中见 config.h 的 PANEL_COLOR_ORDER_BGR，
+            // 不要在这里就地改动——实机配色核验文档 §2 的「卡片变绿」尚未定论。
+            cfg.rgb_order = PANEL_COLOR_ORDER_BGR;
             cfg.readable = false;
             _panel.config(cfg);
         }
@@ -129,6 +131,20 @@ void display_init() {
     _indev_drv.type = LV_INDEV_TYPE_POINTER;
     _indev_drv.read_cb = touch_cb;
     lv_indev_drv_register(&_indev_drv);
+
+#if PANEL_COLOR_SELFTEST
+    // 四色校验屏：拍一张照片即可判定面板颜色序（判读步骤见 config.h）。
+    // 直接走 LovyanGFX 填充，绕开 LVGL 与业务主题，结果就是面板真实呈现。
+    {
+        const int band = SCR_H / 4;
+        _gfx.startWrite();
+        _gfx.fillRect(0, 0, SCR_W, band, 0xFF0000);
+        _gfx.fillRect(0, band, SCR_W, band, 0x00FF00);
+        _gfx.fillRect(0, band * 2, SCR_W, band, 0x0000FF);
+        _gfx.fillRect(0, band * 3, SCR_W, SCR_H - band * 3, 0xFFFFFF);
+        _gfx.endWrite();
+    }
+#endif
 }
 
 void display_brightness(int percent) {

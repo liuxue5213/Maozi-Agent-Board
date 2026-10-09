@@ -167,6 +167,8 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         out.accent = color("accent", out.accent); out.text = color("text", out.text);
         out.sub = color("sub", out.sub);
         out.card_edge = color("card_edge", out.card_edge);
+        // card_opa 客户端下发的是百分比(30-100)，LVGL 的 bg_opa 需要 0-255。
+        out.card_opa = (uint8_t)(constrain((int)(theme["card_opa"] | 100), 30, 100) * 255 / 100);
         out.bright = constrain((int)(theme["bright"] | 90), 5, 100);
     }
     return true;

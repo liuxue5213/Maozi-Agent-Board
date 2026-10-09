@@ -40,6 +40,9 @@ struct DeviceProfile {
     uint32_t text = 0xF3F7FF, sub = 0xA8BDD9;
     // 卡片描边色：填充色差不足以在深色主题下勾出边界时，靠它保证可见。
     uint32_t card_edge = 0x3E506E;
+    // 卡片不透明度（0-255）。工作台滑杆与主题画廊的 card_opa 都经CFG 下发；
+    // 此前 profile 未解析该字段，导致同步后不透明度丢失（仅实时 KV 生效）。
+    uint8_t card_opa = 255;
     uint8_t bright = 90;
 };
 
