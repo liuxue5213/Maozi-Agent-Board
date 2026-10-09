@@ -1,4 +1,11 @@
 psutil>=5.9
 pyserial>=3.5
+# 托盘常驻（--tray）：pystray 提供通知区域/菜单栏图标，Pillow 生成图标位图。
+# 两者都是纯依赖，缺失时客户端会自动退回控制台常驻模式，不会启动失败。
+pystray>=0.19
+Pillow>=10.0
+# 原生窗口（可选）：用于"点关闭按钮 → 隐藏到托盘"。缺失时退化为用系统浏览器打开。
+# Windows 上还需要微软 Edge WebView2 运行时（多数 Win10/11 已预装）。
+pywebview>=5.0 ; sys_platform != "linux"
 # Windows 可选：GPU 数据（N 卡）
 # pynvml ; sys_platform == "win32"

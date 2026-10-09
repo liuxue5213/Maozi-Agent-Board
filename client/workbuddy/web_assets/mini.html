@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>WorkBuddy 迷你屏</title>
+<link rel="stylesheet" href="/mini.css">
+</head>
+<body>
+<div class="mini" id="mini">
+  <header class="mini-head" id="mini-drag">
+    <span class="mini-clock" id="m-clock">--:--</span>
+    <span class="mini-status" id="m-status"><i class="dot" id="m-dot"></i><span id="m-online">离线</span></span>
+  </header>
+
+  <section class="mini-focus" id="m-focus">
+    <span class="mini-state" id="m-state">空闲</span>
+    <strong class="mini-project" id="m-project">暂无活跃会话</strong>
+    <span class="mini-meta" id="m-meta">连接 AI 编辑器后显示</span>
+    <div class="mini-bar"><i id="m-bar-fill"></i></div>
+  </section>
+
+  <ul class="mini-others" id="m-others"></ul>
+
+  <footer class="mini-foot">
+    <span id="m-cpu">CPU —</span>
+    <span id="m-mem">MEM —</span>
+    <span id="m-tok">— k tok</span>
+  </footer>
+</div>
+<script src="/mini.js"></script>
+</body>
+</html>
