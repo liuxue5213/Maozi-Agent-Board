@@ -47,6 +47,8 @@ int idle_dim_secs = 60;              // 0=关闭；无触摸超时后进入息�
 bool saver_active = false;
 lv_obj_t* scr_saver = nullptr;
 lv_obj_t* saver_time_lbl = nullptr, *saver_date_lbl = nullptr;
+uint8_t saver_style = 0;             // 0 极简 1 仪表 2 像素夜色 3 诗词短句
+char saver_msg[64] = "代码写完了吗？起来喝口水";
 uint32_t seen_hms = 0;
 
 // ---- 覆盖面板：0 无 1 启动器 2 控制中心 ----
@@ -849,29 +851,101 @@ void close_saver() {
     display_brightness(g_profile.bright);
 }
 
+// ---------- 息屏主题（4 款） ----------
+extern float g_temp, g_hum;
+const char* saver_weekday() {
+    int wd = weekday(latest.date);
+    static const char* WD = "一二三四五六日";
+    static char out[8];
+    snprintf(out, sizeof(out), "星期%c", WD[(wd + 6) % 7]);
+    return out;
+}
+
+void build_saver() {
+    if (!scr_saver) {
+        scr_saver = lv_obj_create(nullptr);
+        lv_obj_set_style_bg_color(scr_saver, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_border_width(scr_saver, 0, 0);
+    }
+    // 每次进入都按当前样式重建（样式/短句可能被 CFG 更新过）
+    lv_obj_clean(scr_saver);
+    saver_time_lbl = saver_date_lbl = nullptr;
+
+    int secs = clock_seconds();
+    char hm[8];
+    snprintf(hm, sizeof(hm), "%02d:%02d", secs / 3600, (secs / 60) % 60);
+
+    if (saver_style == 1) {
+        // 方寸仪表：边框仪表盘 + 时间/日期/温湿度
+        lv_obj_t* frame = lv_obj_create(scr_saver);
+        lv_obj_set_pos(frame, 20, 130);
+        lv_obj_set_size(frame, 280, 220);
+        lv_obj_set_style_bg_color(frame, lv_color_hex(0x0A0F14), 0);
+        lv_obj_set_style_border_color(frame, lv_color_hex(0x2E4370), 0);
+        lv_obj_set_style_border_width(frame, 2, 0);
+        lv_obj_set_style_radius(frame, 14, 0);
+        saver_time_lbl = label(frame, hm, 32, 0x22D3EE, 30, 30, 220);
+        saver_date_lbl = label(frame, "", 20, 0x8CA3C7, 30, 80, 220);
+        char envs[40] = "传感离线";
+        if (!isnan(g_temp)) snprintf(envs, sizeof(envs), "%.1f℃  %.0f%%", g_temp, g_hum);
+        label(frame, envs, 20, 0x6B7A8F, 30, 120, 220);
+        label(frame, saver_weekday(), 20, 0x6B7A8F, 30, 156, 220);
+        label(scr_saver, "方寸仪表", 16, 0x3A4A5F, 10, 8, 120);
+    } else if (saver_style == 2) {
+        // 像素夜色：强调色时间带 + 大日期
+        lv_obj_t* band = lv_obj_create(scr_saver);
+        lv_obj_set_pos(band, 0, 190);
+        lv_obj_set_size(band, 320, 96);
+        lv_obj_set_style_bg_color(band, lv_color_hex(accent), 0);
+        lv_obj_set_style_border_width(band, 0, 0);
+        lv_obj_clear_flag(band, LV_OBJ_FLAG_SCROLLABLE);
+        saver_time_lbl = label(band, hm, 48, 0x000000, 0, 12, 320);
+        lv_obj_set_style_text_align(saver_time_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        saver_date_lbl = label(scr_saver, "", 24, 0x6B7A8F, 0, 300, 320);
+        lv_obj_set_style_text_align(saver_date_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        label(scr_saver, "PIXEL NIGHT", 16, 0x3A4A5F, 10, 8, 200);
+    } else if (saver_style == 3) {
+        // 诗词短句：小时间 + 自定义短句 + 底部日期
+        saver_time_lbl = label(scr_saver, hm, 24, 0x6B7A8F, 10, 8, 140);
+        lv_obj_t* quote = lv_label_create(scr_saver);
+        lv_obj_set_pos(quote, 24, 150);
+        lv_obj_set_width(quote, 272);
+        lv_label_set_long_mode(quote, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(quote, &cn_24, 0);
+        lv_obj_set_style_text_color(quote, lv_color_hex(0x8CA3C7), 0);
+        lv_label_set_text(quote, saver_msg[0] ? saver_msg : "代码写完了吗？\n起来喝口水吧");
+        saver_date_lbl = label(scr_saver, "", 20, 0x3A4A5F, 10, 430, 300);
+        label(scr_saver, "", 16, sub_color, 0, 0, 0);
+    } else {
+        // 极简时钟（默认）
+        saver_time_lbl = label(scr_saver, hm, 48, 0x6B7A8F, 0, 190, 320);
+        lv_obj_set_style_text_align(saver_time_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        saver_date_lbl = label(scr_saver, "", 24, 0x3A4A5F, 0, 262, 320);
+        lv_obj_set_style_text_align(saver_date_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    }
+}
+
+void update_saver() {
+    if (!saver_time_lbl) return;
+    int secs = clock_seconds();
+    static char st[16], sd[48];
+    snprintf(st, sizeof(st), "%02d:%02d", secs / 3600, (secs / 60) % 60);
+    lv_label_set_text(saver_time_lbl, st);
+    int wd = weekday(latest.date);
+    static const char* WD2 = "一二三四五六日";
+    snprintf(sd, sizeof(sd), "%s 星期%c", latest.date, WD2[(wd + 6) % 7]);
+    lv_label_set_text(saver_date_lbl, sd);
+}
+
 void ui_theme_tick() {
     uint32_t now = millis();
     alarm_tick();
-    // 息屏时钟：无触摸超过阈值 → 暗屏大钟；任何触摸 → 唤醒
+    // 息屏主题：无触摸超过阈值 → 息屏（4 款样式）；任何触摸 → 唤醒
     if (idle_dim_secs > 0 && view_count) {
         bool should = lv_disp_get_inactive_time(nullptr) > (uint32_t)idle_dim_secs * 1000;
         if (should && !saver_active && !overlay && !alarm_active) {
             saver_active = true;
-            if (!scr_saver) {
-                scr_saver = lv_obj_create(nullptr);
-                lv_obj_set_style_bg_color(scr_saver, lv_color_hex(0x000000), 0);
-                lv_obj_set_style_border_width(scr_saver, 0, 0);
-            }
-            lv_obj_t* t = lv_label_create(scr_saver);
-            lv_obj_set_style_text_font(t, &cn_48, 0);
-            lv_obj_set_style_text_color(t, lv_color_hex(0x6B7A8F), 0);   // 暗色防烧屏
-            lv_obj_align(t, LV_ALIGN_CENTER, 0, -20);
-            saver_time_lbl = t;
-            lv_obj_t* d = lv_label_create(scr_saver);
-            lv_obj_set_style_text_font(d, &cn_24, 0);
-            lv_obj_set_style_text_color(d, lv_color_hex(0x3A4A5F), 0);
-            lv_obj_align(d, LV_ALIGN_CENTER, 0, 34);
-            saver_date_lbl = d;
+            build_saver();
             lv_scr_load(scr_saver);
             display_brightness(20);
         } else if (!should && saver_active) {
@@ -879,16 +953,7 @@ void ui_theme_tick() {
             lv_scr_load(views[current_page].screen);
             display_brightness(g_profile.bright);
         }
-        if (saver_active && saver_time_lbl) {
-            static char st[16], sd[40];
-            int secs = clock_seconds();
-            snprintf(st, sizeof(st), "%02d:%02d", secs / 3600, (secs / 60) % 60);
-            lv_label_set_text(saver_time_lbl, st);
-            int wd = weekday(latest.date);
-            static const char* WD2 = "一二三四五六日";
-            snprintf(sd, sizeof(sd), "%s 星期%c", latest.date, WD2[(wd + 6) % 7]);
-            lv_label_set_text(saver_date_lbl, sd);
-        }
+        if (saver_active) update_saver();
     }
     if (now - last_render_ms >= 1000) {
         last_render_ms = now;
@@ -898,4 +963,14 @@ void ui_theme_tick() {
 
 void ui_set_idle_dim(int seconds) {
     idle_dim_secs = constrain(seconds, 0, 3600);
+}
+
+void ui_set_saver(uint8_t style) {
+    saver_style = style > 3 ? 3 : style;
+    if (saver_active) { build_saver(); lv_scr_load(scr_saver); }
+}
+
+void ui_set_saver_msg(const char* msg) {
+    snprintf(saver_msg, sizeof(saver_msg), "%s", msg ? msg : "");
+    if (saver_active && saver_style == 3) { build_saver(); lv_scr_load(scr_saver); }
 }

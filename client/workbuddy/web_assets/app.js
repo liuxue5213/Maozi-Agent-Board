@@ -89,6 +89,8 @@ function renderInspector() {
   });
   $('weather-city').value=(draft.weather&&draft.weather.city)||'';
   $('idle-dim').value=draft.theme.idledim??60;$('idle-dim-val').textContent=(draft.theme.idledim??60)==0?'关闭':(draft.theme.idledim+' 秒');
+  $('saver-style').value=draft.theme.saver??0;
+  $('saver-msg').value=draft.theme.savermsg||'';
   for(const key of ['bg','grad','card','accent','text']) $('theme-'+key).value='#'+draft.theme[key];
   $('theme-bright').value=draft.theme.bright;$('bright-value').textContent=draft.theme.bright+'%';
 }
@@ -223,6 +225,8 @@ function bind(){
   for(const key of ['bg','grad','card','accent','text'])$('theme-'+key).oninput=e=>{draft.theme[key]=e.target.value.slice(1).toUpperCase();markDirty()};
   $('theme-bright').oninput=e=>{draft.theme.bright=Number(e.target.value);markDirty()};
   $('idle-dim').oninput=e=>{draft.theme.idledim=Number(e.target.value);$('idle-dim-val').textContent=Number(e.target.value)==0?'关闭':(e.target.value+' 秒');markDirty()};
+  $('saver-style').onchange=e=>{draft.theme.saver=Number(e.target.value);markDirty()};
+  $('saver-msg').onchange=e=>{draft.theme.savermsg=e.target.value;markDirty()};
   const startTemplates={
     '专注模式':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']}],
     '数据控':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'pc',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']}],

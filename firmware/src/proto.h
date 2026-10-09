@@ -58,6 +58,10 @@ struct Telemetry {
     bool theme_changed = false;
     int idledim = -1;
     bool idledim_changed = false;
+    int saver = -1;
+    bool saver_changed = false;
+    char savermsg[64] = "";
+    bool savermsg_changed = false;
 
     bool cpu_temp_valid = false;
     bool gpu_valid = false;

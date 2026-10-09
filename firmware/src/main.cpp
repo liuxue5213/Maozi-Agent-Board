@@ -88,6 +88,22 @@ void loop() {
                 prefs.end();
             }
         }
+        if (proto.t.saver_changed) {
+            proto.t.saver_changed = false;
+            ui_set_saver((uint8_t)proto.t.saver);
+            if (prefs.begin("wb", false)) {
+                prefs.putInt("saver_style", proto.t.saver);
+                prefs.end();
+            }
+        }
+        if (proto.t.savermsg_changed) {
+            proto.t.savermsg_changed = false;
+            ui_set_saver_msg(proto.t.savermsg);
+            if (prefs.begin("wb", false)) {
+                prefs.putString("saver_msg", proto.t.savermsg);
+                prefs.end();
+            }
+        }
         if (proto.t.bright >= 0) display_brightness(proto.t.bright);
     }
 
