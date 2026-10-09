@@ -5,6 +5,9 @@ import threading
 from .collect import create
 from .control import ControlApp
 from .protocol import encode_caps, encode_hb, encode_telemetry
+import base64 as _b64
+import zlib as _zlib
+
 from .profile import encode_profile, load_profile, save_profile, validate_profile
 from .telemetry import HealthLog
 
@@ -58,6 +61,9 @@ class App:
             self.health.event("key", action=d["key"])
         if "touch" in d:
             self.health.event("touch", target=d["touch"][:16])
+        if "img_reply" in d:
+            self.health.event("img_ack" if d["img_reply"]["ok"] else "img_nak",
+                              reason=d["img_reply"]["reason"])
         if "config_reply" in d:
             reply = d["config_reply"]
             with self.profile_lock:
@@ -170,6 +176,26 @@ class App:
             self.health.event("sync_sent", version=profile["version"])
         for line in encode_profile(profile):
             self.link.send(line)
+
+    def send_bg_image(self, data: bytes) -> bool:
+        """背景图分帧下发（IMG=BEGIN/DATA/END，同 CFG 事务风格）。"""
+        if not self.link or not self.link.status.startswith("connected:"):
+            return False
+        crc = _zlib.crc32(data) & 0xFFFFFFFF
+        self.link.send(f"IMG=BEGIN,{len(data)},{crc:08X}\n".encode())
+        for seq, start in enumerate(range(0, len(data), 90)):
+            chunk = _b64.b64encode(data[start:start + 90]).decode("ascii")
+            self.link.send(f"IMG=DATA,{seq},{chunk}\n".encode())
+        self.link.send("IMG=END,bg.jpg\n".encode())
+        self.health.event("bgimg_sent", size=len(data))
+        return True
+
+    def clear_bg_image(self) -> bool:
+        if not self.link or not self.link.status.startswith("connected:"):
+            return False
+        self.link.send("IMG=DELETE\n".encode())
+        self.health.event("bgimg_cleared")
+        return True
 
     def check_sync_timeout(self):
         """传输中超过 10s 仍未收到 ACK/NAK → 判定失败（旧固件不支持 CFG 事务等）。

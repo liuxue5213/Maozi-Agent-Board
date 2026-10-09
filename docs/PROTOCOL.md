@@ -63,6 +63,21 @@
   设备写入备用 OTA 分区后回 `ACK=ota_ok` 并重启切换；失败回 `NAK=<reason>`，原固件不受影响。
 - 设计原则：**功能变更尽量放客户端**；固件只承载渲染能力，长期保持小版本迭代。
 
+## 2.2 背景图传输（IMG 事务）
+
+与 CFG 同风格的文本分帧（每片 90 原始字节 base64），客户端预缩放为 320×480 JPEG：
+
+```text
+IMG=BEGIN,<len>,<CRC32>
+IMG=DATA,<seq>,<base64>
+IMG=END,bg.jpg
+ACK=IMG,APPLIED   /   NAK=IMG,<SIZE|SEQ|DATA|CRC_MISMATCH|STORAGE|DECODE>
+IMG=DELETE            → ACK=IMG,DELETED（恢复纯色）
+```
+
+设备校验长度与 CRC32 后原子写入 LittleFS /bg.jpg，立即解码到 PSRAM 并整屏重建。
+上限 120KB；解码失败回 NAK=DECODE（文件保留但不生效）。
+
 ## 3. 链路规则
 
 - 客户端每 3s 扫描串口，识别 VID `0x303A` 或 `usbmodem/CH340` 命名，自动连接、断线自动重连。

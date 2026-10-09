@@ -60,6 +60,7 @@ public:
     Telemetry t;
     volatile bool dirty = false;
     bool profile_changed = false;
+    bool bg_changed = false;
     void feed(char c);
 
 private:

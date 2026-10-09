@@ -5,6 +5,7 @@
 #include "display.h"
 #include "proto.h"
 #include "profile.h"
+#include "bgimg.h"
 #include "ui.h"
 
 DHT11Raw dht(PIN_DHT);   // 自包含读取器，不用 noInterrupts()（那是 INT_WDT 崩溃根因）
@@ -25,6 +26,7 @@ void setup() {
     Serial.begin(115200);
     delay(200);
     profile_init();
+    bgimg_init();        // 挂载确认 + 解码已存背景图（在 ui_init 前完成，首屏即带背景）
     display_init();
     ui_init();
 }
@@ -61,6 +63,10 @@ void loop() {
         proto.profile_changed = false;
         ui_rebuild();
         display_brightness(g_profile.bright);
+    }
+    if (proto.bg_changed) {
+        proto.bg_changed = false;
+        ui_rebuild();
     }
     if (proto.dirty) {
         proto.dirty = false;

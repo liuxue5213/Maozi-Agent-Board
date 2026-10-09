@@ -46,10 +46,12 @@ class SerialLink:
             return True
         return False
 
-    def send(self, text: str):
+    def send(self, text):
+        """text 为 str（自动编码）或 bytes（如背景图分帧，原样发送）。"""
         if self._port is None:
             return
-        data = text.encode("utf-8", errors="replace")
+        data = text if isinstance(text, (bytes, bytearray)) else \
+            text.encode("utf-8", errors="replace")
         try:
             self._q.put_nowait(data)
         except queue.Full:

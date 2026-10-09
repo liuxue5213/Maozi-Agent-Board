@@ -213,6 +213,30 @@ function bind(){
     b.onclick=()=>{Object.assign(draft.theme,colors,{bright:draft.theme.bright});markDirty();notice(`已应用「${name}」主题，保存并同步后生效`)};
     presets.append(b);
   });
+  $('bgimg-file').onchange=async e=>{
+    const file=e.target.files[0];e.target.value='';
+    if(!file)return;
+    if(!live.device?.startsWith('connected:')){notice('设备未连接，先等设备上线',true);return}
+    notice('正在处理图片…');
+    try{
+      const img=await new Promise((ok,bad)=>{const i=new Image();i.onload=()=>ok(i);i.onerror=bad;i.src=URL.createObjectURL(file)});
+      const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;
+      const ctx=canvas.getContext('2d');
+      const scale=Math.max(320/img.width,480/img.height);
+      const w=img.width*scale,h=img.height*scale;
+      ctx.drawImage(img,(320-w)/2,(480-h)/2,w,h);   // cover 裁剪居中
+      const blob=await new Promise(ok=>canvas.toBlob(ok,'image/jpeg',0.72));
+      const r=await fetch('/api/bgimg',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:await blob.arrayBuffer()});
+      const d=await r.json();
+      if(!r.ok)throw new Error(d.error||'发送失败');
+      notice('背景图已发送，等待设备应用');
+    }catch(err){notice('背景图失败：'+err.message,true)}
+  };
+  $('bgimg-clear').onclick=async()=>{
+    try{const r=await fetch('/api/bgimg-clear',{method:'POST'});const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'失败');notice(d.status)}
+    catch(err){notice(err.message,true)}
+  };
   $('autostart-toggle').onchange=async e=>{
     try{const r=await request('/api/autostart',{enable:e.target.checked});
       e.target.checked=r.enabled;notice(r.enabled?'已开启开机自启':'已关闭开机自启')}

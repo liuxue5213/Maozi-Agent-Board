@@ -1,5 +1,6 @@
 #include "proto.h"
 #include "profile.h"
+#include "bgimg.h"
 
 extern void send_fw_handshake();   // main.cpp 提供：收到 CAPS（客户端问候）时回握手
 
@@ -106,6 +107,15 @@ void Proto::handle(const char* line) {
 
     if (!strcmp(key, "CFG"))  { handle_cfg(v); return; }
     if (!strcmp(key, "CAPS")) { send_fw_handshake(); return; }   // 客户端问候 → 回能力握手
+    if (!strcmp(key, "IMG")) {
+        if (!strcmp(v, "DELETE")) {
+            bgimg_delete();
+            bg_changed = true;
+            return;
+        }
+        if (bgimg_receive_cfg(v)) bg_changed = true;
+        return;
+    }
     if (!strcmp(key, "HB"))   return;   // 心跳由 main 的时间戳逻辑处理
     if (!strcmp(key, "TIME"))  { t.clock_hms = (uint32_t)atol(v); dirty = true; return; }
     if (!strcmp(key, "DATE"))  { snprintf(t.date, sizeof(t.date), "%s", v); dirty = true; return; }

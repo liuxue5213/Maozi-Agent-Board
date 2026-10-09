@@ -7,3 +7,7 @@
 .field.toggle{display:flex;align-items:center;gap:10px;cursor:pointer}
 .field.toggle input{width:auto;accent-color:#22d3ee}
 .entry.app input:nth-child(2){flex:1}
+
+/* 背景图上传行 */
+.bgimg-row{display:flex;gap:8px;margin-top:16px}
+.bgimg-row .button{flex:1;text-align:center;padding:8px 5px;font-size:11px}

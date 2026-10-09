@@ -81,6 +81,8 @@ def parse_uplink(line: str):
         return {"launch": value}
     if key == "HB":
         return {"dev_hb": value}
+    if key in ("ACK", "NAK") and value.startswith("IMG,"):
+        return {"img_reply": {"ok": key == "ACK", "reason": value[4:]}}
     if key in ("ACK", "NAK") and value.startswith("CFG,"):
         fields = value.split(",", 2)
         if len(fields) == 3:

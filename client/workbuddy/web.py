@@ -51,6 +51,22 @@ def start_settings_server(app, port):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if path == "/api/bgimg":
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 120 * 1024:
+                    self._json(413, {"error": "图片需在 120KB 内（工作台会自动压缩）"})
+                    return
+                if not app.link or not app.link.status.startswith("connected:"):
+                    self._json(503, {"error": "设备未连接"})
+                    return
+                data = self.rfile.read(length)
+                app.send_bg_image(data)
+                self._json(200, {"status": "已发送，等待设备应用"})
+                return
+            if path == "/api/bgimg-clear":
+                app.clear_bg_image()
+                self._json(200, {"status": "已请求恢复纯色"})
+                return
             if path == "/api/autostart-status":
                 try:
                     from . import autostart
@@ -66,7 +82,20 @@ def start_settings_server(app, port):
 
         def do_POST(self):
             path = urlsplit(self.path).path
-            if self.headers.get("Content-Type", "").split(";", 1)[0] != "application/json":
+            content_type = self.headers.get("Content-Type", "").split(";", 1)[0]
+            if path == "/api/bgimg":
+                # 背景图走二进制通道（客户端已压成 ≤120KB 的 JPEG）
+                length = int(self.headers.get("Content-Length", "0"))
+                if not (0 < length <= 120 * 1024):
+                    self._json(413, {"error": "图片需在 120KB 内"})
+                    return
+                if not app.link or not app.link.status.startswith("connected:"):
+                    self._json(503, {"error": "设备未连接"})
+                    return
+                app.send_bg_image(self.rfile.read(length))
+                self._json(200, {"status": "已发送，等待设备应用"})
+                return
+            if content_type != "application/json":
                 self._json(415, {"error": "需要 application/json"})
                 return
             length = int(self.headers.get("Content-Length", "0"))

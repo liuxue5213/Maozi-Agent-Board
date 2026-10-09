@@ -3,6 +3,7 @@
 #include "display.h"
 #include "fonts.h"
 #include "profile.h"
+#include "bgimg.h"
 #include <lvgl.h>
 #include <math.h>
 
@@ -376,6 +377,12 @@ void build_page(uint8_t index) {
     lv_obj_set_style_border_width(page.screen, 0, 0);
     lv_obj_clear_flag(page.screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(page.screen, gesture, LV_EVENT_GESTURE, nullptr);
+    if (bgimg_ready()) {                    // 背景图层（最底层）
+        lv_obj_t* bgimg = lv_img_create(page.screen);
+        lv_img_set_src(bgimg, bgimg_source());
+        lv_obj_set_pos(bgimg, 0, 0);
+        lv_obj_move_background(bgimg);
+    }
     label(page.screen, config.title, 20, text_color, 10, HEAD_Y, 200);
     page.conn = label(page.screen, online ? "在线" : "电脑离线", 20,
                       online ? 0x34D399 : COL_ERR, 210, HEAD_Y + 2, 100);
