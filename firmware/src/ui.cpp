@@ -16,7 +16,7 @@ constexpr int SCR_W = 320, SCR_H = 480;
 constexpr int HEAD_Y = 8;        // 标题行
 constexpr int BODY_Y = 60;       // 内容区顶（上方留提示行）
 constexpr int BODY_H = 380;      // 内容区高（60..440）
-constexpr int FOOT_Y = 448;      // 页码行（底边 472，留 8px 安全边距）
+constexpr int FOOT_Y = 446;      // 页码行（底边 468，留 12px 安全边距，满足触控余量）
 constexpr int EDGE_TOP = 90;     // 顶部下拉判定区
 constexpr int EDGE_BOTTOM = SCR_H - 90;
 
@@ -32,6 +32,7 @@ struct WidgetView {
 struct PageView {
     lv_obj_t *screen = nullptr, *conn = nullptr, *alert = nullptr;
     lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
+    lv_obj_t *offbar = nullptr;   // 离线状态条（顶部 4px 红条）
     WidgetView widgets[4];
 };
 
@@ -78,9 +79,10 @@ lv_obj_t* label(lv_obj_t* parent, const char* value, int size, uint32_t color,
     if (height > 0) lv_obj_set_height(obj, height);
     lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
-    // 字号→字库映射。16px 中文在 320×480 上笔画间隙仅 1~2px，4bpp 抗锯齿
-    // 的灰边会吃掉间隙导致糊字，因此 cn_16 已不再被任何元素引用（省 5.5MB
-    // flash）。20px 是可读下限：请求 <=20 一律走 cn_20。
+    // 字号→字库映射（最小渲染字号=20px，杜绝小字糊化）：
+    //   >=40 → cn_48(48px)  |  >=28 → cn_32(32px)
+    //   >=20 → cn_24(24px)  |  <20  → cn_20(20px)
+    // 所有 <=20px 的请求统一落到 cn_20，cn_16 已移除，无 16px 渲染路径。
     const lv_font_t* font = size >= 40 ? &cn_48 : size >= 28 ? &cn_32 :
                             size >= 20 ? &cn_24 : &cn_20;
     lv_obj_set_style_text_font(obj, font, 0);
@@ -290,7 +292,9 @@ void make_ai(WidgetView& view, lv_obj_t* screen) {
     //   → 状态 32px 强调色 → 运行信息 20px → 3 条其他会话行（双行）
     view.extra[0] = label(view.root, "", 20, sub_color,  14,  10, 276, 26);
     view.main     = label(view.root, "暂无会话", 32, text_color, 14,  42, 276, 42);
-    view.sub      = label(view.root, "等待 AI 编辑器活动", 32, accent, 14, 90, 276, 42);
+    // 状态（次信息）用 20px，低于主标识 32px，形成清晰信息金字塔：
+    //   元数据20 → 项目名32 → 状态20 → 运行信息20
+    view.sub      = label(view.root, "等待 AI 编辑器活动", 20, accent, 14, 96, 276, 28);
     view.extra[7] = label(view.root, "", 20, sub_color,  14, 138, 276, 26);
     for (int i = 0; i < 3; ++i) {
         lv_obj_t* row = box(view.root, 10, 174 + 68 * i, 284, 62);
@@ -475,6 +479,18 @@ void build_page(uint8_t index) {
         lv_obj_set_pos(bgimg, 0, 0);
         lv_obj_move_background(bgimg);
     }
+    // 离线状态条：顶部 4px 红色条。电脑掉线时整屏给出明确"离线"信号
+    // （与顶栏状态点、标题栏红色"电脑离线"文字形成三重冗余提示）。
+    page.offbar = lv_obj_create(page.screen);
+    lv_obj_set_pos(page.offbar, 0, 0);
+    lv_obj_set_size(page.offbar, SCR_W, 4);
+    lv_obj_set_style_bg_color(page.offbar, lv_color_hex(COL_ERR), 0);
+    lv_obj_set_style_border_width(page.offbar, 0, 0);
+    lv_obj_clear_flag(page.offbar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(page.offbar, LV_OBJ_FLAG_CLICKABLE);   // 4px 装饰条不吞点击
+    lv_obj_add_flag(page.offbar, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    if (online) lv_obj_add_flag(page.offbar, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(page.offbar, LV_OBJ_FLAG_HIDDEN);
     // 顶栏：标题 | 天气 | 时间 | 在状态点（可配置；关闭时回退文字状态）
     label(page.screen, config.title, 20, text_color, 10, HEAD_Y, top_wx ? 126 : 200);
     if (top_wx) {
@@ -953,6 +969,17 @@ void ui_set_online(bool connected) {
             set_text(views[i].conn, connected ? "在线" : "电脑离线");
             lv_obj_set_style_text_color(views[i].conn,
                 lv_color_hex(connected ? COL_OK : COL_ERR), 0);
+        }
+        // 离线：顶部红条显示 + 卡片描边转红；在线：红条隐藏 + 描边恢复主题色。
+        // 仅重着色已存在的卡片根（AI 页与通用组件的根 box）；硬件卡面板因未
+        // 存入 view.root 此处不动，由顶栏红条与状态点统一提示。
+        if (views[i].offbar)
+            lv_obj_set_hidden(views[i].offbar, connected);
+        for (uint8_t w = 0; w < g_profile.pages[i].count; ++w) {
+            lv_obj_t* root = views[i].widgets[w].root;
+            if (root)
+                lv_obj_set_style_border_color(root,
+                    lv_color_hex(connected ? card_edge : COL_ERR), 0);
         }
     }
     render_all();
