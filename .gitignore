@@ -1,16 +1,18 @@
-.pio/
+# Python
 __pycache__/
 *.pyc
-.pytest_cache/
-dist/
-build/
-*.egg-info/
-.DS_Store
-firmware/tools/.font-cache/*.ttf
-firmware/tools/.font-cache/*.otf
-firmware/tools/.font-cache/*.zip
-firmware/tools/.font-cache/*.tgz
+.venv/
+# 打包产物（37MB 二进制不进库）
 client/dist/
-outputs/*.html
-.workbuddy*/
-.zcodeignore
+client/build/
+client/workbuddy_agent.spec
+# PlatformIO
+firmware/.pio/
+# 验证截图/临时产物（文档类 md/json 保留）
+outputs/ui-refactor-shots/
+outputs/style-verify/
+# SMC helper 编译产物
+client/tools/smc/maozi-smcd
+# 系统杂物
+.DS_Store
+firmware/tools/.font-cache/*.otf
