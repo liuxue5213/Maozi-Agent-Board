@@ -58,12 +58,15 @@ uint8_t launch_count = 0;
 lv_obj_t *ctrl_vol_lbl = nullptr, *ctrl_mute_lbl = nullptr, *ctrl_bright_lbl = nullptr;
 
 lv_obj_t* label(lv_obj_t* parent, const char* value, int size, uint32_t color,
-                int x, int y, int width) {
+                int x, int y, int width, int height = -1) {
     if (!parent) return nullptr;
     lv_obj_t* obj = lv_label_create(parent);
     if (!obj) return nullptr;
     lv_obj_set_pos(obj, x, y);
     lv_obj_set_width(obj, width);
+    // 排版系统核心：标签给定固定高度后，LONG_DOT 会在水平方向截断（…），
+    // 文字再长也不会换行压到下一行——重叠问题从机制上消灭。
+    if (height > 0) lv_obj_set_height(obj, height);
     lv_label_set_long_mode(obj, LV_LABEL_LONG_DOT);
     lv_obj_set_style_text_color(obj, lv_color_hex(color), 0);
     // 字号→字库映射。16px 中文在 320×480 上笔画间隙仅 1~2px，4bpp 抗锯齿
@@ -255,18 +258,21 @@ void choose_task(lv_event_t* event) {
 // ---------- 页面构建（竖屏） ----------
 void make_ai(WidgetView& view, lv_obj_t* screen) {
     view.root = box(screen, 8, BODY_Y, 304, BODY_H);
-    // 层级修正：主状态必须最大。原先 main=20 / sub=32，导致"等待编辑器活动"
-    // 这句辅助说明比"暂无活跃会话"更醒目，视觉权重与信息重要性相反。
-    view.sub  = label(view.root, "等待 AI 编辑器活动", 20, sub_color, 14, 44, 276);
-    view.main = label(view.root, "暂无会话", 32, text_color, 14, 10, 276);
-    view.extra[0] = label(view.root, "", 20, sub_color, 14, 90, 276);
+    // 信息金字塔（每行固定高度 + 水平截断）：
+    //   元数据 20px（工具·任务类型）→ 主标识 32px（项目名）
+    //   → 状态 32px 强调色 → 运行信息 20px → 3 条其他会话行（双行）
+    view.extra[0] = label(view.root, "", 20, sub_color,  14,  10, 276, 26);
+    view.main     = label(view.root, "暂无会话", 32, text_color, 14,  42, 276, 42);
+    view.sub      = label(view.root, "等待 AI 编辑器活动", 32, accent, 14, 90, 276, 42);
+    view.extra[7] = label(view.root, "", 20, sub_color,  14, 138, 276, 26);
     for (int i = 0; i < 3; ++i) {
-        lv_obj_t* row = box(view.root, 10, 134 + 64 * i, 284, 56);
+        lv_obj_t* row = box(view.root, 10, 174 + 68 * i, 284, 62);
         lv_obj_set_style_bg_color(row, lv_color_hex(bg), 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, choose_task, LV_EVENT_CLICKED, &view);
         view.rows[i] = row;
-        view.extra[i + 1] = label(row, "", 20, sub_color, 8, 16, 268);
+        view.extra[i + 1] = label(row, "", 20, sub_color,  8,  5, 268, 26);   // 行1 工具·项目
+        view.extra[i + 4] = label(row, "", 20, text_color, 8, 33, 268, 26);   // 行2 会话·状态
     }
 }
 
@@ -480,6 +486,25 @@ int clock_seconds() {
     return (base + (millis() - last_clock_ms) / 1000) % 86400;
 }
 
+const char* state_short(const char* s) {
+    if (!strcmp(s, "ASK")) return "待确认";
+    if (!strcmp(s, "ERROR")) return "出错";
+    if (!strcmp(s, "WAIT_INPUT")) return "等回复";
+    if (!strcmp(s, "DONE")) return "已完成";
+    if (!strcmp(s, "TOOL")) return "执行中";
+    if (!strcmp(s, "THINKING")) return "思考中";
+    return "处理中";
+}
+
+uint32_t state_color(const char* s) {
+    if (!strcmp(s, "GENERATING") || !strcmp(s, "TOOL")) return accent;
+    if (!strcmp(s, "WAIT_INPUT")) return COL_OK;
+    if (!strcmp(s, "ASK")) return COL_WARN;
+    if (!strcmp(s, "THINKING")) return COL_WARN;
+    if (!strcmp(s, "ERROR")) return COL_ERR;
+    return sub_color;
+}
+
 void render_ai(WidgetView& view) {
     if (!view.root) return;
     int focus = -1;
@@ -489,42 +514,42 @@ void render_ai(WidgetView& view) {
     if (focus < 0)
         for (int i = 0; i < 4 && focus < 0; ++i) if (latest.tasks[i].used) focus = i;
     if (focus < 0) {
+        set_text(view.extra[0], "Claude / Codex / ZCode");
         set_text(view.main, "暂无活跃会话");
         set_text(view.sub, "等待编辑器活动");
-        set_text(view.extra[0], "Claude Code / Codex / ZCode");
+        set_text(view.extra[7], "有会话活动时自动显示");
     } else {
         const AITask& task = latest.tasks[focus];
         char line[96];
-        snprintf(line, sizeof(line), "%s · %s  #%s", task.tool,
+        snprintf(line, sizeof(line), "%s · %s · #%s", task.tool,
                  task.proj[0] ? task.proj : "未命名项目", task.id);
-        set_text(view.main, line);
-        const char* status = !strcmp(task.state, "ASK") ? "等待确认" :
-            !strcmp(task.state, "WAIT_INPUT") ? "等你回复" :
-            !strcmp(task.state, "ERROR") ? "任务出错" :
-            !strcmp(task.state, "DONE") ? "已完成" :
-            !strcmp(task.state, "TOOL") ? "执行工具" :
-            !strcmp(task.state, "THINKING") ? "思考中" : "处理中";
-        set_text(view.sub, status);
-        snprintf(line, sizeof(line), "运行 %d:%02d · %d 秒前更新 · 日志推断",
-                 task.elapse / 60, task.elapse % 60, task.age);
         set_text(view.extra[0], line);
+        set_text(view.main, task.proj[0] ? task.proj : "未命名项目");
+        set_text(view.sub, state_short(task.state));
+        lv_obj_set_style_text_color(view.sub, lv_color_hex(state_color(task.state)), 0);
+        snprintf(line, sizeof(line), "运行 %d:%02d · %d 秒前更新",
+                 task.elapse / 60, task.elapse % 60, task.age);
+        set_text(view.extra[7], line);
     }
     int row = 0;
     for (int i = 0; i < 4 && row < 3; ++i) {
         if (!latest.tasks[i].used || i == focus) continue;
         const AITask& task = latest.tasks[i];
-        char line[100];
-        snprintf(line, sizeof(line), "%s · %s #%s   %s", task.tool,
-                 task.proj[0] ? task.proj : "未命名", task.id,
-                 !strcmp(task.state, "ASK") ? "待确认" :
-                 !strcmp(task.state, "ERROR") ? "出错" :
-                 !strcmp(task.state, "WAIT_INPUT") ? "等回复" : "处理中");
-        set_text(view.extra[row + 1], line);
+        char l1[80], l2[48];
+        snprintf(l1, sizeof(l1), "%s · %s", task.tool,
+                 task.proj[0] ? task.proj : "未命名");
+        snprintf(l2, sizeof(l2), "#%s · %s", task.id, state_short(task.state));
+        set_text(view.extra[row + 1], l1);
+        set_text(view.extra[row + 4], l2);
         view.row_slot[row] = i;
         lv_obj_clear_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
         ++row;
     }
-    for (; row < 3; ++row) lv_obj_add_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
+    for (; row < 3; ++row) {
+        lv_obj_add_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
+        set_text(view.extra[row + 1], "");
+        set_text(view.extra[row + 4], "");
+    }
 }
 
 void render_hardware(WidgetView& view) {
