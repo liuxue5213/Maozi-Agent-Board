@@ -176,6 +176,7 @@ function renderInspector() {
   $('idle-dim').value=draft.theme.idledim??60;$('idle-dim-val').textContent=(draft.theme.idledim??60)==0?'关闭':(draft.theme.idledim+' 秒');
   $('topclock-toggle').checked=!!Number(draft.theme.topclock??1);
   $('topwx-toggle').checked=!!Number(draft.theme.topwx??1);
+  $('bright-auto').checked=!!Number(draft.theme.bright_auto??0);
   $('card-opa').value=draft.theme.card_opa??100;$('opa-value').textContent=(draft.theme.card_opa??100)+'%';
   $('saver-style').value=draft.theme.saver??0;
   $('saver-msg').value=draft.theme.savermsg||'';
@@ -336,6 +337,7 @@ function bind(){
   $('topclock-toggle').onchange=e=>{draft.theme.topclock=e.target.checked?1:0;markDirty()};
   $('topwx-toggle').onchange=e=>{draft.theme.topwx=e.target.checked?1:0;markDirty()};
   $('card-opa').oninput=e=>{draft.theme.card_opa=Number(e.target.value);$('opa-value').textContent=e.target.value+'%';markDirty()};
+  $('bright-auto').onchange=e=>{draft.theme.bright_auto=e.target.checked?1:0;markDirty();notice(e.target.checked?'已开启自动亮度（白天亮/夜间暗）':'已切回手动亮度')};
   const startTemplates={
     '专注模式':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']}],
     '数据控':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'pc',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']}],

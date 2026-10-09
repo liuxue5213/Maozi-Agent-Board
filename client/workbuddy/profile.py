@@ -198,6 +198,7 @@ def validate_profile(raw):
     out["theme"]["topclock"] = 1 if int(theme.get("topclock", 1)) else 0
     out["theme"]["topwx"] = 1 if int(theme.get("topwx", 1)) else 0
     out["theme"]["card_opa"] = max(30, min(100, int(theme.get("card_opa", 100))))
+    out["theme"]["bright_auto"] = 1 if int(theme.get("bright_auto", 0)) else 0
     def luminance(hex_color):
         values = [int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4)]
         linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in values]

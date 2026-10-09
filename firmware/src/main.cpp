@@ -19,6 +19,8 @@ float g_temp = NAN, g_hum = NAN;
 static uint32_t last_uplink = 0, last_dht = 0, last_hb = 0;
 static uint32_t last_client_data = 0;
 static bool ever_linked = false;
+static bool bright_auto = false;   // true=按时间段自动调亮度
+static uint8_t bright_manual_val = 90;
 
 void send_touch(const char* page) {
     Serial.print(uplink_touch(page));
@@ -122,7 +124,16 @@ void loop() {
                 prefs.end();
             }
         }
-        if (proto.t.bright >= 0) display_brightness(proto.t.bright);
+        if (proto.t.bright >= 0) { bright_manual_val = proto.t.bright; display_brightness(proto.t.bright); }
+        if (proto.t.brightauto_changed) {
+            proto.t.brightauto_changed = false;
+            bright_auto = proto.t.bright_auto_val;
+            if (prefs.begin("wb", false)) {
+                prefs.putBool("bright_auto", bright_auto);
+                prefs.putUChar("bright_manual", bright_manual_val);
+                prefs.end();
+            }
+        }
     }
 
     // 2) DHT11 每 2.5s；DHT11Raw.read() 返回 true 成功，失败安全返回不崩溃

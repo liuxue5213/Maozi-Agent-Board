@@ -64,6 +64,8 @@ struct Telemetry {
     bool topbar_changed = false;
     int cardopa_cfg = -1;
     bool cardopa_changed = false;
+    int bright_auto_val = -1;
+    bool brightauto_changed = false;
     char savermsg[64] = "";
     bool savermsg_changed = false;
 
