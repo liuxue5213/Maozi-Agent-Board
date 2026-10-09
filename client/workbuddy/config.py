@@ -10,6 +10,8 @@ DEFAULT_ROOTS = {
     "claude": Path.home() / ".claude" / "projects",
     "codex": Path.home() / ".codex" / "sessions",
     "zcode": Path.home() / ".zcode" / "cli",
+    # WorkBuddy 自己：db 存会话状态，sessions/<pid>.json 存进程心跳
+    "workbuddy": Path.home() / ".workbuddy",
 }
 
 

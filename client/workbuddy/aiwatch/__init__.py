@@ -1,6 +1,6 @@
 """AI 任务状态检测引擎 v3：多工具 × 多会话并行监控。
 
-每个来源（Claude Code / Codex / ZCode）返回其所有活跃会话的活动列表，
+每个来源（Claude Code / Codex / ZCode / WorkBuddy）返回其所有活跃会话的活动列表，
 引擎按活跃度排序输出最多 4 条并行任务（协议 AI0~AI3）。
 """
 import json
@@ -12,7 +12,7 @@ IDLE, THINKING, GENERATING, TOOL, BUILD, DONE, ERROR, WAIT_INPUT, ASK = (
     "IDLE", "THINKING", "GENERATING", "TOOL", "BUILD", "DONE", "ERROR",
     "WAIT_INPUT", "ASK")
 
-_FRESH = {"claude": 45, "codex": 45, "zcode": 300}
+_FRESH = {"claude": 45, "codex": 45, "zcode": 300, "workbuddy": 300}
 _WAIT_FRESH = 1800   # 等你回复/等待确认 可保持 30 分钟
 _PRIO = {IDLE: 0, DONE: 1, THINKING: 2, GENERATING: 3,
          BUILD: 3, TOOL: 4, WAIT_INPUT: 5, ASK: 6, ERROR: 7}
@@ -91,13 +91,19 @@ class AIWatcher:
         from .claude import ClaudeSource
         from .codex import CodexSource
         from .zcode import ZCodeSource
+        from .workbuddy import WorkBuddySource
 
         self._cache = {}
         self._bursts = {}   # (tool, sid) -> burst 起始时间
+        # 阶段事件（优化#13 活动时间线）：(tool, sid) -> [(t, state), ...]。
+        # 只记状态切换边沿，用来回答「瓶颈在 想 还是 在 等」。
+        self._trace = {}
+        self._last_state = {}
         self.sources = [
             ClaudeSource(cfg.root("claude")),
             CodexSource(cfg.root("codex")),
             ZCodeSource(cfg.root("zcode")),
+            WorkBuddySource(cfg.root("workbuddy")),
         ]
 
     # ---- 多任务输出（协议 AI0~AI3）----
@@ -126,6 +132,15 @@ class AIWatcher:
         ranked = sorted(fresh.values(), key=lambda a: (_PRIO.get(a.state, 0), a.ts),
                         reverse=True)[:4]
 
+        # 阶段事件：对全部活跃会话（不只 top4）记录状态切换边沿。
+        # __new__ 直构（单测）不会有这三个属性，惰性补齐。
+        if not hasattr(self, "_trace"):
+            self._trace, self._last_state = {}, {}
+        for k, a in fresh.items():
+            if self._last_state.get(k) != a.state:
+                self._last_state[k] = a.state
+                self._trace.setdefault(k, []).append((now, a.state))
+
         out = []
         for a in ranked:
             key = (a.tool, a.sid)
@@ -144,10 +159,23 @@ class AIWatcher:
                 "project": sanitize_project(a.project),
                 "err": a.err or "",
             })
-        # 清理过期的 burst 记录
+        # 清理过期的 burst / trace 记录（_last_state 随会话消失自然失活）
         for k in [k for k, v in self._bursts.items() if now - v > 3600]:
             del self._bursts[k]
+        for k in [k for k, v in self._trace.items() if not v or now - v[-1][0] > 3600]:
+            del self._trace[k]
         return out
+
+    def trace_for(self, task_id: str, limit: int = 24) -> list:
+        """按任务 id 取阶段事件 [{t, s}...]（旧→新，最多 limit 条）。
+
+        id 是 tool:sid 的 sha1 前 8 位——碰撞概率可忽略（4 个活跃会话）。
+        找不到（会话已结束超 1h / 新客户端）返回空列表，前端显示占位。
+        """
+        for (tool, sid), events in self._trace.items():
+            if hashlib.sha1(f"{tool}:{sid}".encode()).hexdigest()[:8] == task_id:
+                return [{"t": round(t), "s": s} for t, s in events[-limit:]]
+        return []
 
     # ---- 单任务摘要（控制台渲染 / CLI once 用）----
 

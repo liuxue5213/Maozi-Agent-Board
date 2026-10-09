@@ -51,8 +51,14 @@ class App:
         else:
             self.link = None
         self.last = {}
+        self._last_tick_at = 0.0     # 最近一次成功采集的时刻，供 Web 判定数据新鲜度
+        self.paused = False          # 托盘「暂停采集」：暂停期间复播上一帧遥测
+        self._kick = threading.Event()   # Hook 快通道：立即唤醒主循环（附录A）
         self.on_tick = None   # GUI 回调：每个采集周期调用一次
+        self.on_ai_notice = None  # 托盘回调：焦点任务跨入 DONE/ERROR/WAIT_INPUT/ASK 时调用
         self._stop = False
+        self.on_quit = None   # 托盘「退出」回调：用于停掉托盘/窗口线程
+        self.window_visible = True  # 主窗口是否可见（隐藏到托盘时为 False）
 
     def _on_uplink(self, d: dict):
         if "firmware" in d:
@@ -114,6 +120,86 @@ class App:
         if self.usage_scanner:
             self.usage_scanner.stop()
         self.weather.stop()
+        if self.link:
+            try:
+                self.link.stop()
+            except Exception:
+                pass
+
+    def shutdown(self):
+        """彻底退出：停采集循环 → 停串口 → 停 Web 服务（释放端口）。
+
+        托盘「退出」走这里。必须释放 8765 端口，否则重开进程会报
+        "Address already in use"。每一步独立兜底，任何一步失败都不阻断后续。
+        """
+        self._stop = True
+        if self.usage_scanner:
+            try:
+                self.usage_scanner.stop()
+            except Exception:
+                pass
+        try:
+            self.weather.stop()
+        except Exception:
+            pass
+        if self.link:
+            try:
+                self.link.stop()
+            except Exception:
+                pass
+        srv = getattr(self, "_web_server", None)
+        if srv is not None:
+            try:
+                srv.shutdown()
+                srv.server_close()
+            except Exception:
+                pass
+            self._web_server = None
+        if self.on_quit:
+            try:
+                self.on_quit()
+            except Exception:
+                pass
+
+    def set_paused(self, flag: bool) -> bool:
+        """托盘「暂停采集」（优化#16）。暂停期间不跑采集/AI 扫描，遥测复播
+        上一帧并继续心跳——设备不会误报离线，Web 端靠 telemetry_age 判 stale。"""
+        self.paused = bool(flag)
+        return self.paused
+
+    def set_device_page(self, page_1based: int) -> bool:
+        """托盘「切换设备页」（优化#16）：下发 PAGE=N，固件收到后切页并回执。"""
+        if not self.link or not self.link.status.startswith("connected:"):
+            return False
+        n = int(page_1based)
+        if not 1 <= n <= len(self.profile.get("pages", [])):
+            return False
+        self.link.send(f"PAGE={n}\n")
+        self.health.event("page_req", page=n)
+        return True
+
+    def hook_event(self, kind: str, agent: str = "") -> bool:
+        """Hook Push 快通道（附录A，学 EdgeGlow/cursor-light）。
+
+        Claude Code 等编辑器的 hooks（UserPromptSubmit/Stop…）直接打本地
+        /hook/start|pulse|stop，这里立即唤醒主循环做一次采集——把「Agent 开始
+        瞬间亮屏」的盲区从最长一个采集周期压到 ~0。事件本身只进健康日志。
+        """
+        self.health.event("hook", hook=kind[:8], agent=str(agent)[:16])
+        self._kick.set()
+        return True
+
+    def _tasks_with_trace(self) -> list:
+        """status_snapshot 用：给 tasks 附上阶段事件（优化#13）。"""
+        tasks = [dict(t) for t in self.tasks[:4]]
+        ai = getattr(self, "ai", None)
+        if ai:
+            for t in tasks:
+                try:
+                    t["trace"] = ai.trace_for(t["id"])
+                except Exception:
+                    t["trace"] = []
+        return tasks
 
     def _launch_app(self, app_id: str):
         with self.profile_lock:
@@ -152,14 +238,30 @@ class App:
             self.profile_status = "待同步"
 
     def status_snapshot(self):
+        """Web 轮询的数据源。
+
+        除遥测本身外，必须一并给出**数据年龄**：客户端主循环若卡死/崩溃，
+        self.last 会停在最后一次成功采集的旧值上。前端拿到的是一份
+        "看起来完全正常、实则早已冻结" 的数据（实测 CPU 一直显示 14%），
+        用户无法分辨"真的是 14%"还是"早就没更新了"。
+        telemetry_age / telemetry_at 让前端能据此判定陈旧并明确提示。
+        """
         with self.profile_lock:
+            last_tick = self._last_tick_at
             return {"profile": self.profile, "profile_status": self.profile_status,
                     "profile_error": self.profile_error,
                     "applied_version": self.applied_version,
                     "fw_caps": self.fw_caps,
                     "usage_error": self.usage_scanner.last_error if self.usage_scanner else "off",
                     "device": self.link.status if self.link else "串口关闭",
-                    "tasks": self.tasks[:4], "telemetry": self.last}
+                    "tasks": self._tasks_with_trace(), "telemetry": self.last,
+                    "telemetry_age": (round(time.time() - last_tick, 1)
+                                      if last_tick else None),
+                    "telemetry_at": last_tick,
+                    "interval": self.cfg.interval,
+                    "paused": getattr(self, "paused", False),
+                    "usage": (self.usage_scanner.snapshot()
+                              if self.usage_scanner else None)}
 
     def push_profile(self):
         if not self.link or not self.link.status.startswith("connected:"):
@@ -278,6 +380,16 @@ class App:
         if state and state != self._last_ai_state:
             self.health.event("ai_state", state=state)
             self._last_ai_state = state
+            # 优化#10（托盘侧）：任务跨入需要用户知道的状态时发系统通知。
+            # 通知不是关键路径，回调异常绝不影响采集循环。
+            if state in ("DONE", "ERROR", "WAIT_INPUT", "ASK") and self.on_ai_notice:
+                try:
+                    focus = self.tasks[0] if self.tasks else None
+                    name = (f"{focus['tool']} · {focus['project']}"
+                            if focus else "AI 会话")
+                    self.on_ai_notice(name, state)
+                except Exception:
+                    pass
         if self.usage_scanner:
             snap = self.usage_scanner.snapshot()
             day = snap["today"]
@@ -302,6 +414,7 @@ class App:
                     and self.link and self.link.status.startswith("connected:")):
                 t[k] = self.env[k]
         self.last = t
+        self._last_tick_at = time.time()
         return t
 
     def render(self, t: dict) -> str:
@@ -340,6 +453,7 @@ class App:
             try:
                 from .web import start_settings_server
                 web_server = start_settings_server(self, self.cfg.web_port)
+                self._web_server = web_server
                 print(f"设置页：http://127.0.0.1:{self.cfg.web_port}")
                 if self.cfg.open_settings:
                     import webbrowser
@@ -352,7 +466,9 @@ class App:
         try:
             while not self._stop:
                 now = time.time()
-                t = self.tick(now)
+                # 暂停采集：复播上一帧遥测并保持心跳，设备不误报离线；
+                # Web 端 telemetry_age 持续增长会如实提示数据陈旧。
+                t = self.last if self.paused else self.tick(now)
                 text = encode_telemetry(t)
                 if self.link:
                     online = self.link.status.startswith("connected:")
@@ -386,12 +502,17 @@ class App:
                     last_print = now
                 if duration and now - start >= duration:
                     break
-                time.sleep(self.cfg.interval)
+                # 等一个采集周期，或被 Hook 快通道提前唤醒（附录A）
+                self._kick.wait(timeout=self.cfg.interval)
+                self._kick.clear()
         except KeyboardInterrupt:
             pass
         finally:
             if web_server:
-                web_server.shutdown()
+                try:
+                    web_server.shutdown()
+                except Exception:
+                    pass
             if self.link:
                 self.link.stop()
             if self.cfg.console:

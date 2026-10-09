@@ -26,6 +26,12 @@ def main(argv=None):
     p_run.add_argument("--web-port", type=int, default=8765)
     p_run.add_argument("--open-settings", action="store_true")
     p_run.add_argument("--disk", default="/", help="监控磁盘路径")
+    p_run.add_argument("--tray", action="store_true",
+                       help="托盘常驻模式：关闭窗口不退到通知区域继续运行")
+    p_run.add_argument("--no-window", action="store_true",
+                       help="托盘模式下不打开原生窗口，只驻留托盘")
+    p_run.add_argument("--mini", action="store_true",
+                       help="同时打开置顶迷你悬浮窗（类副屏，优化#4）")
 
     sub.add_parser("once", help="单次采集并打印协议帧，退出")
     sub.add_parser("ports", help="列出串口设备")
@@ -76,7 +82,47 @@ def main(argv=None):
         print(encode_frame(t, app.collector.caps))
         return 0
 
-    app.run(cfg.duration)
+    mini_window = None
+    if cmd == "run" and args.mini:
+        # 优化#4：置顶迷你悬浮窗（类副屏）。等 Web 服务起来再开窗，
+        # 失败只提示不阻塞主流程（无 pywebview 时退回浏览器打开 /mini）。
+        from .mini import start_mini
+        import urllib.request as _rq
+        deadline = time.time() + 8
+        ready = False
+        while time.time() < deadline:
+            try:
+                _rq.urlopen(f"http://127.0.0.1:{cfg.web_port}/mini", timeout=0.6)
+                ready = True
+                break
+            except Exception:
+                time.sleep(0.25)
+        if ready:
+            try:
+                mini_window = start_mini(f"http://127.0.0.1:{cfg.web_port}/mini")
+            except Exception as exc:
+                print(f"迷你悬浮窗启动失败（{exc}），可浏览器打开 "
+                      f"http://127.0.0.1:{cfg.web_port}/mini")
+        else:
+            print("Web 服务未就绪，迷你悬浮窗未启动")
+
+    if cmd == "run" and args.tray:
+        # 托盘常驻：采集循环退到后台线程，主线程留给窗口/托盘
+        from .tray import run_with_tray, tray_available
+        if not tray_available():
+            print("未安装托盘依赖（pystray / Pillow），退回普通常驻模式。"
+                  "安装：pip install pystray pillow")
+            app.run(cfg.duration)
+            return 0
+        return run_with_tray(app, cfg, use_window=not args.no_window)
+
+    try:
+        app.run(cfg.duration)
+    except KeyboardInterrupt:
+        app.shutdown()
+    finally:
+        if mini_window is not None:
+            mini_window.stop()
     return 0
 
 
