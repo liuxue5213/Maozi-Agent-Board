@@ -58,6 +58,7 @@ struct WidgetView {
     lv_obj_t* row_bar[5] = {};        // 行进度条
     lv_obj_t* row_fill[5] = {};
     lv_obj_t* hw_bar[4] = {};         // 硬件卡迷你条
+    lv_obj_t* hw_temp[3] = {};        // 温度风扇三列卡数值（CPU/GPU/风扇）
     lv_obj_t* hw_fill[4] = {};
 };
 struct PageView {
@@ -678,17 +679,25 @@ void pet_action_cb(lv_event_t* event) {
 }
 
 void make_hardware(WidgetView& view, lv_obj_t* screen) {
-    // 四卡对齐效果图：处理器/内存/磁盘/网络（GPU 上位机网页可见）。
-    // 卡内：标题 → 大数值 → 迷你进度条 → 说明。磁盘 ≥90% 条转警告色。
+    // 上两行四卡（处理器/内存/磁盘/网络）压到 140 高，底部腾出整宽温度风扇卡：
+    // 电脑页数据面持续变多（CPU/GPU 温度、风扇转速），三列并排一眼可读。
+    // 无数据源的列显示 "--"（诚实显示：绝不渲染 0 假值）。
     const char* titles[4] = {"处理器", "内存", "磁盘", "网络"};
     for (int i = 0; i < 4; ++i) {
-        lv_obj_t* panel = box(screen, 8 + (i % 2) * 156, BODY_Y + (i / 2) * 194, 148, 186);
-        label(panel, titles[i], 20, sub_color, 12, 28, 124);
-        view.extra[i * 2] = label(panel, "--", 32, text_color, 12, 64, 124, 44);
-        view.hw_bar[i] = bar_track(panel, 12, 120, 124);
+        lv_obj_t* panel = box(screen, 8 + (i % 2) * 156, BODY_Y + (i / 2) * 148, 148, 140);
+        label(panel, titles[i], 20, sub_color, 12, 18, 124);
+        view.extra[i * 2] = label(panel, "--", 30, text_color, 12, 46, 124, 40);
+        view.hw_bar[i] = bar_track(panel, 12, 98, 124);
         view.hw_fill[i] = bar_fill(view.hw_bar[i]);
-        // 卡片说明始终限制为单行；窄卡上再长的实时数值也不能挤到页脚。
-        view.extra[i * 2 + 1] = label1(panel, "", 20, sub_color, 12, 136, 124);
+        // 卡片说明始终限制为单行；窄卡上再长的实时数值也不能挤到下一行。
+        view.extra[i * 2 + 1] = label1(panel, "", 20, sub_color, 12, 114, 124);
+    }
+    // 温度与风扇：三列并排（CPU 温度 / GPU 温度 / 风扇 RPM）
+    lv_obj_t* panel = box(screen, 8, BODY_Y + 296, 304, 84);
+    const char* caps2[3] = {"CPU", "GPU", "风扇"};   // 中文 20px 字宽>字号，标题限 2 字防裁
+    for (int i = 0; i < 3; ++i) {
+        label(panel, caps2[i], 20, sub_color, 16 + i * 100, 12, 88);
+        view.hw_temp[i] = label(panel, "--", 28, text_color, 16 + i * 100, 38, 88, 32);
     }
 }
 
@@ -1178,11 +1187,13 @@ void render_hardware(WidgetView& view) {
             set_text(view.extra[i*2], "--"); set_text(view.extra[i*2+1], "数据不可用");
             bar_set(view.hw_fill[i], view.hw_bar[i], 0, accent);
         }
+        for (int i = 0; i < 3; ++i) set_text(view.hw_temp[i], "--");
         return;
     }
     snprintf(line, sizeof(line), "%d%%", latest.cpu);
     set_text(view.extra[0], line);
-    if (latest.cpu_temp_valid) snprintf(tag, sizeof(tag), "%.0f ℃", latest.cputemp);
+    // 温度已升格为底部三列卡，说明行改显 CPU 频率（信息不重复）
+    if (latest.cpufreq > 0) snprintf(tag, sizeof(tag), "%.1f GHz", latest.cpufreq / 1000.0f);
     else strcpy(tag, "即时负载");
     set_text(view.extra[1], tag);
     bar_set(view.hw_fill[0], view.hw_bar[0], latest.cpu, accent);
@@ -1218,6 +1229,17 @@ void render_hardware(WidgetView& view) {
     }
     set_text(view.extra[6], line);
     set_text(view.extra[7], tag);
+
+    // 温度与风扇三列卡：无效列显示 "--"（诚实显示，绝不渲染 0 假值）
+    if (latest.cpu_temp_valid) snprintf(line, sizeof(line), "%d℃", (int)(latest.cputemp + 0.5f));
+    else strcpy(line, "--");
+    set_text(view.hw_temp[0], line);
+    if (latest.gpu_temp_valid) snprintf(line, sizeof(line), "%d℃", (int)(latest.gputemp + 0.5f));
+    else strcpy(line, "--");
+    set_text(view.hw_temp[1], line);
+    if (latest.fan_valid) snprintf(line, sizeof(line), "%d", (int)(latest.fan + 0.5f));
+    else strcpy(line, "--");
+    set_text(view.hw_temp[2], line);
 }
 
 // 目标日期时间（date="YYYY-MM-DD" time="HH:MM"）距现在的剩余秒数（负=已过）

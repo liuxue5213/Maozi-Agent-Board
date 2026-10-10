@@ -63,6 +63,7 @@ struct Telemetry {
     float memused = NAN, memtotal = NAN;
     int gpu = 0, gpumem = 0;
     float gputemp = NAN;
+    float fan = NAN;
     int disk = 0;
     float diskfree = NAN;
     float disktotal = NAN;
@@ -108,6 +109,7 @@ struct Telemetry {
     bool cpu_temp_valid = false;
     bool gpu_valid = false;
     bool gpu_temp_valid = false;
+    bool fan_valid = false;
 };
 
 /** 非阻塞行解析器：loop 里逐字符 feed */

@@ -738,7 +738,7 @@ const DEV = {
   W:320, H:480, HEAD_Y:8, BODY_Y:60, BODY_H:380, FOOT_Y:446,
   DOT_W:32, DOT_H:22, DOT_GAP:10, GRID_GAP:8,
   AI:{x:8, y:60, w:304, h:380},
-  HW_CARD:{x0:8, y0:60, dx:156, dy:194, w:148, h:186},
+  HW_CARD:{x0:8, y0:60, dx:156, dy:148, w:148, h:140},
 };
 const DEV_WIDGET_TITLES = {
   clock:'本地时间', environment:'桌面环境', reminder_list:'提醒列表',
@@ -1133,7 +1133,7 @@ function devHwPage(screen, ctx){
   titles.forEach((title,i) => {
     const x = C.x0 + (i%2)*C.dx, y = C.y0 + Math.floor(i/2)*C.dy;
     const card = devCard(screen, x, y, C.w, C.h);
-    devLabel(card, 12, 28, C.w-24, title, 20, 'dev-dim');
+    devLabel(card, 12, 18, C.w-24, title, 20, 'dev-dim');
     let value = '--', note = '数据不可用', pct = 0, color = ctx.accent;
     if(ok){
       if(i===0){ value = `${t.cpu===undefined?'--':t.cpu}%`; note = '即时负载'; pct = Number(t.cpu)||0; }
@@ -1152,9 +1152,21 @@ function devHwPage(screen, ctx){
         }else{ value = '--'; note = '网速未提供'; }
       }
     }
-    devLabel(card, 12, 64, C.w-24, value, 32, 'dev-ink');
-    devTrack(card, 12, 120, C.w-24, pct, color);
-    devLabel(card, 12, 136, C.w-24, note, 20, 'dev-dim');
+    devLabel(card, 12, 46, C.w-24, value, 30, 'dev-ink');
+    devTrack(card, 12, 98, C.w-24, pct, color);
+    devLabel(card, 12, 114, C.w-24, note, 20, 'dev-dim');
+  });
+  // 底部整宽「温度与风扇」三列卡（与固件 make_hardware 同几何）
+  const tc = devCard(screen, 8, C.y0+296, 304, 84);
+  const clean = (v)=>v!==undefined && v!=='' && v!==null && isFinite(Number(v));
+  const hwCols = [
+    ['CPU', clean(t.cputemp) ? Math.round(Number(t.cputemp))+'℃' : '--'],
+    ['GPU', clean(t.gputemp) ? Math.round(Number(t.gputemp))+'℃' : '--'],
+    ['风扇', clean(t.fan) ? String(Math.round(Number(t.fan))) : '--'],
+  ];
+  hwCols.forEach((c,i)=>{
+    devLabel(tc, 16+i*100, 12, 88, ok?c[0]:'', 20, 'dev-dim');
+    devLabel(tc, 16+i*100, 38, 88, ok?c[1]:'--', 28, 'dev-ink');
   });
 }
 

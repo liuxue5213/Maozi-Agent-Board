@@ -317,13 +317,14 @@ void Proto::handle(const char* line) {
 
     if      (!strcmp(key, "CPU"))      t.cpu = atoi(v);
     else if (!strcmp(key, "CPUFREQ"))  t.cpufreq = atoi(v);
-    else if (!strcmp(key, "CPUTEMP"))  { t.cputemp = atof(v); t.cpu_temp_valid = !isnan(t.cputemp); }
+    else if (!strcmp(key, "CPUTEMP"))  { t.cputemp = atof(v); t.cpu_temp_valid = v[0] && !isnan(t.cputemp); }
     else if (!strcmp(key, "MEM"))      t.mem = atoi(v);
     else if (!strcmp(key, "MEMUSED"))  t.memused = atof(v);
     else if (!strcmp(key, "MEMTOTAL")) t.memtotal = atof(v);
     else if (!strcmp(key, "GPU"))      { t.gpu = atoi(v); t.gpu_valid = true; }
     else if (!strcmp(key, "GPUMEM"))   t.gpumem = atoi(v);
-    else if (!strcmp(key, "GPUTEMP"))  { t.gputemp = atof(v); t.gpu_temp_valid = !isnan(t.gputemp); }
+    else if (!strcmp(key, "GPUTEMP"))  { t.gputemp = atof(v); t.gpu_temp_valid = v[0] && !isnan(t.gputemp); }
+    else if (!strcmp(key, "FAN"))      { t.fan = atof(v); t.fan_valid = v[0] && !isnan(t.fan); }
     else if (!strcmp(key, "DISK"))     t.disk = atoi(v);
     else if (!strcmp(key, "DISKFREE")) t.diskfree = atof(v);
     else if (!strcmp(key, "DISKTOTAL")) t.disktotal = atof(v);

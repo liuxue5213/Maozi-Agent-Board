@@ -40,6 +40,8 @@ class MacCollector(Collector):
 
     def sample(self, now: float) -> dict:
         t = super().sample(now)
+        # 温度/风扇键常驻：无能力时为空串（协议侧空=设备清位），有值即覆盖
+        t.update({"cputemp": "", "gputemp": "", "fan": ""})
         if not self._smc.ok and self._smc.tried:
             # 用户态 SMC 被拒（T2/新版 macOS）：改走特权采样文件。
             # 未安装 helper 时 read() 返回 None，caps 维持 False，设备隐藏对应位。

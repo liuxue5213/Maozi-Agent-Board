@@ -8,7 +8,7 @@ _ORDER = [
     "ai0", "ai1", "ai2", "ai3", "ai4", "ai5", "ai6", "ai7",
     "dn0", "dn1", "dn2",
     "w0", "w1", "w2", "wf0", "wf1", "wf2", "ps", "aiu", "ait", "remind",
-    "cpu", "cpufreq", "cputemp",
+    "cpu", "cpufreq", "cputemp", "fan",
     "mem", "memused", "memtotal",
     "gpu", "gpumem", "gputemp",
     "disk", "diskfree", "disktotal", "bat",
@@ -38,7 +38,9 @@ def sanitize_err(text: str, limit: int = 48) -> str:
 # unused）。省略它们（旧行为）会让已关闭的会话/过期的完成记录永远留在屏上。
 _SLOT_KEYS = ({f"ai{i}" for i in range(8)} | {f"dn{i}" for i in range(3)}
                | {f"w{i}" for i in range(3)} | {f"wf{i}" for i in range(3)}
-               | {"ps"})
+               | {"ps"}
+               # 温度/风扇：采集能力丢失时发空串=设备端清位（不残留旧读数）
+               | {"cputemp", "gputemp", "fan"})
 
 
 def encode_telemetry(t: dict) -> str:

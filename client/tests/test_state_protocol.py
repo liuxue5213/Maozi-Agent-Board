@@ -43,6 +43,16 @@ class StateProtocolTests(unittest.TestCase):
         frame = encode_telemetry({f"ai{i}": "" for i in range(4)})
         self.assertEqual(frame, "AI0=\nAI1=\nAI2=\nAI3=\n")
 
+    def test_temp_fan_empty_is_clear_sent(self):
+        # 温度/风扇丢能力时发空串——设备端按清位处理，不残留旧读数
+        frame = encode_telemetry({"cputemp": "", "gputemp": "", "fan": ""})
+        self.assertIn("CPUTEMP=\n", frame)
+        self.assertIn("GPUTEMP=\n", frame)
+        self.assertIn("FAN=\n", frame)
+
+    def test_fan_value_encoded(self):
+        self.assertIn("FAN=5301", encode_telemetry({"fan": 5301}))
+
     def test_sensor_failure_invalidates_last_value(self):
         self.assertEqual(parse_uplink("TEMP=NA"), {"temp": None})
         self.assertEqual(parse_uplink("HUM=NA"), {"hum": None})
