@@ -1,0 +1,78 @@
+{
+  "schema": 1,
+  "version": 19,
+  "pages": [
+    {
+      "id": "ai",
+      "title": "全部",
+      "layout": "list",
+      "widgets": [
+        "ai_list"
+      ],
+      "filter": ""
+    },
+    {
+      "id": "tzcode",
+      "title": "ZCode",
+      "layout": "list",
+      "widgets": [
+        "ai_list"
+      ],
+      "filter": "zcode"
+    },
+    {
+      "id": "pc",
+      "title": "电脑",
+      "layout": "grid_2x2",
+      "widgets": [
+        "hw_cards"
+      ],
+      "filter": ""
+    }
+  ],
+  "reminders": [],
+  "calendar": [],
+  "alarms": [],
+  "apps": [
+    {
+      "id": "music01",
+      "name": "音乐",
+      "command": "@music"
+    }
+  ],
+  "countdowns": [],
+  "weather": {
+    "city": "天津"
+  },
+  "theme": {
+    "bg": "060B16",
+    "grad": "0B1730",
+    "card": "304661",
+    "accent": "57C8F5",
+    "text": "F4F8FF",
+    "sub": "C7D5E5",
+    "card_edge": "4B6685",
+    "bright": 62,
+    "idledim": 60,
+    "saver": 3,
+    "savermsg": "今天也写完了去走两步吧",
+    "topclock": 1,
+    "topwx": 1,
+    "card_opa": 100,
+    "bright_auto": 0,
+    "panel": {
+      "bg": "000810",
+      "grad": "081431",
+      "card": "314563",
+      "card_edge": "4A6584",
+      "accent": "52CBF7",
+      "text": "F7FBFF",
+      "sub": "C6D7E7"
+    },
+    "panel_fill": {
+      "bg": "314563",
+      "grad": "314563"
+    }
+  },
+  "autopage": 1
+}
