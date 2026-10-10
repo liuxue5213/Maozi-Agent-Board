@@ -116,7 +116,7 @@ def validate_profile(raw):
     pet_greet = _pet_flag("greet", 0)   # 整点/半点问候
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
-    "weather": {"city": ""}, "theme": {},
+    "weather": {"city": ""}, "theme": {}, "smc": {"interval": 20},
     "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
             "sleep": pet_sleep, "greet": pet_greet}}
     # 自动分页：开启时由客户端按活跃工具重排 AI 页（全部 + 每工具一页）。
@@ -287,6 +287,17 @@ def validate_profile(raw):
             raise ValueError("启动命令不能为空、超过 160 字符或包含换行")
         out["apps"].append({"id": aid, "name": _label(app.get("name") or aid, 16),
                             "command": command})
+
+    # SMC 特权采样间隔（秒）：launchd 周期，只影响主机侧温度/风扇节奏，
+    # 设备不认识这个键（未知 JSON 键被忽略）。改变装中的采样器需重新授权安装。
+    smc = raw.get("smc", {})
+    if not isinstance(smc, dict):
+        raise ValueError("smc 配置格式无效")
+    try:
+        smc_interval = max(10, min(3600, int(smc.get("interval", 20))))
+    except (TypeError, ValueError):
+        smc_interval = 20
+    out["smc"] = {"interval": smc_interval}
 
     theme = raw.get("theme", DEFAULT_PROFILE["theme"])
     if not isinstance(theme, dict):

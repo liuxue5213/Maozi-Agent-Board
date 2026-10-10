@@ -359,6 +359,25 @@ def start_settings_server(app, port):
                     self._json(200, {"status": "已保存，待同步",
                                      "version": result["version"]})
                     return
+                if path == "/api/smc-interval":
+                    # 温度/风扇采样间隔（秒）：存 profile；已安装的采样器需要
+                    # 重写 launchd plist 才生效（launchd 只在 bootstrap 时读
+                    # StartInterval）——重装会弹一次管理员密码框，阻塞本线程属预期。
+                    from . import smcpriv
+                    try:
+                        seconds = max(10, min(3600, int(data.get("seconds", 20))))
+                    except (TypeError, ValueError):
+                        seconds = 20
+                    candidate = dict(app.profile)
+                    candidate["smc"] = {"interval": seconds}
+                    result = app.save_profile(candidate)
+                    reinstalled = None
+                    if smcpriv.PLIST_PATH.exists():
+                        reinstalled = smcpriv.install(seconds)
+                    self._json(200, {"interval": seconds,
+                                     "version": result["version"],
+                                     "reinstalled": reinstalled})
+                    return
                 if path == "/api/validate":
                     self._json(200, {"profile": validate_profile(data)})
                 elif path == "/api/autostart":

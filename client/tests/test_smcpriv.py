@@ -114,7 +114,7 @@ class TestStatus:
         monkeypatch.setattr(smcpriv, "RUN_FILE", tmp_path / "x.json")
         s = smcpriv.status()
         assert s == {"installed": False, "fresh": False, "age": None,
-                     "data": None, "platform": "darwin"}
+                     "data": None, "platform": "darwin", "interval": 20}
 
     def test_installed_fresh(self, monkeypatch, tmp_path):
         import time
@@ -143,3 +143,41 @@ class TestElevate:
         script.write_text("true")
         with pytest.raises(RuntimeError, match="取消"):
             smcpriv._elevate(script, timeout=5)
+
+
+def test_build_plist_uses_given_interval():
+    import plistlib
+    pl = plistlib.loads(smcpriv.build_plist(120))
+    assert pl["StartInterval"] == 120
+    assert plistlib.loads(smcpriv.build_plist())["StartInterval"] == 20
+
+
+def test_stored_interval_roundtrip(tmp_path):
+    import json
+    meta = tmp_path / "smc.json"
+    meta.write_text(json.dumps({"interval": 120}))
+    orig = smcpriv.META_FILE
+    smcpriv.META_FILE = meta
+    try:
+        assert smcpriv.stored_interval() == 120
+        meta.write_text("not json")
+        assert smcpriv.stored_interval() == 20
+    finally:
+        smcpriv.META_FILE = orig
+
+
+def test_read_freshness_follows_stored_interval(tmp_path):
+    import json
+    import time
+    meta = tmp_path / "smc.json"
+    meta.write_text(json.dumps({"interval": 300}))
+    run = tmp_path / "run.json"
+    run.write_text('{"at": %f, "cputemp": 60.0, "fan": 2000}' % (time.time() - 200))
+    orig_meta, orig_run = smcpriv.META_FILE, smcpriv.RUN_FILE
+    smcpriv.META_FILE, smcpriv.RUN_FILE = meta, run
+    try:
+        # 200s 前的样本：固定 60s 窗口会拒收，自适应窗口（300*3）应接受
+        assert smcpriv.read(fresh_window=60) is None
+        assert smcpriv.read()["cputemp"] == 60.0
+    finally:
+        smcpriv.META_FILE, smcpriv.RUN_FILE = orig_meta, orig_run

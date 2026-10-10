@@ -714,6 +714,21 @@
             <button type="button" class="button primary" id="btn-smc-install">启用（需管理员授权）</button>
             <button type="button" class="button danger" id="btn-smc-uninstall">停用</button>
           </div>
+          <label class="field">
+            <span>采样间隔</span>
+            <select id="smc-interval" class="text-input">
+              <option value="10">10 秒（较费电）</option>
+              <option value="20">20 秒（默认）</option>
+              <option value="30">30 秒</option>
+              <option value="60">60 秒</option>
+              <option value="120">2 分钟</option>
+              <option value="300">5 分钟（最省电）</option>
+            </select>
+          </label>
+          <div class="btn-row">
+            <button type="button" class="button" id="btn-smc-interval">应用采样间隔</button>
+          </div>
+          <p class="hint">修改间隔会对已启用的采样器重跑一次安装（弹一次管理员密码框）；未启用时先保存，下次启用即生效。屏上温度/风扇的更新节奏 ≈ 该间隔 + 至多 6 秒下发延迟。</p>
           <div class="section-rule" role="separator"></div>
           <div class="panel-head compact"><h3>外观</h3></div>
           <button type="button" class="button wide" id="color-mode-btn">外观：跟随系统（点击切换）</button>

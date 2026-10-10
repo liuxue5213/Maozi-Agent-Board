@@ -3088,6 +3088,25 @@ function bind(){
       smcRefresh();
     }catch(err){notice('停用失败：'+err.message,true)}
   });
+  const smcIntervalSel=$('smc-interval');
+  if(smcIntervalSel){
+    smcIntervalSel.value=String((draft.smc&&draft.smc.interval)||20);
+    $('btn-smc-interval').onclick=pending($('btn-smc-interval'),async()=>{
+      const seconds=Number(smcIntervalSel.value)||20;
+      notice('正在保存；若已启用采样器，请在弹出的密码框授权重装…');
+      try{
+        const r=await request('/api/smc-interval',{seconds});
+        draft.smc={interval:r.interval};
+        if(r.reinstalled&&!r.reinstalled.ok){
+          notice('间隔已保存，但重装采样器未完成：'+(r.reinstalled.err||'未知原因'),true);
+        }else{
+          notice(`采样间隔已生效：${r.interval} 秒（屏上温度/风扇按此节奏更新）`);
+          logHist('smc',`采样间隔 ${r.interval}s`);
+        }
+        smcRefresh();
+      }catch(err){notice('保存失败：'+err.message,true)}
+    });
+  }
 }
 function switchTaskTab(which){
   const layouts=which==='layouts';

@@ -207,3 +207,23 @@ class PetFlagTests(unittest.TestCase):
         out = validate_profile(base(pet={"type": "robot", "name": "x",
                                          "sleep": True, "greet": "2"}))
         self.assertEqual((out["pet"]["sleep"], out["pet"]["greet"]), (1, 1))
+
+
+class SmcIntervalTests(unittest.TestCase):
+    def test_default_interval_is_20(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(out["smc"]["interval"], 20)
+
+    def test_interval_clamped(self):
+        out = validate_profile(base(smc={"interval": 3}))
+        self.assertEqual(out["smc"]["interval"], 10)
+        out = validate_profile(base(smc={"interval": 99999}))
+        self.assertEqual(out["smc"]["interval"], 3600)
+
+    def test_interval_garbage_falls_back(self):
+        out = validate_profile(base(smc={"interval": "abc"}))
+        self.assertEqual(out["smc"]["interval"], 20)
+
+    def test_invalid_smc_type_rejected(self):
+        with self.assertRaisesRegex(ValueError, "smc"):
+            validate_profile(base(smc="fast"))

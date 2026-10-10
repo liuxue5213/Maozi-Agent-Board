@@ -27,8 +27,9 @@ ERR_FILE = Path("/private/var/run/workbuddy-smc.err")
 PLIST_PATH = Path("/Library/LaunchDaemons/com.workbuddy.smc.plist")
 HELPER_DIR = Path("/Library/Application Support/WorkBuddy")
 HELPER_PATH = HELPER_DIR / "smc_sampler.py"
-START_INTERVAL = 20          # launchd 采样周期（秒）
-FRESH_WINDOW = 60            # 采集层认可的数据新鲜度（秒）
+START_INTERVAL = 20          # 默认 launchd 采样周期（秒）
+META_FILE = Path.home() / ".workbuddy" / "smc.json"   # 已安装采样器的 interval 记录
+FRESH_WINDOW = 60            # 采集层认可的数据新鲜度下限（秒）
 OSASCRIPT_TIMEOUT = 180.0    # 等管理员密码框的时间
 
 # 以 root 身份由 launchd 周期执行；只读温度/风扇，写一个世界可读 JSON。
@@ -85,22 +86,43 @@ def parse_sample(text: str) -> dict:
             "fan": int(round(fan)) if fan is not None else None}
 
 
-def build_plist() -> bytes:
+def build_plist(interval: int = START_INTERVAL) -> bytes:
     """LaunchDaemon plist（含签名校验字段，单测解析）。"""
     return plistlib.dumps({
         "Label": LABEL,
         "ProgramArguments": ["/usr/bin/python3", str(HELPER_PATH)],
-        "StartInterval": START_INTERVAL,
+        "StartInterval": int(interval),
         "RunAtLoad": True,
         "StandardErrorPath": str(ERR_FILE),
     })
 
 
-def read(fresh_window: float = FRESH_WINDOW) -> dict | None:
+def stored_interval() -> int:
+    """已安装采样器的周期（未装/无记录时回默认 20）。"""
+    try:
+        return max(10, min(3600, int(json.loads(META_FILE.read_text()).get("interval",
+                           START_INTERVAL))))
+    except (OSError, ValueError, TypeError):
+        return START_INTERVAL
+
+
+def _write_meta(interval: int) -> None:
+    try:
+        META_FILE.parent.mkdir(parents=True, exist_ok=True)
+        META_FILE.write_text(json.dumps({"interval": int(interval)}))
+    except OSError:
+        pass
+
+
+def read(fresh_window: float | None = None) -> dict | None:
     """采集层入口：读到新鲜采样返回 {cputemp,gputemp,fan,...}，否则 None。
 
+    fresh_window 缺省时按已安装周期自适应（3 倍周期、下限 60s）——用户把采样
+    调慢到 120s 后，固定 60s 窗口会把每个新鲜样本都误判成 stale。
     cputemp/fan 为 None 的键会被采集层当作「该能力不可用」，caps 不会假翻。
     """
+    if fresh_window is None:
+        fresh_window = max(FRESH_WINDOW, stored_interval() * 3)
     try:
         data = json.loads(RUN_FILE.read_text())
     except (OSError, ValueError):
@@ -125,7 +147,7 @@ def status() -> dict:
     fresh = data is not None and age is not None and 0 <= age <= FRESH_WINDOW \
         and not data.get("err")
     return {"installed": installed, "fresh": fresh, "age": age,
-            "data": data, "platform": "darwin"}
+            "data": data, "platform": "darwin", "interval": stored_interval()}
 
 
 def _elevate(script: Path, timeout: float = OSASCRIPT_TIMEOUT) -> None:
@@ -143,14 +165,23 @@ def _elevate(script: Path, timeout: float = OSASCRIPT_TIMEOUT) -> None:
         raise RuntimeError(f"授权失败：{err[:200]}")
 
 
-def install() -> dict:
-    """一键安装：写采样器 + LaunchDaemon 并启动。成功返回首个采样。"""
+def install(interval: int = START_INTERVAL) -> dict:
+    """一键安装：写采样器 + LaunchDaemon 并启动。成功返回首个采样。
+
+    interval 为采样周期（秒）；改动已装采样器的周期 = 重新走一遍安装
+    （launchd 的 StartInterval 只在 bootstrap 时读取，需一次管理员授权）。
+    """
+    try:
+        interval = max(10, min(3600, int(interval)))
+    except (TypeError, ValueError):
+        interval = START_INTERVAL
+    _write_meta(interval)
     if not PLIST_PATH.parent.exists():
         return {"ok": False, "err": "非 macOS 或系统目录异常"}
     with tempfile.TemporaryDirectory(prefix="workbuddy-smc-") as td:
         td_path = Path(td)
         (td_path / "smc_sampler.py").write_text(SAMPLER_SOURCE)
-        (td_path / "com.workbuddy.smc.plist").write_bytes(build_plist())
+        (td_path / "com.workbuddy.smc.plist").write_bytes(build_plist(interval))
         # TCC 教训：提权进程读不了 ~/Desktop， staging 必须放 /tmp。
         installer = td_path / "install.sh"
         installer.write_text(f"""
@@ -171,8 +202,8 @@ launchctl kickstart system/{LABEL} || true
         except RuntimeError as exc:
             return {"ok": False, "err": str(exc)}
     # bootstrap+RunAtLoad 应在几秒内产出首个采样
-    for _ in range(20):
-        data = read(fresh_window=START_INTERVAL * 3)
+    for _ in range(max(20, interval)):
+        data = read(fresh_window=interval * 3)
         if data:
             return {"ok": True, "data": data}
         time.sleep(0.5)
@@ -193,4 +224,8 @@ rmdir "{HELPER_DIR}" 2>/dev/null || true
             _elevate(remover, timeout=120.0)
         except RuntimeError as exc:
             return {"ok": False, "err": str(exc)}
+    try:
+        META_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
     return {"ok": not PLIST_PATH.exists() and not RUN_FILE.exists()}
