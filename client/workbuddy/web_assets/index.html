@@ -652,6 +652,14 @@
             <span>名字</span>
             <input type="text" id="pet-name" class="text-input" maxlength="4" autocomplete="off">
           </label>
+          <label class="field toggle">
+            <input type="checkbox" id="pet-sleep" checked>
+            <span>凌晨自动睡觉（01:00–06:00 硬覆盖；关闭则只犯困不强睡）</span>
+          </label>
+          <label class="field toggle">
+            <input type="checkbox" id="pet-greet">
+            <span>整点/半点问候（凌晨保持安静）</span>
+          </label>
           <div class="btn-row">
             <button type="button" class="button primary" id="pet-save">保存形象</button>
             <button type="button" class="button" id="pet-page-gen">生成「宠物」小屏页面</button>

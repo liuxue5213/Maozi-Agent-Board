@@ -183,3 +183,27 @@ class BudgetTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PetFlagTests(unittest.TestCase):
+    def test_defaults_sleep_on_greet_off(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(out["pet"]["sleep"], 1)
+        self.assertEqual(out["pet"]["greet"], 0)
+
+    def test_flags_roundtrip_and_normalize(self):
+        out = validate_profile(base(pet={"type": "cat", "name": "喵喵",
+                                         "sleep": 0, "greet": 1}))
+        self.assertEqual(out["pet"]["sleep"], 0)
+        self.assertEqual(out["pet"]["greet"], 1)
+
+    def test_flag_garbage_falls_back_to_default(self):
+        out = validate_profile(base(pet={"type": "robot", "name": "x",
+                                         "sleep": "abc", "greet": None}))
+        self.assertEqual(out["pet"]["sleep"], 1)
+        self.assertEqual(out["pet"]["greet"], 0)
+
+    def test_flag_truthy_values_normalize_to_one(self):
+        out = validate_profile(base(pet={"type": "robot", "name": "x",
+                                         "sleep": True, "greet": "2"}))
+        self.assertEqual((out["pet"]["sleep"], out["pet"]["greet"]), (1, 1))

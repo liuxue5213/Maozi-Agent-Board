@@ -349,8 +349,12 @@ def start_settings_server(app, port):
                 if path == "/api/pet-config":
                     # 类型/名字改动 → 走标准保存（校验+版本递增），设备重建宠物形象
                     candidate = dict(app.profile)
-                    candidate["pet"] = {"type": str(data.get("type", "robot")),
-                                        "name": str(data.get("name", "帽子"))}
+                    old_pet = (app.profile.get("pet") or {})
+                    candidate["pet"] = {
+                        "type": str(data.get("type", "robot")),
+                        "name": str(data.get("name", "帽子")),
+                        "sleep": 1 if data.get("sleep", old_pet.get("sleep", 1)) else 0,
+                        "greet": 1 if data.get("greet", old_pet.get("greet", 0)) else 0}
                     result = app.save_profile(candidate)
                     self._json(200, {"status": "已保存，待同步",
                                      "version": result["version"]})

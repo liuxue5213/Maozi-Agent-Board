@@ -46,6 +46,8 @@ struct DeviceProfile {
     // 桌面宠物：类型（robot/cat/chick）+ 名字
     char pet_type[8] = "robot";
     char pet_name[13] = "帽子";
+    uint8_t pet_sleep = 1;   // 凌晨自动睡觉（01-06 硬覆盖；0=仅犯困提示）
+    uint8_t pet_greet = 0;   // 整点/半点问候
     // 诗句库（屏保「诗词短句」轮换；空 = 用内置四句）
     uint8_t poem_count = 0;
     char poems[10][61] = {};

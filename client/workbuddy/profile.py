@@ -18,7 +18,7 @@ WIDGET_UNITS = {
 }
 DEFAULT_PROFILE = {
     "schema": 1, "version": 1,
-    "pet": {"type": "robot", "name": "帽子"},
+    "pet": {"type": "robot", "name": "帽子", "sleep": 1, "greet": 0},
     "pages": [
         {"id": "ai", "title": "帽子工作台", "layout": "list", "widgets": ["ai_list"]},
         {"id": "computer", "title": "电脑", "layout": "grid_2x2", "widgets": ["hw_cards"]},
@@ -107,10 +107,18 @@ def validate_profile(raw):
     ptype = str(pet.get("type", "robot"))
     if ptype not in ("robot", "cat", "chick"):
         raise ValueError("宠物类型只支持 robot / cat / chick")
+    def _pet_flag(key, default):
+        try:
+            return 1 if int(pet.get(key, default)) else 0
+        except (TypeError, ValueError):
+            return default
+    pet_sleep = _pet_flag("sleep", 1)   # 凌晨自动睡觉（0=仅犯困提示）
+    pet_greet = _pet_flag("greet", 0)   # 整点/半点问候
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
     "weather": {"city": ""}, "theme": {},
-    "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12)}}
+    "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
+            "sleep": pet_sleep, "greet": pet_greet}}
     # 自动分页：开启时由客户端按活跃工具重排 AI 页（全部 + 每工具一页）。
     # 设备不认识这个键（未知 JSON 键被忽略），它只是客户端重排的授权开关。
     try:

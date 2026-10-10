@@ -99,6 +99,8 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
             ptype = "robot";
         copy_text(out.pet_type, sizeof(out.pet_type), ptype);
         copy_text(out.pet_name, sizeof(out.pet_name), pet_cfg["name"] | "帽子");
+        out.pet_sleep = pet_cfg["sleep"] | true;
+        out.pet_greet = pet_cfg["greet"] | false;
     }
     // 诗句库（屏保「诗词短句」轮换）
     JsonArrayConst poems = doc["poems"].as<JsonArrayConst>();

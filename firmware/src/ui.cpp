@@ -613,13 +613,27 @@ static PetLayer pet_arbitrate(const char* st, uint32_t now) {
         int gh = pet_hour();
         if (!(gh >= 1 && gh < 6)) pet_trigger_scene(PL_GREETING, 3000);
     }
+    // 整点/半点问候（§6.3，可关）：每个半小时槽只触发一次
+    static int pet_last_greet_slot = -1;
+    if (g_profile.pet_greet && !pet_scene_until && latest.clock_hms) {
+        int gh = pet_hour();
+        if (!(gh >= 1 && gh < 6)) {
+            int mm = (int)((latest.clock_hms / 100) % 100);
+            int slot = gh * 2 + mm / 30;
+            if (slot != pet_last_greet_slot) {
+                pet_last_greet_slot = slot;
+                pet_trigger_scene(PL_GREETING, 3000);
+            }
+        }
+    }
     if (pet_scene_until) return pet_scene;
 
     int h = pet_hour();
     bool working = !strcmp(st, "GENERATING") || !strcmp(st, "TOOL") ||
                    !strcmp(st, "BUILD");
-    if (h >= 1 && h < 6) return PL_SLEEPING;             // 硬覆盖
-    if (h >= 22 || h < 1) {                              // 软覆盖：陪你熬夜
+    // 凌晨硬覆盖可在设置关闭（pet_sleep=0 时凌晨并入犯困软规则，只提示不强睡）
+    if (h >= 1 && h < 6 && g_profile.pet_sleep) return PL_SLEEPING;
+    if ((h >= 22 || h < 1) || (h >= 1 && h < 6)) {       // 软覆盖：陪你熬夜
         if (!working) {
             if (!pet_calm_since) pet_calm_since = now;
             if (now - pet_calm_since >= 10000) return PL_SLEEPY;

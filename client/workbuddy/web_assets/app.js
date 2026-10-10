@@ -928,10 +928,10 @@ function devPet(card, type, st, bx, by, sz){
   let L;
   if(st==='ERROR') L='ALERT';
   else if(st==='DONE') L='CELEBRATE';
-  else if(hh>=1 && hh<6) L='SLEEPING';
+  else if(hh>=1 && hh<6 && !(draft.pet?.sleep===0)) L='SLEEPING';
   else{
     const working=['GENERATING','TOOL','BUILD'].includes(st);
-    if((hh>=22 || hh<1) && !working) L='SLEEPY';
+    if(((hh>=22 || hh<1) || (hh>=1 && hh<6)) && !working) L='SLEEPY';
     else if(['WAIT_INPUT','ASK'].includes(st)) L='THINKING';
     else if(working) L='WORKING';
     else L='IDLE';
@@ -1750,6 +1750,9 @@ function renderPetTab(){
   });
   const name=$('pet-name');
   if(name && document.activeElement!==name) name.value=draft.pet?.name||'帽子';
+  const sleepT=$('pet-sleep'), greetT=$('pet-greet');
+  if(sleepT) sleepT.checked=!(draft.pet?.sleep===0);
+  if(greetT) greetT.checked=!!draft.pet?.greet;
   renderPetStats();
 }
 function renderPetStats(){
@@ -2814,7 +2817,11 @@ function bind(){
   $('pet-save').onclick=pending($('pet-save'),async()=>{
     try{
       const r=await request('/api/pet-config',{type:petCache?.type||'robot',
-        name:$('pet-name').value.trim()||'帽子'});
+        name:$('pet-name').value.trim()||'帽子',
+        sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0});
+      draft.pet={...(draft.pet||{}), type:petCache?.type||'robot',
+        name:$('pet-name').value.trim()||'帽子',
+        sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0};
       notice(`宠物形象已保存（v${r.version}），同步后设备换新装`);
       poll();
     }catch(e){notice(e.message,true)}
