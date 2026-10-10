@@ -37,3 +37,6 @@
 
 /* 手势更易触发（默认 50px，竖滑易被误判为横滑） */
 #define LV_INDEV_DEF_GESTURE_LIMIT 30
+
+/* 离屏快照（lv_snapshot）：工作台「实拍」按钮经串口抓当前画面 */
+#define LV_USE_SNAPSHOT 1

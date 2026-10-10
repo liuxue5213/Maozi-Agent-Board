@@ -12,8 +12,12 @@ void ui_apply_theme(uint32_t bg, uint32_t card, uint32_t accent,
 void ui_theme_tick();                 // 页面切换动画结束后应用待处理主题
 void ui_set_idle_dim(int seconds);    // 空闲息屏阈值（0=关闭）
 void ui_set_saver(uint8_t style);             // 息屏主题 0-3
-void ui_set_saver_msg(const char* msg);       // 诗词主题自定义短句
+void ui_set_saver_msg(const char* msg);
+void ui_set_saver_interval(uint16_t seconds);
+void ui_set_saver_fx(uint8_t fx);
+void ui_set_poem_interval(uint16_t minutes);       // 诗词主题自定义短句
 void ui_set_topbar(bool clock_on, bool wx_on); // 顶栏时钟/天气开关
 void ui_set_card_opa(uint8_t opa);             // 卡片不透明度 0-255
 void ui_set_page(uint8_t page);                // 上位机请求切页（0 基，带动画）
+void ui_send_snapshot();                       // 抓当前画面经串口回传（阻塞约 10s）
 void ui_notify_page(const char* page);   // 页面切换后回传 TOUCH

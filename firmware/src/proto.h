@@ -1,7 +1,28 @@
 #pragma once
 #include <Arduino.h>
 
-/** 并行 AI 任务行（AI0~AI3） */
+/** 城市天气（W0~W2 实况 + WF0~WF2 五天预报，今天起） */
+struct CityDay {
+    int8_t code = -1;
+    int8_t lo = 0, hi = 0;
+};
+struct CityWx {
+    bool used = false;
+    float temp = 0;
+    int code = -1;
+    int8_t hi = 0, lo = 0;
+    CityDay days[5];
+};
+
+/** 最近完成的会话行（DN0~DN2，新→旧） */
+struct DoneTask {
+    bool used = false;
+    char tool[12];
+    char proj[32];
+    int age = 0;
+};
+
+/** 并行 AI 任务行（AI0~AI7；固件按页面 filter 过滤后取用） */
 struct AITask {
     bool used = false;
     char tool[12];
@@ -17,7 +38,23 @@ struct AITask {
 struct Telemetry {
     uint32_t clock_hms = 0;   // HHMMSS
     char date[11] = "";       // YYYY-MM-DD
-    AITask tasks[4];
+    AITask tasks[8];
+    DoneTask done[3];
+    CityWx cities[3];
+    // 宠物状态（PS=饱食,水分,活力；0-100，客户端 pet.py 计算）
+    int8_t pet_h = 80, pet_t = 75, pet_e = 90;
+    // 屏保增强配置（CFG svint/svfx/pint）
+    int svint = -1, svfx = -1, pint = -1;
+    bool svint_changed = false, svfx_changed = false, pint_changed = false;
+    // 正在播放（NP=歌名,歌手,位置秒,时长秒,播放中）
+    struct NowPlaying {
+        bool used = false;
+        char title[49] = "";
+        char artist[25] = "";
+        int16_t pos = 0, dur = 0;
+        bool playing = false;
+    } np;
+    uint32_t done_at_ms[3] = {0, 0, 0};   // 收到该 DN 行的时刻，用于本地推进年龄
     char remind[48] = "";
     // 硬件
     int cpu = 0, cpufreq = 0;
@@ -32,13 +69,6 @@ struct Telemetry {
     float netrx = NAN, nettx = NAN;   // 网速 Mbps（NAN = 未提供）
     int bat = -1;
     uint32_t uptime = 0;
-    // AI
-    char aistate[16] = "IDLE";
-    char aitool[16] = "";
-    char aitask[16] = "";
-    int aiprog = -1;
-    int aitime = 0;
-    char aierr[64] = "";
     // 配置
     int bright = -1;
     char lang[8] = "en";
@@ -46,6 +76,8 @@ struct Telemetry {
     // 托盘/上位机请求切页（1 基；0=无效），main 循环转给 ui_set_page
     int page_req = 0;
     bool page_req_changed = false;
+    // 工作台「实拍」：SNAP=1 下行后设备抓当前画面经串口回传
+    bool snap_req_changed = false;
     // 电脑控制状态（控制中心显示；-1 = 未知/不可用）
     int vol = -1;
     int mut = -1;
@@ -93,6 +125,9 @@ private:
     void handle(const char* line);
     void handle_cfg(const char* value);
     void handle_ai(int idx, const char* value);
+    void handle_dn(int idx, const char* value);
+    void handle_w(int idx, const char* value);
+    void handle_wf(int idx, const char* value);
 };
 
 /** 上行帧构造 */
@@ -100,5 +135,6 @@ String uplink_env(float temp, float hum);
 String uplink_hb(uint32_t secs);
 String uplink_touch(const char* page);
 String uplink_bright(int v);
-String uplink_key(const char* action);    // VOL+ VOL- MUTE PLAY NEXT PREV
+String uplink_key(const char* action);
+String uplink_pet(const char* action);    // feed water play
 String uplink_launch(const char* app_id);

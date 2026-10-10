@@ -25,25 +25,13 @@
 #define PIN_LED4  5
 #define PIN_PIR   7
 
-// ---- 面板颜色序（BGR 位）----
-// 实机配色核验文档 §2 判定：照片里卡片呈草绿（#3F6A07/#8EBB53），
-// 而「紫夜」卡片应为 #3A2D5C（紫），并指出唯一吻合的变换是 **G/B 互换**。
-//
-// ⚠️ 重要：LovyanGFX 的 panel.config().rgb_order 对应 ST7796 的 MADCTL 第3位
-//    (BGR)，它只能表达 **R/B 互换**，无法表达 G/B 互换。
-//    因此在未做下面的实机红/绿/蓝验证之前，**不要**盲目把 rgb_order 改成 true
-//    —— 那只会把「G/B 错位」变成「叠加了 R/B 错位」，配色更糟。
-//
-// 两分钟定论实验（改 PANEL_COLOR_SELFTEST 后烧录，拍一张照片即可）：
-//     1. 屏幕会分成 4 条纯色带：上=纯红 FF0000 / 中上=纯绿 00FF00
-//        / 中下=纯蓝 0000FF / 下=纯白 FFFFFF
-//     2. 对照实际显示的颜色，把 PANEL_COLOR_ORDER_BGR 设为 true / false：
-//        · 红带显示蓝、蓝带显示红      → 设true（R/B 互换）
-//        · 红带显示绿、绿带显示红      → 是 G/B 错位，rgb_order 解决不了，
-//                                      需查 LV_COLOR_16_SWAP 与 MADCTL 组合
-//        · 红绿蓝三条显示正确          → 保持 false，问题不在颜色序
-#define PANEL_COLOR_ORDER_BGR false   // ST7796 MADCTL BGR 位；默认 RGB
-#define PANEL_COLOR_SELFTEST 0        // 置1 刷四色校验屏
+// ---- 面板颜色校准 ----
+#define PANEL_COLOR_ORDER_BGR false
+#define PANEL_COLOR_SELFTEST 0        // 置1 进入 24 格 RGB565 诊断矩阵
+// 2026-10-10 真机 24 格 RGB565 矩阵：用户确认第 7 格最准确。
+// 第 7 格=RGB 通道不变、交换每个 RGB565 像素的两个字节、无软件反相。
+// 硬件 invert=true 保留；在 LVGL flush 时换字节，混合色也能正确显示。
+#define PANEL_COLOR_BYTESWAP 1
 
 // ---- 主题（极简科技风：深蓝底 + 青蓝高亮 + 白色主文字）----
 // 卡片色必须与 bg 拉开亮度差：原 #141E32 对 #0B1220 仅 1.12:1（屏幕底部

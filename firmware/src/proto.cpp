@@ -60,6 +60,9 @@ void Proto::handle_cfg(const char* value) {
         // 卡片不透明度：客户端下发的是百分比(30-100)，LVGL 需要 0-255。
         // 之前这个键根本没被解析，cardopa_changed 永远是 false，
         // 于是工作台的不透明度滑杆和主题画廊的半透明卡片在设备上完全无效。
+        else if (!strcmp(k, "svint"))         { t.svint = constrain(atoi(v), 15, 3600); t.svint_changed = true; }
+        else if (!strcmp(k, "svfx"))          { t.svfx = constrain(atoi(v), 0, 2); t.svfx_changed = true; }
+        else if (!strcmp(k, "pint"))          { t.pint = constrain(atoi(v), 1, 120); t.pint_changed = true; }
         else if (!strcmp(k, "cardopa")) {
             t.cardopa_cfg = constrain(atoi(v), 30, 100) * 255 / 100;
             t.cardopa_changed = true;
@@ -68,8 +71,68 @@ void Proto::handle_cfg(const char* value) {
     dirty = true;
 }
 
+void Proto::handle_dn(int idx, const char* value) {
+    if (idx < 0 || idx > 2) return;
+    DoneTask& d = t.done[idx];
+    char buf[64];
+    strncpy(buf, value, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = 0;
+    char* fields[3] = {};
+    char* cursor = buf;
+    for (int i = 0; i < 3; ++i) {
+        fields[i] = cursor;
+        if (!cursor) break;
+        char* comma = strchr(cursor, ',');
+        if (comma) { *comma = 0; cursor = comma + 1; }
+        else cursor = nullptr;
+    }
+    if (!fields[0] || !fields[0][0]) { d.used = false; dirty = true; return; }
+    d.used = true;
+    memset(d.tool, 0, sizeof(d.tool));
+    strncpy(d.tool, fields[0], sizeof(d.tool) - 1);
+    memset(d.proj, 0, sizeof(d.proj));
+    strncpy(d.proj, fields[1] ? fields[1] : "", sizeof(d.proj) - 1);
+    d.age = fields[2] ? atoi(fields[2]) : 0;
+    t.done_at_ms[idx] = millis();
+    dirty = true;
+}
+
+void Proto::handle_w(int idx, const char* value) {
+    if (idx < 0 || idx > 2) return;
+    CityWx& c = t.cities[idx];
+    char buf[48];
+    strncpy(buf, value, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = 0;
+    float temp = 0; int code = -1, hi = 0, lo = 0;
+    if (sscanf(buf, "%f,%d,%d,%d", &temp, &code, &hi, &lo) != 4) {
+        c.used = false; dirty = true; return;
+    }
+    c.used = true;
+    c.temp = temp; c.code = code; c.hi = hi; c.lo = lo;
+    dirty = true;
+}
+
+void Proto::handle_wf(int idx, const char* value) {
+    if (idx < 0 || idx > 2) return;
+    CityWx& c = t.cities[idx];
+    char buf[160];
+    strncpy(buf, value, sizeof(buf) - 1);
+    buf[sizeof(buf) - 1] = 0;
+    int i = 0;
+    char* seg = strtok(buf, ";");
+    while (seg && i < 5) {
+        int code = -1, lo = 0, hi = 0;
+        if (sscanf(seg, "%d,%d,%d", &code, &lo, &hi) == 3) {
+            c.days[i].code = code; c.days[i].lo = lo; c.days[i].hi = hi;
+            ++i;
+        }
+        seg = strtok(nullptr, ";");
+    }
+    dirty = true;
+}
+
 void Proto::handle_ai(int idx, const char* value) {
-    if (idx < 0 || idx > 3) return;
+    if (idx < 0 || idx > 7) return;
     AITask& a = t.tasks[idx];
     char buf[96];
     strncpy(buf, value, sizeof(buf) - 1);
@@ -122,6 +185,11 @@ void Proto::handle(const char* line) {
             bg_changed = true;
             return;
         }
+        if (!strncmp(v, "DELETE,", 8)) {          // 相册：删除 /svN.jpg
+            album_delete(v + 8);
+            bg_changed = true;
+            return;
+        }
         if (bgimg_receive_cfg(v)) bg_changed = true;
         return;
     }
@@ -129,8 +197,56 @@ void Proto::handle(const char* line) {
     if (!strcmp(key, "TIME"))  { t.clock_hms = (uint32_t)atol(v); dirty = true; return; }
     if (!strcmp(key, "DATE"))  { snprintf(t.date, sizeof(t.date), "%s", v); dirty = true; return; }
     if (!strcmp(key, "REMIND")) { strncpy(t.remind, v, sizeof(t.remind) - 1); dirty = true; return; }
-    if (!strncmp(key, "AI", 2) && key[2] >= '0' && key[2] <= '3') {
+    if (!strncmp(key, "WF", 2) && key[2] >= '0' && key[2] <= '2') {
+        handle_wf(key[2] - '0', v);
+        return;
+    }
+    if (!strcmp(key, "NP")) {
+        // NP=歌名,歌手,位置秒,时长秒,播放中（歌名/歌手已由客户端剔除逗号）
+        char buf[96];
+        strncpy(buf, v, sizeof(buf) - 1);
+        buf[sizeof(buf) - 1] = 0;
+        char* fields[5] = {};
+        char* cursor = buf;
+        for (int i = 0; i < 5; ++i) {
+            fields[i] = cursor;
+            if (!cursor) break;
+            char* comma = strchr(cursor, ',');
+            if (comma) { *comma = 0; cursor = comma + 1; }
+            else cursor = nullptr;
+        }
+        if (!fields[0] || !fields[0][0]) { t.np.used = false; dirty = true; return; }
+        t.np.used = true;
+        memset(t.np.title, 0, sizeof(t.np.title));
+        strncpy(t.np.title, fields[0], sizeof(t.np.title) - 1);
+        memset(t.np.artist, 0, sizeof(t.np.artist));
+        strncpy(t.np.artist, fields[1] ? fields[1] : "", sizeof(t.np.artist) - 1);
+        t.np.pos = fields[2] ? atoi(fields[2]) : 0;
+        t.np.dur = fields[3] ? atoi(fields[3]) : 0;
+        t.np.playing = fields[4] && atoi(fields[4]) == 1;
+        dirty = true;
+        return;
+    }
+    if (!strcmp(key, "PS")) {
+        int h = 80, tt = 75, e = 90;
+        if (sscanf(v, "%d,%d,%d", &h, &tt, &e) == 3) {
+            t.pet_h = (int8_t)constrain(h, 0, 100);
+            t.pet_t = (int8_t)constrain(tt, 0, 100);
+            t.pet_e = (int8_t)constrain(e, 0, 100);
+            dirty = true;
+        }
+        return;
+    }
+    if (key[0] == 'W' && key[1] >= '0' && key[1] <= '2' && key[2] == 0) {
+        handle_w(key[1] - '0', v);
+        return;
+    }
+    if (!strncmp(key, "AI", 2) && key[2] >= '0' && key[2] <= '7') {
         handle_ai(key[2] - '0', v);
+        return;
+    }
+    if (!strncmp(key, "DN", 2) && key[2] >= '0' && key[2] <= '2') {
+        handle_dn(key[2] - '0', v);
         return;
     }
     if (!strcmp(key, "AIU")) {
@@ -233,13 +349,10 @@ void Proto::handle(const char* line) {
         t.wx_lo = f4 ? atof(f4) : NAN;
         t.wx_valid = !isnan(t.wx_temp);
     }
-    else if (!strcmp(key, "AISTATE"))  strncpy(t.aistate, v, sizeof(t.aistate) - 1);
-    else if (!strcmp(key, "AITOOL"))   strncpy(t.aitool, v, sizeof(t.aitool) - 1);
-    else if (!strcmp(key, "AITASK"))   strncpy(t.aitask, v, sizeof(t.aitask) - 1);
-    else if (!strcmp(key, "AIPROG"))   t.aiprog = atoi(v);
-    else if (!strcmp(key, "AITIME"))   t.aitime = atoi(v);
-    else if (!strcmp(key, "AIERR"))    strncpy(t.aierr, v, sizeof(t.aierr) - 1);
+    // 单任务镜像字段（AISTATE/AITOOL/…）已下线：客户端 v0.4 起不再发送，
+    // 会话状态一律从 AI0..AI7 读取；旧客户端发来的这些键在此自然落入忽略分支。
     else if (!strcmp(key, "PAGE"))   { t.page_req = atoi(v); t.page_req_changed = true; }
+    else if (!strcmp(key, "SNAP"))   t.snap_req_changed = true;
     dirty = true;
 }
 
@@ -256,6 +369,10 @@ String uplink_hb(uint32_t secs) {
 
 String uplink_touch(const char* page) {
     return "TOUCH=" + String(page) + "\n";
+}
+
+String uplink_pet(const char* action) {
+    return "PET=" + String(action) + "\n";
 }
 
 String uplink_bright(int v) {

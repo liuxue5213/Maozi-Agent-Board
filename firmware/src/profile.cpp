@@ -36,6 +36,7 @@ WidgetKind widget_kind(const char* name) {
     if (!strcmp(name, "weather")) return W_WEATHER;
     if (!strcmp(name, "countdown")) return W_COUNTDOWN;
     if (!strcmp(name, "ai_cost")) return W_AI_COST;
+    if (!strcmp(name, "pet")) return W_PET;
     return W_INVALID;
 }
 
@@ -90,6 +91,35 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
     reset_profile(out);
     out.version = version;
     out.page_count = pages.size();
+    // 天气城市名（W0..W2/WF0..WF2 按此下序对号；页面 city 按名字匹配）
+    JsonObjectConst pet_cfg = doc["pet"].as<JsonObjectConst>();
+    if (!pet_cfg.isNull()) {
+        const char* ptype = pet_cfg["type"] | "robot";
+        if (strcmp(ptype, "robot") && strcmp(ptype, "cat") && strcmp(ptype, "chick"))
+            ptype = "robot";
+        copy_text(out.pet_type, sizeof(out.pet_type), ptype);
+        copy_text(out.pet_name, sizeof(out.pet_name), pet_cfg["name"] | "帽子");
+    }
+    // 诗句库（屏保「诗词短句」轮换）
+    JsonArrayConst poems = doc["poems"].as<JsonArrayConst>();
+    if (!poems.isNull()) {
+        out.poem_count = 0;
+        for (const char* verse : poems) {
+            if (out.poem_count >= 10) break;
+            if (!verse || !*verse) continue;
+            copy_text(out.poems[out.poem_count], sizeof(out.poems[0]), verse);
+            ++out.poem_count;
+        }
+    }
+    JsonArrayConst wcities = (doc["weather"].as<JsonObjectConst>())["cities"].as<JsonArrayConst>();
+    if (!wcities.isNull()) {
+        uint8_t wn = 0;
+        for (JsonObjectConst wc : wcities) {
+            if (wn >= 3) break;
+            copy_text(out.city_names[wn], sizeof(out.city_names[0]), wc["name"] | "");
+            ++wn;
+        }
+    }
     for (uint8_t i = 0; i < out.page_count; ++i) {
         JsonObjectConst page = pages[i].as<JsonObjectConst>();
         if (page.isNull()) return false;
@@ -101,6 +131,10 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
             (strcmp(layout, "list") && strcmp(layout, "grid_2x2")) ||
             widgets.isNull() || widgets.size() < 1 || widgets.size() > 4) return false;
         PageConfig& dst = out.pages[i];
+        // 工具过滤（客户端「按工具分页」用；空 = 全部）
+        copy_text(dst.filter, sizeof(dst.filter), page["filter"] | "");
+        // 天气页绑定的城市名（须在 weather.cities 里）
+        copy_text(dst.city, sizeof(dst.city), page["city"] | "");
         copy_text(dst.id, sizeof(dst.id), id);
         copy_text(dst.title, sizeof(dst.title), title);
         dst.list = !strcmp(layout, "list");
@@ -112,7 +146,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
             if (kind == W_INVALID) return false;
             for (uint8_t k = 0; k < j; ++k) if (dst.widgets[k] == kind) return false;
             dst.widgets[j] = kind;
-            uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS) ? 4 :
+            uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS || kind == W_PET) ? 4 :
                 (kind == W_REMINDERS || kind == W_CALENDAR ? 2 : 1);
             units += needed;
             if (needed == 4 && dst.count != 1) return false;
@@ -122,7 +156,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
             uint8_t slot = 0;
             for (uint8_t j = 0; j < dst.count; ++j) {
                 WidgetKind kind = dst.widgets[j];
-                uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS) ? 4 :
+                uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS || kind == W_PET) ? 4 :
                     (kind == W_REMINDERS || kind == W_CALENDAR ? 2 : 1);
                 if (needed == 2 && (slot % 2)) ++slot;
                 slot += needed;
@@ -170,6 +204,12 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         // card_opa 客户端下发的是百分比(30-100)，LVGL 的 bg_opa 需要 0-255。
         out.card_opa = (uint8_t)(constrain((int)(theme["card_opa"] | 100), 30, 100) * 255 / 100);
         out.bright = constrain((int)(theme["bright"] | 90), 5, 100);
+        out.idle_dim = constrain((int)(theme["idledim"] | 60), 0, 3600);
+        out.saver = constrain((int)(theme["saver"] | 0), 0, 3);
+        copy_text(out.saver_msg, sizeof(out.saver_msg), theme["savermsg"] | "代码写完了吗？起来喝口水");
+        out.top_clock = (theme["topclock"] | 1) != 0;
+        out.top_weather = (theme["topwx"] | 1) != 0;
+        out.bright_auto = (theme["bright_auto"] | 0) != 0;
     }
     return true;
 }

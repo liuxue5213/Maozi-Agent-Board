@@ -39,7 +39,7 @@ void setup() {
 void send_fw_handshake() {
     // 真实能力握手（PROTOCOL §5）：客户端据此拒绝不兼容的配置推送。
     // 开机 + 每次"新客户端接入"（链路超时后再次收到数据）都会重发。
-    Serial.printf("FW=0.3.1,n16r8,schema:1,pages:%u,widgets:7,apps:12,reminders:20,calendar:50,alarms:16\n",
+    Serial.printf("FW=0.3.1,n16r8,schema:1,pages:%u,widgets:10,apps:12,reminders:20,calendar:50,alarms:16\n",
                   (unsigned)(sizeof(((DeviceProfile*)0)->pages) / sizeof(((DeviceProfile*)0)->pages[0])));
 }
 
@@ -71,6 +71,7 @@ void loop() {
     }
     if (proto.bg_changed) {
         proto.bg_changed = false;
+        Serial.printf("[BG] bg_changed -> rebuild\n");
         ui_rebuild();
     }
     if (proto.dirty) {
@@ -90,6 +91,21 @@ void loop() {
                 prefs.putInt("idledim", proto.t.idledim);
                 prefs.end();
             }
+        }
+        if (proto.t.svint_changed) {
+            proto.t.svint_changed = false;
+            ui_set_saver_interval(proto.t.svint);
+            if (prefs.begin("wb", false)) { prefs.putUShort("svint", proto.t.svint); prefs.end(); }
+        }
+        if (proto.t.svfx_changed) {
+            proto.t.svfx_changed = false;
+            ui_set_saver_fx(proto.t.svfx);
+            if (prefs.begin("wb", false)) { prefs.putUChar("svfx", proto.t.svfx); prefs.end(); }
+        }
+        if (proto.t.pint_changed) {
+            proto.t.pint_changed = false;
+            ui_set_poem_interval(proto.t.pint);
+            if (prefs.begin("wb", false)) { prefs.putUChar("pint", proto.t.pint); prefs.end(); }
         }
         if (proto.t.saver_changed) {
             proto.t.saver_changed = false;
@@ -129,6 +145,11 @@ void loop() {
             // PAGE 为 1 基；ui_set_page 自带越界保护
             if (proto.t.page_req > 0) ui_set_page((uint8_t)(proto.t.page_req - 1));
         }
+        if (proto.t.snap_req_changed) {
+            proto.t.snap_req_changed = false;
+            // 实拍：阻塞约 10s（串口回传），期间主循环停顿属预期
+            ui_send_snapshot();
+        }
         if (proto.t.bright >= 0) {
             bright_manual_val = proto.t.bright;
             display_brightness(proto.t.bright);
@@ -154,8 +175,13 @@ void loop() {
         g_temp = NAN;
         g_hum = NAN;
         if (dht.read()) {
-            g_temp = dht.getTemperature();
-            g_hum = dht.getHumidity();
+            const float temp = dht.getTemperature();
+            const float hum = dht.getHumidity();
+            // 断线或采样失败有时被 DHT11 读成 0/0；别把它当成真实室内环境。
+            if (temp >= -20 && temp <= 60 && hum >= 1 && hum <= 100) {
+                g_temp = temp;
+                g_hum = hum;
+            }
         }
         ui_update(proto.t);
     }

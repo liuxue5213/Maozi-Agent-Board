@@ -43,7 +43,9 @@ public:
             cfg.memory_width = 320;
             cfg.memory_height = 480;
             cfg.offset_rotation = 0;
-            cfg.invert = false;          // 该屏不需要反色（反了会变黄底）
+            // 实机照片里深色背景呈接近白色、浅色文字呈黑色，符合面板反相。
+            // ST7796 IPS 模组在此板上需要开启硬件反相，避免主题整体负片化。
+            cfg.invert = true;
             // MADCTL BGR 位。开关与验证步骤集中见 config.h 的 PANEL_COLOR_ORDER_BGR，
             // 不要在这里就地改动——实机配色核验文档 §2 的「卡片变绿」尚未定论。
             cfg.rgb_order = PANEL_COLOR_ORDER_BGR;
@@ -89,6 +91,18 @@ int _brightness = DEFAULT_BRIGHT;
 void flush_cb(lv_disp_drv_t* drv, const lv_area_t* area, lv_color_t* color_p) {
     int32_t w = area->x2 - area->x1 + 1;
     int32_t h = area->y2 - area->y1 + 1;
+#if PANEL_COLOR_BYTESWAP
+    // 第 7 格真机校准结果：LovyanGFX pushImage 的 RGB565 字节顺序与
+    // LVGL 缓冲相反。仅交换两个字节，保留原始 RGB 通道和混合色。
+    {
+        uint16_t* p = (uint16_t*)color_p;
+        int n = (int)(w * h);
+        for (int i = 0; i < n; ++i) {
+            uint16_t v = p[i];
+            p[i] = (uint16_t)((v << 8) | (v >> 8));
+        }
+    }
+#endif
     _gfx.startWrite();
     // LVGL 在 flush_ready 后会立即复用缓冲区；同步传输可避免 DMA 尚未读完时
     // 缓冲区被下一帧覆盖，造成闪烁和撕裂。
@@ -133,17 +147,45 @@ void display_init() {
     lv_indev_drv_register(&_indev_drv);
 
 #if PANEL_COLOR_SELFTEST
-    // 四色校验屏：拍一张照片即可判定面板颜色序（判读步骤见 config.h）。
-    // 直接走 LovyanGFX 填充，绕开 LVGL 与业务主题，结果就是面板真实呈现。
+    // 4 列 × 6 行，共 24 个候选转换。每格从上到下应为红/绿/蓝/白。
+    // 通过 pushImage 走与 LVGL 相同的 RGB565 路径，同时穷举六种通道顺序、
+    // 字节顺序与反相。用户只需指出正确格号，不再靠猜测面板颜色序。
     {
-        const int band = SCR_H / 4;
+        static const uint8_t order[6][3] = {
+            {0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0}
+        };
+        static const uint8_t source[4][3] = {
+            {255,0,0}, {0,255,0}, {0,0,255}, {255,255,255}
+        };
+        static uint16_t pixels[80 * 16];
         _gfx.startWrite();
-        _gfx.fillRect(0, 0, SCR_W, band, 0xFF0000);
-        _gfx.fillRect(0, band, SCR_W, band, 0x00FF00);
-        _gfx.fillRect(0, band * 2, SCR_W, band, 0x0000FF);
-        _gfx.fillRect(0, band * 3, SCR_W, SCR_H - band * 3, 0xFFFFFF);
+        _gfx.fillScreen(0x101010);
+        _gfx.setTextSize(1);
+        _gfx.setTextColor(0xFFFFFF, 0x101010);
+        for (int mode = 0; mode < 24; ++mode) {
+            int x = (mode % 4) * 80, y = (mode / 4) * 80;
+            _gfx.setCursor(x + 4, y + 2);
+            _gfx.print(mode + 1);
+            int perm = mode % 6;
+            bool byte_swap = ((mode / 6) % 2) != 0;
+            bool invert = (mode / 12) != 0;
+            for (int band = 0; band < 4; ++band) {
+                uint8_t r = source[band][order[perm][0]];
+                uint8_t g = source[band][order[perm][1]];
+                uint8_t b = source[band][order[perm][2]];
+                if (invert) { r = 255 - r; g = 255 - g; b = 255 - b; }
+                uint16_t color = ((uint16_t)(r & 0xF8) << 8) |
+                                 ((uint16_t)(g & 0xFC) << 3) | (b >> 3);
+                if (byte_swap) color = (color << 8) | (color >> 8);
+                for (uint16_t& pixel : pixels) pixel = color;
+                _gfx.pushImage(x, y + 16 + band * 16, 80, 16, pixels);
+            }
+        }
         _gfx.endWrite();
     }
+    // 诊断用：停在这里不再启动 LVGL/业务界面，便于稳定拍照。
+    // 复位或重新烧录（SELFTEST=0）即恢复正常流程。
+    while (true) delay(1000);
 #endif
 }
 
