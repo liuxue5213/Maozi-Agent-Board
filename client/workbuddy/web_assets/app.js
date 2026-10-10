@@ -19,7 +19,15 @@ const themePresets = {
   '紫夜':{card_opa:72,bg:'120B22',grad:'1D1136',card:'4D3C7A',card_edge:'54427F',accent:'A78BFA',text:'F5F3FF',sub:'C4B5E8'},
   '苍翠':{card_opa:70,bg:'071A12',grad:'0C2A1B',card:'21543A',card_edge:'2A6B4A',accent:'34D399',text:'ECFDF5',sub:'A3D5BC'},
   '暖阳':{card_opa:66,bg:'1A1207',grad:'2A1C0C',card:'684922',card_edge:'6B4C24',accent:'F59E0B',text:'FFF8EB',sub:'DEC9A3'},
-  '玫瑰':{card_opa:68,bg:'1A0B12',grad:'2A1120',card:'6E3E5E',card_edge:'8F4566',accent:'FB7185',text:'FFF1F3',sub:'E8B4C0'}
+  '玫瑰':{card_opa:68,bg:'1A0B12',grad:'2A1120',card:'6E3E5E',card_edge:'8F4566',accent:'FB7185',text:'FFF1F3',sub:'E8B4C0'},
+  '晨雾浅蓝':{card_opa:92,bg:'B7C3D4',grad:'ACB9CD',card:'FFFFFF',card_edge:'D8E1EC',accent:'0E7490',text:'1B2536',sub:'44566C'},
+  '米纸暖白':{card_opa:94,bg:'C6BDA9',grad:'BDB3A0',card:'FFFDF8',card_edge:'E4DCCC',accent:'9A6B2F',text:'2A241A',sub:'5C5342'},
+  '薄荷奶白':{card_opa:94,bg:'B9CCC2',grad:'AEC3B8',card:'FCFFFD',card_edge:'D9E7E0',accent:'0F766E',text:'15291F',sub:'3F5A4C'},
+  '樱花粉白':{card_opa:94,bg:'D2C0C8',grad:'C9B4BE',card:'FFFAFB',card_edge:'EBD9DF',accent:'B0486E',text:'2E1E26',sub:'63505B'},
+  '碳灰霓虹':{card_opa:88,bg:'0D0F14',grad:'12151D',card:'3A4358',card_edge:'46506A',accent:'A3E635',text:'E5E9F0',sub:'97A3B8'},
+  '海军蓝金':{card_opa:82,bg:'0A1424',grad:'0E1B31',card:'35476B',card_edge:'45597D',accent:'E8C268',text:'F2F6FF',sub:'9FB0CC'},
+  '咖啡奶昔':{card_opa:88,bg:'171009',grad:'1E150C',card:'52402A',card_edge:'6B563A',accent:'E8A761',text:'FAEEDF',sub:'B39B7E'},
+  '紫罗兰夜':{card_opa:82,bg:'120E1E',grad:'181232',card:'483D71',card_edge:'5D4F8A',accent:'C084FC',text:'F3EFFF',sub:'A79BC8'}
 };
 // 画廊主题的 card 填充必须对 bg 保持 ≥1.5:1（profile.validate_profile 的
 // 硬门槛，按 RGB565 上屏值核算）。这些值就是照该门槛解出来的：低于它们
@@ -288,6 +296,14 @@ const themeLibrary = [
   {key:'preset-苍翠', name:'苍翠', colors:themePresets['苍翠'], opa:70},
   {key:'preset-暖阳', name:'暖阳', colors:themePresets['暖阳'], opa:66},
   {key:'preset-玫瑰', name:'玫瑰', colors:themePresets['玫瑰'], opa:68},
+  {key:'preset-晨雾浅蓝', name:'晨雾浅蓝', colors:themePresets['晨雾浅蓝'], opa:92, bright:88},
+  {key:'preset-米纸暖白', name:'米纸暖白', colors:themePresets['米纸暖白'], opa:94, bright:88},
+  {key:'preset-薄荷奶白', name:'薄荷奶白', colors:themePresets['薄荷奶白'], opa:94, bright:88},
+  {key:'preset-樱花粉白', name:'樱花粉白', colors:themePresets['樱花粉白'], opa:94, bright:88},
+  {key:'preset-碳灰霓虹', name:'碳灰霓虹', colors:themePresets['碳灰霓虹'], opa:88},
+  {key:'preset-海军蓝金', name:'海军蓝金', colors:themePresets['海军蓝金'], opa:82},
+  {key:'preset-咖啡奶昔', name:'咖啡奶昔', colors:themePresets['咖啡奶昔'], opa:88},
+  {key:'preset-紫罗兰夜', name:'紫罗兰夜', colors:themePresets['紫罗兰夜'], opa:82},
   {key:'gallery-aurora', name:'极光', colors:galleryColors('aurora'), opa:70, gallery:'aurora'},
   {key:'gallery-starry', name:'星空', colors:galleryColors('starry'), opa:70, gallery:'starry'},
   {key:'gallery-garden', name:'像素花园', colors:galleryColors('garden'), opa:70, gallery:'garden'},
@@ -1395,10 +1411,26 @@ function renderTaskPages(){
 function myThemes(){
   try{ return JSON.parse(localStorage.getItem('workbuddy-mythemes')||'[]'); }catch(e){ return [] }
 }
+/* 自定义配色预校验：镜像 profile.validate_profile 的合成后对比度规则
+   （text≥4.5、sub≥3.0、卡片边界≥1.5，全部按 RGB565 上屏色 + 卡片不透明度合成）。
+   后端保存时仍会复检——这里提前拦是为了不让「存了却永远应用不了」的主题进库。 */
+function themeIssues(colors, opa){
+  const P={};
+  ['bg','grad','card','accent','text','sub'].forEach(k=>P[k]=hexToRgb(panelHex(colors[k])));
+  const alpha=(opa||100)/100, issues=[];
+  const fills=[composite(P.card,P.bg,alpha), composite(P.card,P.grad,alpha)];
+  const names=['背景端','渐变端'];
+  if(contrastRatio(P.text,P.bg)<4.5)issues.push('文字与背景对比不足 4.5:1');
+  fills.forEach((f,i)=>{ if(contrastRatio(P.text,f)<4.5)issues.push(`文字与卡片对比不足（${names[i]}）`); });
+  if(contrastRatio(P.sub,P.bg)<3)issues.push('次要文字与背景对比不足 3:1');
+  fills.forEach((f,i)=>{ if(contrastRatio(P.sub,f)<3)issues.push(`次要文字与卡片对比不足（${names[i]}）`); });
+  fills.forEach((f,i)=>{ if(contrastRatio(f,P[i?'grad':'bg'])<1.5)issues.push(`卡片边界看不清（${names[i]}，需 ≥1.5:1，可提高卡片不透明度）`); });
+  return issues;
+}
 function renderThemeGrid(){
   const root=$('theme-grid'); root.replaceChildren();
   const items = themeTab==='preset' ? themeLibrary
-    : myThemes().map((t,i)=>({key:'my-'+i, name:t.name||'我的主题 '+(i+1), colors:t.colors, opa:t.opa||70}));
+    : myThemes().map((t,i)=>({key:'my-'+i, _idx:i, name:t.name||'我的主题 '+(i+1), colors:t.colors, opa:t.opa||70}));
   if(!items.length){
     root.append(el('div','empty','还没有自定义主题。在「设置 → 主题配色」调好后点「存为自定义主题」。'));
     return;
@@ -1414,6 +1446,20 @@ function renderThemeGrid(){
     mini.style.color='#'+item.colors.text;
     mini.append(el('span','theme-mini-time',clock()));
     cell.append(mini, el('span','theme-card-name',item.name));
+    if(themeTab==='my'){
+      cell.style.position='relative';
+      const del=el('button','theme-del','×'); del.type='button'; del.title='删除该自定义主题';
+      del.style.cssText='position:absolute;top:4px;right:4px;width:22px;height:22px;line-height:20px;'
+        +'border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.35);'
+        +'color:#fff;font-size:14px;cursor:pointer;padding:0';
+      del.onclick=(e)=>{ e.stopPropagation();
+        const list=myThemes(); const removed=list.splice(item._idx,1);
+        localStorage.setItem('workbuddy-mythemes',JSON.stringify(list));
+        if(selectedThemeKey===item.key)selectedThemeKey=null;
+        renderThemeGrid(); notice(`已删除「${removed[0]?.name||item.name}」`);
+      };
+      cell.append(del);
+    }
     cell.onclick=()=>{selectedThemeKey=item.key;renderThemeGrid();
       const desc = themeTab==='preset' ? `精选主题「${item.name}」，应用到任务后保存并同步。`
         : `自定义主题「${item.name}」。`;
@@ -2748,9 +2794,16 @@ function bind(){
   $('card-opa').oninput=e=>{draft.theme.card_opa=Number(e.target.value);$('opa-value').textContent=e.target.value+'%';markDirty()};
   $('bright-auto').onchange=e=>{draft.theme.bright_auto=e.target.checked?1:0;markDirty();notice(e.target.checked?'已开启自动亮度（白天亮/夜间暗）':'已切回手动亮度')};
   $('btn-save-mytheme').onclick=()=>{
+    const colors={bg:draft.theme.bg,grad:draft.theme.grad,card:draft.theme.card,
+      card_edge:draft.theme.card_edge,accent:draft.theme.accent,text:draft.theme.text,sub:draft.theme.sub};
+    const issues=themeIssues(colors, draft.theme.card_opa);
+    if(issues.length){
+      notice('这套配色上屏后不达标，未保存：'+issues[0]+'（可调亮文字/卡片或提高卡片不透明度）', true);
+      return;
+    }
     const list=myThemes();
     const name='我的主题 '+(list.length+1);
-    list.push({name, colors:{bg:draft.theme.bg,grad:draft.theme.grad,card:draft.theme.card,card_edge:draft.theme.card_edge,accent:draft.theme.accent,text:draft.theme.text,sub:draft.theme.sub}, opa:draft.theme.card_opa});
+    list.push({name, colors, opa:draft.theme.card_opa});
     localStorage.setItem('workbuddy-mythemes',JSON.stringify(list));
     logHist('theme',`自定义主题「${name}」已保存`);
     notice(`已保存「${name}」，可在任务视图 → 主题库 → 自定义主题中应用`);
