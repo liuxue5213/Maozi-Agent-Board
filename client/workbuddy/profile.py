@@ -14,10 +14,11 @@ PROFILE_PATH = Path.home() / ".workbuddy" / "profile.json"
 WIDGET_UNITS = {
     "ai_list": 4, "hw_cards": 4, "clock": 1, "environment": 1,
     "reminder_list": 2, "today_calendar": 2, "alarm": 1,
-    "weather": 1, "countdown": 1,
+    "weather": 1, "countdown": 1, "ai_cost": 1, "pet": 4,
 }
 DEFAULT_PROFILE = {
     "schema": 1, "version": 1,
+    "pet": {"type": "robot", "name": "帽子"},
     "pages": [
         {"id": "ai", "title": "帽子工作台", "layout": "list", "widgets": ["ai_list"]},
         {"id": "computer", "title": "电脑", "layout": "grid_2x2", "widgets": ["hw_cards"]},
@@ -26,9 +27,41 @@ DEFAULT_PROFILE = {
     ],
     "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
     "weather": {"city": ""},
-    "theme": {"bg": "0B1220", "grad": "0E1B33", "card": "274064", "accent": "22D3EE",
-              "text": "F3F7FF", "sub": "A8BDD9", "card_edge": "3E506E", "bright": 90},
+    "theme": {"bg": "060A12", "grad": "0E1726", "card": "28384E", "accent": "4CC9F0",
+              "text": "F1F5F9", "sub": "A6B6C9", "card_edge": "3C5070", "bright": 90},
 }
+
+
+# 面板像素格式：与颜色映射文件 client/workbuddy/web_assets/color-map.json 的
+# panel.pixelFormat 对应（ST7796 / RGB565）。对比度必须按量化后的值核算。
+PANEL_BITS = (5, 6, 5)
+
+
+def panel_rgb888(hex_color: str) -> str:
+    """把请求的 sRGB888 按面板像素格式量化后还原——屏幕真正显示的颜色。
+
+    屏幕不是 888 直出：每个通道先被截到 5/6/5 位，再由 LVGL 位复制还原。
+    用请求色核算对比度会高估可读性（深色主题里量化把暗部压得更暗是常态），
+    所以校验一律走这个函数。换屏时同步改 PANEL_BITS 与映射文件。
+    """
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+    br, bg, bb = PANEL_BITS
+
+    def expand(value: int, bits: int) -> int:
+        return value if bits >= 8 else ((value << (8 - bits)) | (value >> (2 * bits - 8))) & 0xFF
+
+    return "%02X%02X%02X" % (expand(r >> (8 - br), br),
+                             expand(g >> (8 - bg), bg),
+                             expand(b >> (8 - bb), bb))
+
+
+def blend888(front: str, back: str, alpha: float) -> str:
+    """把 front 以 alpha 叠在 back 上（888 空间）。"""
+    def rgb(value):
+        return [int(value[i:i + 2], 16) for i in (0, 2, 4)]
+    return "%02X%02X%02X" % tuple(
+        max(0, min(255, round(f * alpha + b * (1 - alpha))))
+        for f, b in zip(rgb(front), rgb(back)))
 
 
 def default_profile():
@@ -62,17 +95,81 @@ def _days(value):
 
 
 def validate_profile(raw):
-    """Return a normalized profile; reject layouts the 480×320 device cannot show."""
+    """Return a normalized profile; reject layouts the 320×480 device cannot show."""
     if not isinstance(raw, dict):
         raise ValueError("配置必须是对象")
     pages = raw.get("pages")
     if not isinstance(pages, list) or not 1 <= len(pages) <= 6:
         raise ValueError("页面数量需为 1–6")
+    pet = raw.get("pet", {})
+    if not isinstance(pet, dict):
+        raise ValueError("宠物配置格式无效")
+    ptype = str(pet.get("type", "robot"))
+    if ptype not in ("robot", "cat", "chick"):
+        raise ValueError("宠物类型只支持 robot / cat / chick")
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
-    "weather": {"city": ""}, "theme": {}}
+    "weather": {"city": ""}, "theme": {},
+    "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12)}}
+    # 自动分页：开启时由客户端按活跃工具重排 AI 页（全部 + 每工具一页）。
+    # 设备不认识这个键（未知 JSON 键被忽略），它只是客户端重排的授权开关。
+    try:
+        out["autopage"] = 1 if int(raw.get("autopage", 0) or 0) else 0
+    except (TypeError, ValueError):
+        out["autopage"] = 0
     if out["version"] < 1:
         raise ValueError("版本号无效")
+    weather = raw.get("weather", {})
+    if not isinstance(weather, dict):
+        raise ValueError("天气配置格式无效")
+    city = str(weather.get("city", "")).strip()
+    if city:
+        out["weather"]["city"] = _label(city, 20)
+    # 多城市：每城一个坐标（搜索时由地理编码解析），设备按名字匹配天气页。
+    # 旧的单 city 字段仍接受（兼容旧档案），但新功能一律走 cities。
+    cities = weather.get("cities", [])
+    if not isinstance(cities, list) or len(cities) > 3:
+        raise ValueError("天气城市最多 3 个")
+    out["weather"]["cities"] = []
+    # 诗句库（屏保「诗词短句」轮换用）：每条 ≤20 字，设备全量字库覆盖
+    poems = raw.get("poems", [])
+    if not isinstance(poems, list) or len(poems) > 10:
+        raise ValueError("诗句库最多 10 条")
+    out["poems"] = []
+    seen_poems = set()
+    for poem in poems:
+        if not isinstance(poem, str):
+            raise ValueError("诗句格式无效")
+        if not poem.strip():
+            continue                      # 空条目直接跳过
+        verse = _label(poem, 60)
+        if not verse or verse in seen_poems:
+            continue
+        seen_poems.add(verse)
+        out["poems"].append(verse)
+    seen_names = set()
+    for entry in cities:
+        if not isinstance(entry, dict):
+            raise ValueError("天气城市格式无效")
+        name = _label(entry.get("name", ""), 12)
+        if not name or name in seen_names:
+            raise ValueError("天气城市名不能为空或重复")
+        seen_names.add(name)
+        try:
+            lat = round(float(entry.get("lat")), 4)
+            lon = round(float(entry.get("lon")), 4)
+        except (TypeError, ValueError):
+            raise ValueError("天气城市缺少坐标（请通过搜索添加）")
+        if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+            raise ValueError("天气城市坐标无效")
+        # label 是网页确认用的省市标签，设备不读它——不做 GB2312/长度苛限，
+        # 只剔除线上分隔符并限长（省得撑 8KB 配置预算）。
+        label = "".join(ch for ch in (str(entry.get("label", "") or name))
+                        if ch not in ",=;\r\n")[:64]
+        out["weather"]["cities"].append(
+            {"name": name, "lat": lat, "lon": lon, "label": label})
+    seen_weather_names = {c["name"] for c in out["weather"]["cities"]}
+
     ids = set()
     for page in pages:
         if not isinstance(page, dict):
@@ -102,8 +199,21 @@ def validate_profile(raw):
                 slot += units
             if slot > 4:
                 raise ValueError("横向组件需从新的一行开始，请调整组件顺序")
+        # filter：本页只显示哪个工具的会话（空 = 全部）。工具页由此而来：
+        # 客户端按活跃工具生成「全部 + 每工具一页」，固件按它过滤 ai0..ai7。
+        flt = str(page.get("filter", "") or "").strip().lower()
+        if flt and not re.fullmatch(r"[a-z0-9_]{1,12}", flt):
+            raise ValueError("页面 filter 只允许 1-12 位小写字母、数字、下划线")
+        # city：天气页绑定哪个城市（须在 weather.cities 里）。一个城市
+        # 一个独立小屏页面，固件按名字匹配该城的实况与预报数据。
+        city = str(page.get("city", "") or "").strip()
+        if city:
+            city = _label(city, 12)
+            if city not in seen_weather_names:
+                raise ValueError(f"页面绑定的城市「{city}」未在天气城市里配置")
         out["pages"].append({"id": pid, "title": _label(page.get("title", ""), 24),
-                             "layout": layout, "widgets": widgets[:]})
+                             "layout": layout, "widgets": widgets[:], "filter": flt,
+                             "city": city})
 
     for key, limit in (("reminders", 20), ("calendar", 50), ("alarms", 16)):
         items = raw.get(key, [])
@@ -153,13 +263,6 @@ def validate_profile(raw):
         clean["title"] = _label(item.get("title", ""), 48)
         out["countdowns"].append(clean)
 
-    weather = raw.get("weather", {})
-    if not isinstance(weather, dict):
-        raise ValueError("天气配置格式无效")
-    city = str(weather.get("city", "")).strip()
-    if city:
-        out["weather"]["city"] = _label(city, 20)
-
     apps = raw.get("apps", [])
     if not isinstance(apps, list) or len(apps) > 12:
         raise ValueError("快捷应用最多 12 个")
@@ -199,26 +302,58 @@ def validate_profile(raw):
     out["theme"]["topwx"] = 1 if int(theme.get("topwx", 1)) else 0
     out["theme"]["card_opa"] = max(30, min(100, int(theme.get("card_opa", 100))))
     out["theme"]["bright_auto"] = 1 if int(theme.get("bright_auto", 0)) else 0
+    # 屏保增强：相册轮播间隔秒（样式4）、切换效果（0 立即 / 1 淡入 / 2 滑入）、
+    # 诗句轮换间隔分钟（样式 3）
+    out["theme"]["svint"] = max(15, min(3600, int(theme.get("svint", 60))))
+    out["theme"]["svfx"] = max(0, min(2, int(theme.get("svfx", 1))))
+    out["theme"]["pint"] = max(1, min(120, int(theme.get("pint", 5))))
+    # 下面所有比值都按屏幕实际显示的颜色（RGB565 量化后）核算，而不是请求色。
+    panel = {key: panel_rgb888(out["theme"][key])
+             for key in ("bg", "grad", "card", "card_edge", "accent", "text", "sub")}
+    out["theme"]["panel"] = panel   # 便于诊断包/导出核对：请求值 → 上屏值
+
     def luminance(hex_color):
         values = [int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4)]
         linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in values]
         return sum(a * b for a, b in zip(linear, (0.2126, 0.7152, 0.0722)))
-    for surface in ("bg", "card"):
-        light, dark = sorted((luminance(out["theme"]["text"]), luminance(out["theme"][surface])), reverse=True)
-        if (light + 0.05) / (dark + 0.05) < 4.5:
-            raise ValueError("主题文字与背景或卡片的对比度不足")
-    # 次要文字（标签、单位、说明）对卡片的对比度：低于 3:1 时 20px 正文在
-    # 1m 外基本读不出来，属于可用性问题，必须拦住。
-    sub_l = luminance(out["theme"]["sub"])
-    for surface in ("bg", "card"):
-        light, dark = sorted((sub_l, luminance(out["theme"][surface])), reverse=True)
-        if (light + 0.05) / (dark + 0.05) < 3.0:
-            raise ValueError("主题次要文字与背景的对比度不足，请调亮 sub 或调暗底色")
-    # 卡片与背景必须有可辨识的亮度差。深色主题难达 WCAG 3:1 的非文本要求，
-    # 因此这里用1.5:1 作为底线：低于此值卡片边界在实机上等于看不见。
-    bg_l, card_l = luminance(out["theme"]["bg"]), luminance(out["theme"]["card"])
-    if (max(bg_l, card_l) + 0.05) / (min(bg_l, card_l) + 0.05) < 1.5:
-        raise ValueError("卡片与背景亮度过近，卡片边界会看不见，请调亮 card 或调暗 bg")
+
+    def ratio(first, second):
+        light, dark = sorted((luminance(first), luminance(second)), reverse=True)
+        return (light + 0.05) / (dark + 0.05)
+
+    # 卡片是**半透明**的：固件用 box() 的 bg_opa=card_opa 把 card 叠在渐变背景上，
+    # 所以屏幕上真正的卡片填充色是**合成结果**，不是 card 本身。不透明度越低，
+    # 填充越贴近背景、边界越看不清——只按 card 原色校验会系统性高估可辨识度
+    # （实测 15 套已发布主题里有 11 套的实际边界低于 1.5:1）。
+    # 背景是 bg→grad 的竖向渐变，卡片横跨多个高度，因此两端都算、取最差。
+    alpha = out["theme"]["card_opa"] / 100.0
+    fills = {side: panel_rgb888(blend888(panel["card"], panel[side], alpha))
+             for side in ("bg", "grad")}
+    out["theme"]["panel_fill"] = fills      # 屏幕上卡片的实际填充色（便于核对）
+
+    if ratio(panel["text"], panel["bg"]) < 4.5:
+        raise ValueError("主题文字与背景的对比度不足"
+                         "（已按 RGB565 上屏值核算，实际观感比请求色更暗）")
+    for side, fill in fills.items():
+        if ratio(panel["text"], fill) < 4.5:
+            raise ValueError("主题文字与卡片（含不透明度合成）的对比度不足，"
+                             "请调亮 text 或调亮 card / 提高卡片不透明度")
+    # 次要文字（标签、单位、说明）：低于 3:1 时 20px 正文在 1m 外基本读不出来。
+    if ratio(panel["sub"], panel["bg"]) < 3.0:
+        raise ValueError("主题次要文字与背景的对比度不足（已按 RGB565 上屏值核算），"
+                         "请调亮 sub 或调暗底色")
+    for side, fill in fills.items():
+        if ratio(panel["sub"], fill) < 3.0:
+            raise ValueError("主题次要文字与卡片（含不透明度合成）的对比度不足，"
+                             "请调亮 sub 或调亮 card / 提高卡片不透明度")
+    # 卡片边界必须能看出来。深色主题难达 WCAG 3:1 的非文本要求，因此用 1.5:1 作
+    # 底线。固件还给每张卡片画了 1px card_edge 描边（config.h 的 COL_CARD_EDGE
+    # 就是为弱对比屏加的），但描边是**补充**而非替代——纯填充看不出边界时，实机
+    # 观感就是"整片糊在一起"，所以这里仍然只认填充色差（合成后的填充）。
+    for side, fill in fills.items():
+        if ratio(fill, panel[side]) < 1.5:
+            raise ValueError("卡片与背景亮度过近（已按 RGB565 上屏值 + 不透明度合成核算），"
+                             "卡片边界会看不见：请调亮 card、调暗 bg 或提高卡片不透明度")
     if len(_payload(out)) > 8192:
         raise ValueError("配置超过 8 KB 设备限制")
     return out

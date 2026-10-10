@@ -8,14 +8,44 @@ import hashlib
 import time
 from pathlib import Path
 
+from .. import procwatch
+
+_UNSET = object()
+
 IDLE, THINKING, GENERATING, TOOL, BUILD, DONE, ERROR, WAIT_INPUT, ASK = (
     "IDLE", "THINKING", "GENERATING", "TOOL", "BUILD", "DONE", "ERROR",
     "WAIT_INPUT", "ASK")
 
-_FRESH = {"claude": 45, "codex": 45, "zcode": 300, "workbuddy": 300}
+_FRESH = {"claude": 45, "codex": 45, "opencode": 45, "zcode": 300, "workbuddy": 300}
+# 同时跟踪的会话上限。多编辑器 × 多项目并行是常态（用户实测场景），
+# 4 条远远不够看；协议侧仍只下发前 4 条（AI0~AI3），提高上限主要给 Web 用。
+MAX_TASKS = 12
+# 「刚完成」条的保留窗口与条数：完成靠这条带子表达，而不是靠主列表重排。
+_DONE_RETAIN = 1800.0
+_DONE_MAX = 8
 _WAIT_FRESH = 1800   # 等你回复/等待确认 可保持 30 分钟
 _PRIO = {IDLE: 0, DONE: 1, THINKING: 2, GENERATING: 3,
          BUILD: 3, TOOL: 4, WAIT_INPUT: 5, ASK: 6, ERROR: 7}
+
+
+def _order_key(activity):
+    """排序：组间沿用既有的状态优先级（出错 > 待确认 > 等你回复 > 进行中 > 完成），
+    组内规则变了两处——
+
+    1. 需要你 / 出错：**等得最久的排最前**。原来是最近更新的排最前，结果一个
+       挂了二十分钟的「等你回复」会被刚动过的新任务一直挤下去，永远看不见。
+    2. 进行中：按 工具名 → 项目名 **固定顺序**，不再按时间。按时间排意味着
+       每次状态变化都会引起跳动，多工具多项目时用户根本定位不到某个项目。
+
+    已完成放在最后：它出现在这里只是为了兼容旧行为（协议仍会下发），
+    Web 会把它从主列表拿掉、改由「刚完成」条展示。
+    """
+    prio = _PRIO.get(activity.state, 0)
+    if activity.state in (WAIT_INPUT, ASK, ERROR):
+        return (-prio, activity.ts, activity.tool, activity.sid)
+    if activity.state == DONE:
+        return (-prio, -activity.ts, activity.tool, activity.sid)
+    return (-prio, 0.0, activity.tool, activity.project or "", activity.sid)
 
 
 def sanitize_project(name: str) -> str:
@@ -87,12 +117,20 @@ class Activity:
 class AIWatcher:
     """聚合三个来源的全部活跃会话。"""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, processes=_UNSET):
         from .claude import ClaudeSource
         from .codex import CodexSource
+        from .opencode import OpenCodeSource
         from .zcode import ZCodeSource
         from .workbuddy import WorkBuddySource
 
+        # 进程采样器（返回在运行的工具集合；None = 不可用 → 不门控）。
+        # 可注入以便测试；cfg.proc_gate=False 可整体关掉。
+        if processes is _UNSET:
+            self._processes = (procwatch.running_tools
+                               if getattr(cfg, "proc_gate", True) else None)
+        else:
+            self._processes = processes
         self._cache = {}
         self._bursts = {}   # (tool, sid) -> burst 起始时间
         # 阶段事件（优化#13 活动时间线）：(tool, sid) -> [(t, state), ...]。
@@ -102,6 +140,7 @@ class AIWatcher:
         self.sources = [
             ClaudeSource(cfg.root("claude")),
             CodexSource(cfg.root("codex")),
+            OpenCodeSource(cfg.root("opencode")),
             ZCodeSource(cfg.root("zcode")),
             WorkBuddySource(cfg.root("workbuddy")),
         ]
@@ -129,17 +168,32 @@ class AIWatcher:
             if cur is None or _PRIO.get(a.state, 0) >= _PRIO.get(cur.state, 0):
                 if cur is None or a.ts >= cur.ts or _PRIO.get(a.state, 0) > _PRIO.get(cur.state, 0):
                     fresh[k] = a
-        ranked = sorted(fresh.values(), key=lambda a: (_PRIO.get(a.state, 0), a.ts),
-                        reverse=True)[:4]
+        fresh = self._gate_inactive(fresh, now)
+        ranked = sorted(fresh.values(), key=_order_key)[:MAX_TASKS]
 
-        # 阶段事件：对全部活跃会话（不只 top4）记录状态切换边沿。
-        # __new__ 直构（单测）不会有这三个属性，惰性补齐。
+        # 阶段事件：对全部活跃会话（不只前几条）记录状态切换边沿。
+        # __new__ 直构（单测）不会有这些属性，惰性补齐。
         if not hasattr(self, "_trace"):
             self._trace, self._last_state = {}, {}
+        if not hasattr(self, "_done"):
+            self._done = []
         for k, a in fresh.items():
-            if self._last_state.get(k) != a.state:
+            prev = self._last_state.get(k)
+            if prev != a.state:
                 self._last_state[k] = a.state
                 self._trace.setdefault(k, []).append((now, a.state))
+                # 完成记录：「刚完成」条的数据源。只在**跨到** DONE 的那一次记，
+                # 客户端启动时就已经完成的会话不算（prev is None）。
+                if a.state == DONE and prev is not None:
+                    self._done = [d for d in self._done if d["key"] != k]
+                    self._done.insert(0, {
+                        "key": k, "tool": a.tool,
+                        "project": sanitize_project(a.project),
+                        "id": hashlib.sha1(f"{a.tool}:{a.sid}".encode()).hexdigest()[:8],
+                        "at": now,
+                    })
+        self._done = [d for d in self._done
+                      if now - d["at"] <= _DONE_RETAIN][:_DONE_MAX]
 
         out = []
         for a in ranked:
@@ -165,6 +219,44 @@ class AIWatcher:
         for k in [k for k, v in self._trace.items() if not v or now - v[-1][0] > 3600]:
             del self._trace[k]
         return out
+
+    def _gate_inactive(self, fresh: dict, now: float) -> dict:
+        """丢掉「进程已不在」的工具的会话。
+
+        日志只说明这个工具写过日志，不说明它还开着。Codex 结束一轮会写
+        task_complete → 等你回复，而这一状态的新鲜窗口是 30 分钟：用户关掉
+        Codex 之后小屏会一直停在它上面（用户实测反馈，因此加了这一层）。
+
+        采样器不可用（未装 psutil / 扫描失败 / __new__ 直构的单测）时一律
+        不门控——宁可多显示一个已关闭的工具，也不能误删正在跑的会话。
+        """
+        sampler = getattr(self, "_processes", None)
+        if sampler is None:
+            return fresh
+        try:
+            running = sampler()
+        except Exception:
+            return fresh
+        if running is None:
+            return fresh
+        for key in [k for k, a in fresh.items()
+                    if procwatch.should_gate(a.tool, running, now - a.ts)]:
+            del fresh[key]
+        return fresh
+
+    def done_recent(self, now: float | None = None) -> list:
+        """最近的完成记录（新→旧），给「刚完成」条用。
+
+        完成提示不靠主列表重排：重排只在用户正好看着的那一刻才可见，而且会
+        打乱空间记忆。改成固定位置的一条带子，顺序本身就是时间信息。
+        """
+        now = time.time() if now is None else now
+        # 同时给 age（相对）与 at（绝对）：Web 的「未读」要按绝对时间比，
+        # 只靠 age 会随轮询间隔抖动，刚标记已读的条目会又变回未读。
+        return [{"id": d["id"], "tool": d["tool"], "project": d["project"],
+                 "age": max(0, int(now - d["at"])), "at": round(d["at"], 1)}
+                for d in getattr(self, "_done", [])
+                if now - d["at"] <= _DONE_RETAIN]
 
     def trace_for(self, task_id: str, limit: int = 24) -> list:
         """按任务 id 取阶段事件 [{t, s}...]（旧→新，最多 limit 条）。

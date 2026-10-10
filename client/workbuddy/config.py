@@ -9,6 +9,7 @@ CONFIG_PATH = Path.home() / ".workbuddy" / "config.json"
 DEFAULT_ROOTS = {
     "claude": Path.home() / ".claude" / "projects",
     "codex": Path.home() / ".codex" / "sessions",
+    "opencode": Path.home() / ".local/share/opencode",
     "zcode": Path.home() / ".zcode" / "cli",
     # WorkBuddy 自己：db 存会话状态，sessions/<pid>.json 存进程心跳
     "workbuddy": Path.home() / ".workbuddy",
@@ -25,6 +26,9 @@ class Config:
     console_interval: float = 1.0    # 控制台打印间隔秒（GUI 模式不打印）
     serial: bool = True              # 串口推送
     ai_watch: bool = True            # AI 任务检测
+    proc_gate: bool = True           # 用进程表筛掉「已关闭工具」的残留会话
+    # 默认音乐软件（bundle id）。"auto" = 自动挑：优先网易云 → QQ音乐 → Apple 音乐
+    music_app: str = "auto"
     web: bool = True                 # 本机设置页
     web_port: int = 8765
     open_settings: bool = False

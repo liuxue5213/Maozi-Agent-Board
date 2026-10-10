@@ -113,7 +113,11 @@ class SerialLink:
                     d = parse_uplink(raw.decode("utf-8", errors="ignore"))
                     if d and self.on_uplink:
                         self.on_uplink(d)
-                elif time.monotonic() - self._last_rx_at > 15.0:
+                    # 有数据就连读：实拍回传 10s 内约 860 行（~86 行/秒），
+                    # 每行歇 20ms 只有 ~46 行/秒，RX 必然溢出丢帧、永远等不到
+                    # END（tools/device_snapshot.py 直读无此停顿所以能收整帧）。
+                    continue
+                if time.monotonic() - self._last_rx_at > 15.0:
                     self._status = f"stale:{self._port.port}"
             except Exception:
                 self._drop()

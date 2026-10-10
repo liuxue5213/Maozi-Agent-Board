@@ -5,14 +5,17 @@ import time
 _ORDER = [
     "time",
     "date",
-    "ai0", "ai1", "ai2", "ai3", "aiu", "ait", "remind",
+    "ai0", "ai1", "ai2", "ai3", "ai4", "ai5", "ai6", "ai7",
+    "dn0", "dn1", "dn2",
+    "w0", "w1", "w2", "wf0", "wf1", "wf2", "ps", "aiu", "ait", "remind",
     "cpu", "cpufreq", "cputemp",
     "mem", "memused", "memtotal",
     "gpu", "gpumem", "gputemp",
     "disk", "diskfree", "disktotal", "bat",
     "netrx", "nettx", "uptime", "wx",
     "vol", "mut",
-    "aistate", "aitool", "aitask", "aiprog", "aitime", "aierr",
+    # 单任务镜像字段（aistate/aitool/aitask/aiprog/aitime/aierr）已下线：
+    # 固件从未渲染它们（grep 证实），内容与 ai0 完全重复，白占约 70 字节/帧。
     "temp", "hum",
 ]
 
@@ -31,12 +34,19 @@ def sanitize_err(text: str, limit: int = 48) -> str:
     return s[:limit]
 
 
+# 固定槽位：即使为空也要上线——空值对设备是「清位」信号（固件把该槽位置为
+# unused）。省略它们（旧行为）会让已关闭的会话/过期的完成记录永远留在屏上。
+_SLOT_KEYS = ({f"ai{i}" for i in range(8)} | {f"dn{i}" for i in range(3)}
+               | {f"w{i}" for i in range(3)} | {f"wf{i}" for i in range(3)}
+               | {"ps"})
+
+
 def encode_telemetry(t: dict) -> str:
     """把采集/检测合并后的遥测字典编码为多行 KV 文本。"""
     lines = []
     for key in _ORDER:
         v = t.get(key)
-        if v is None or (v == "" and key not in ("ai0", "ai1", "ai2", "ai3")):
+        if v is None or (v == "" and key not in _SLOT_KEYS):
             continue
         lines.append(f"{key.upper()}={_fmt(v)}")
     return "\n".join(lines) + "\n"
@@ -90,6 +100,24 @@ def parse_uplink(line: str):
                                      "reason": fields[2]}}
     if key == "FW":
         return {"firmware": value}
+    if key == "SNAP":
+        # 实拍回传帧：BEGIN,w,h / DATA,seq,b64 / END
+        parts = value.split(",", 2)
+        if parts[0] == "BEGIN" and len(parts) == 3:
+            try:
+                return {"snap": {"kind": "begin", "w": int(parts[1]),
+                                 "h": int(parts[2])}}
+            except ValueError:
+                return None
+        if parts[0] == "DATA" and len(parts) == 3:
+            return {"snap": {"kind": "data", "seq": parts[1], "b64": parts[2]}}
+        if parts[0] == "END":
+            return {"snap": {"kind": "end"}}
+        return None
+    if key in ("ACK", "NAK") and value.startswith("SNAP,"):
+        return {"snap_nak": {"ok": key == "ACK", "reason": value[5:]}}
+    if key == "PET":
+        return {"pet": value.lower()}
     if key == "SLOW":
         try:
             return {"slow_loop": int(value.split()[0])}

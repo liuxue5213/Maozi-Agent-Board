@@ -1,6 +1,8 @@
 """跨平台电脑控制：音量 / 静音 / 媒体播放 / 应用启动（触屏控制中心的后端）。
 
-- macOS：osascript（音量精确读写；媒体按键对常见播放器逐一尝试）
+- macOS：音量用 osascript 精确读写；媒体命令走 MediaRemote（见 music.py）。
+  旧实现用 AppleScript 逐个试播放器，而只有 Apple Music/Spotify 有 AppleScript
+  字典，于是无论用户装了什么，命令最终都会落到 Apple Music。
 - Windows：虚拟键码（VK_VOLUME_* / VK_MEDIA_*）
 - Linux：pactl + playerctl
 """
@@ -10,7 +12,8 @@ import subprocess
 import sys
 import time
 
-_MAC_PLAYERS = ("Spotify", "Music", "NeteaseMusic", "QQMusic", "vlc")
+# AppleScript 仅作为 MediaRemote 不可用时的兜底，且只对确实支持字典的软件有效。
+_MAC_PLAYERS = ("Music", "Spotify")
 
 
 def _run(args, timeout=2.0):
@@ -103,9 +106,15 @@ class ControlApp:
         self._cache_at = 0.0
 
     def media(self, action: str):
-        """action: play / next / prev"""
+        """action: play / pause / toggle / next / prev（作用于当前在放歌的软件）。"""
         if sys.platform == "darwin":
-            commands = {"play": "playpause", "next": "next track", "prev": "previous track"}
+            from . import music
+            # 首选：MediaRemote 下发到系统「正在播放」客户端，与具体播放器无关
+            if music.send(action):
+                return
+            # 兜底：只有 Music/Spotify 有 AppleScript 字典
+            commands = {"play": "play", "pause": "pause", "toggle": "playpause",
+                        "next": "next track", "prev": "previous track"}
             verb = commands.get(action)
             if not verb:
                 return

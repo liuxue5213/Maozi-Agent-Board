@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import (Activity, ASK, DONE, GENERATING, THINKING, TOOL, IDLE,
+from . import (Activity, ASK, DONE, ERROR, GENERATING, THINKING, TOOL, IDLE,
                WAIT_INPUT, newest_file, _PRIO)
 
 _INFLIGHT_CAP = 600.0
@@ -47,6 +47,9 @@ class ZCodeSource:
             "model.request.started", "model.request.completed",
             "tool.call.started", "tool.call.completed",
             "turn.started", "turn.completed",
+            # 失败也是状态：turn/model 失败若不识别，屏幕会永远停在
+            # 最后一次「生成中」（用户实测：对话结束后屏幕卡生成中不动）
+            "turn.failed", "model.request.failed",
         }
         out = []
         for line in reversed(data.splitlines()):
@@ -108,8 +111,8 @@ class ZCodeSource:
                 if ev == "turn.completed":
                     # 30 秒内算刚完成，之后长期保持"等你回复"
                     state = DONE if age < 30 else WAIT_INPUT
-                elif ev == "tool.call.started":
-                    state = TOOL
+                elif ev == "turn.failed" or ev == "model.request.failed":
+                    state = ERROR
                 elif ev == "model.request.started":
                     state = GENERATING
                 elif ev in ("model.request.completed", "turn.started"):

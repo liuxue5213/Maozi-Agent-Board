@@ -59,8 +59,6 @@ class PageRuleTests(unittest.TestCase):
     def test_grid_row_alignment_rejected(self):
         # wide 组件(2 槽)落在奇数槽位会横跨到下一行 -> 拒绝
         pages = [{"id": "p", "title": "页", "layout": "grid_2x2",
-                  "widgets": ["clock", "reminder_list", "alarm"]}()] if False else \
-                [{"id": "p", "title": "页", "layout": "grid_2x2",
                   "widgets": ["clock", "today_calendar", "alarm"]}]
         with self.assertRaises(ValueError):
             validate_profile(base(pages=pages))

@@ -1,6 +1,8 @@
 """主循环：采集 → AI 检测 → 合并遥测 → 控制台/串口输出。"""
+import re
 import time
 import threading
+from pathlib import Path
 
 from .collect import create
 from .control import ControlApp
@@ -8,10 +10,74 @@ from .protocol import encode_caps, encode_hb, encode_telemetry
 import base64 as _b64
 import zlib as _zlib
 
+from . import music
+from .pet import Pet
 from .profile import encode_profile, load_profile, save_profile, validate_profile
 from .telemetry import HealthLog
 from .trend import TrendStore
 from .weather import WeatherFetcher
+
+
+def _proc_report():
+    """进程识别的可读报告。扫描失败时返回 ok:false，前端据此说明原因。"""
+    from . import procwatch
+    try:
+        return procwatch.report()
+    except Exception as exc:                      # 兜底：绝不因它影响遥测
+        return {"ok": False, "error": str(exc), "tools": []}
+
+
+# 协议槽位数：与固件 proto.h 的 tasks[8]/done[3] 对应。
+AI_WIRE_SLOTS = 8
+DONE_WIRE_SLOTS = 3
+
+
+def weather_wire_lines(cities_cfg, data_by_name):
+    """多城市天气 → W0..W2 / WF0..WF2 线级字段。
+
+    W<i>=temp,code,hi,lo   实况（temp 一位小数）
+    WF<i>=code,lo,hi;…     5 天预报（今天起，整数量纲）
+    固件按页面 city（城市名）在 profile.cities 里的下标取用，
+    所以这里的顺序必须与 cities 配置一致。
+    """
+    lines = {}
+    for i, entry in enumerate(cities_cfg[:3]):
+        name = entry.get("name") or ""
+        d = data_by_name.get(name)
+        if not d:
+            continue
+        lines[f"w{i}"] = (f"{d['temp']},{d['code']},{d['hi']},{d['lo']}")
+        days = d.get("days") or []
+        if days:
+            lines[f"wf{i}"] = ";".join(f"{x['code']},{x['lo']},{x['hi']}" for x in days)
+    for i in range(3):
+        lines.setdefault(f"w{i}", "")
+        lines.setdefault(f"wf{i}", "")
+    return lines
+
+
+def ai_wire_lines(tasks, done):
+    """把会话/完成记录压成 AI0..AI7 与 DN0..DN2 的线级字段。
+
+    行格式（与 docs/PROTOCOL.md 对应）：
+      AI<i>=tool,state,prog,elapsed,project,id,age
+      DN<i>=tool,project,age      （最近完成的会话，新→旧）
+    字段里不允许出现逗号（sanitize_project 已过滤）；prog<0 表示未知进度，
+    固件对未知进度不画填充条。
+    """
+    lines = {}
+    for i, tk in enumerate(tasks[:AI_WIRE_SLOTS]):
+        lines[f"ai{i}"] = (f"{tk['tool']},{tk['state']},{tk['prog']},"
+                           f"{tk['elapsed']},{tk['project']},{tk['id']},{tk['age']}")
+    for i, d in enumerate(done[:DONE_WIRE_SLOTS]):
+        lines[f"dn{i}"] = f"{d.get('tool','')},{d.get('project','')},{int(d.get('age',0))}"
+    # 槽位必须**全量下发**（空串 = 清位）：设备收到 AI<i>= 才会置 used=false，
+    # 只发非空槽位会让关闭的会话在设备上永远残留（幽灵行/冻结的完成带）。
+    for i in range(AI_WIRE_SLOTS):
+        lines.setdefault(f"ai{i}", "")
+    for i in range(DONE_WIRE_SLOTS):
+        lines.setdefault(f"dn{i}", "")
+    return lines
 
 
 class App:
@@ -26,7 +92,10 @@ class App:
         self.control = ControlApp()
         self.health = HealthLog()
         self.trend = TrendStore()    # P1-4 行为遥测：每分钟一拍趋势样本
-        self.weather = WeatherFetcher(lambda: (self.profile.get('weather') or {}).get('city', ''))
+        self.pet = Pet(lambda: self.profile.get("pet", {}))
+        self._np_cache = {"supported": None, "now": {}}
+        self._img_reply = None
+        self.weather = WeatherFetcher(lambda: (self.profile.get('weather') or {}).get('cities', []))
         self.fw_caps = None          # 设备能力（来自 FW 握手），None = 未知
         self.profile_lock = threading.Lock()
         self.profile = load_profile()
@@ -35,7 +104,16 @@ class App:
         self.applied_version = None
         self.sync_requested = False
         self.sync_sent_at = 0.0
+        self._caps_sent_at = 0.0
         self.tasks = []
+        self.snap_at = None           # 最近一次实拍完成时间（None=从未）
+        self._snap_buf = None
+        self._snap_meta = (160, 240)
+        # 实拍回传静默窗（monotonic 时刻，0=未在实拍）：设备回传一帧约 10s 且
+        # 主循环全程阻塞，期间继续下行遥测必然打断传输（tools/device_snapshot.py
+        # 停客户端直读零丢帧、客户端在线永远收不到 END，实测结论）。窗口期内
+        # 主循环不发任何下行；收到非 snap 上行或超时即提前结束。
+        self._snap_until = 0.0
         self._was_online = False
         self._online_since = 0.0
         self._last_ai_state = ""
@@ -59,17 +137,29 @@ class App:
         self.on_tick = None   # GUI 回调：每个采集周期调用一次
         self.on_ai_notice = None  # 托盘回调：焦点任务跨入 DONE/ERROR/WAIT_INPUT/ASK 时调用
         self._stop = False
+        threading.Thread(target=self._np_loop, daemon=True,
+                         name="now-playing").start()
         self.on_quit = None   # 托盘「退出」回调：用于停掉托盘/窗口线程
         self.window_visible = True  # 主窗口是否可见（隐藏到托盘时为 False）
 
     def _on_uplink(self, d: dict):
+        if "snap" not in d and "snap_nak" not in d:
+            # 设备能发非 snap 上行 = 主循环已恢复响应，实拍静默窗提前收尾
+            self._snap_until = 0.0
         if "firmware" in d:
             self._parse_fw_caps(d["firmware"])
+        if "snap" in d:
+            self._handle_snap_frame(d["snap"])
+        if "snap_nak" in d:
+            self.health.event("snap_nak", reason=d["snap_nak"]["reason"][:24])
         if "slow_loop" in d:
             self.health.event("slow_loop", us=d["slow_loop"])
         if "launch" in d:
             self._launch_app(d["launch"])
             self.health.event("launch", app=d["launch"][:16])
+        if "pet" in d:
+            self.pet.interact(d["pet"])
+            self.health.event("pet", action=d["pet"][:8])
         elif "key" in d:
             self._handle_key(d["key"])
             self.health.event("key", action=d["key"])
@@ -78,6 +168,8 @@ class App:
         if "img_reply" in d:
             self.health.event("img_ack" if d["img_reply"]["ok"] else "img_nak",
                               reason=d["img_reply"]["reason"])
+            self._img_reply = {"ok": d["img_reply"]["ok"],
+                               "reason": d["img_reply"]["reason"]}
         if "config_reply" in d:
             reply = d["config_reply"]
             with self.profile_lock:
@@ -101,7 +193,13 @@ class App:
             if ":" in part:
                 key, _, value = part.partition(":")
                 caps[key.strip()] = int(value) if value.strip().isdigit() else value.strip()
-        self.fw_caps = caps
+        with self.profile_lock:
+            first_handshake = self.fw_caps is None
+            self.fw_caps = caps
+            if first_handshake:
+                self.sync_requested = True
+                self.profile_status = "待同步"
+                self.profile_error = ""
         self.health.event("fw", raw=raw[:64])
 
     def push_theme(self, theme: dict | None = None):
@@ -192,8 +290,13 @@ class App:
         return True
 
     def _tasks_with_trace(self) -> list:
-        """status_snapshot 用：给 tasks 附上阶段事件（优化#13）。"""
-        tasks = [dict(t) for t in self.tasks[:4]]
+        """status_snapshot 用：给 tasks 附上阶段事件（优化#13）。
+
+        上限取 aiwatch.MAX_TASKS：多编辑器 × 多项目并行时 Web 要能看全，
+        设备侧仍只走 AI0~AI3 四条（协议未变）。
+        """
+        from .aiwatch import MAX_TASKS
+        tasks = [dict(t) for t in self.tasks[:MAX_TASKS]]
         ai = getattr(self, "ai", None)
         if ai:
             for t in tasks:
@@ -203,18 +306,125 @@ class App:
                     t["trace"] = []
         return tasks
 
-    def _launch_app(self, app_id: str):
+    def _done_recent(self) -> list:
+        """最近完成的会话（新→旧）。AI 检测关闭时返回空列表。"""
+        ai = getattr(self, "ai", None)
+        if not ai:
+            return []
+        try:
+            return ai.done_recent()
+        except Exception:
+            return []
+
+    # ---- 实拍（SNAP：设备快照 → 串口回传 → PNG）----
+
+    def request_snap(self) -> bool:
+        """工作台「实拍」按钮：下发 SNAP=1，设备约 10s 内分帧回传。"""
+        if not self.link or not self.link.status.startswith("connected:"):
+            return False
+        self._snap_buf = None
+        self.snap_at = None
+        self._snap_until = time.monotonic() + 25.0
+        self.link.send("SNAP=1\n")
+        self.health.event("snap_req")
+        return True
+
+    def _handle_snap_frame(self, frame: dict):
+        if frame["kind"] == "begin":
+            self._snap_meta = (frame["w"], frame["h"])
+            self._snap_buf = bytearray()
+        elif frame["kind"] == "data" and self._snap_buf is not None:
+            try:
+                self._snap_buf += _b64.b64decode(frame["b64"])
+            except Exception:
+                self._snap_buf = None
+        elif frame["kind"] == "end" and self._snap_buf is not None:
+            self._finish_snapshot()
+
+    def _finish_snapshot(self, path: Path | None = None):
+        """RGB565 小端 → PNG。像素数不符（丢帧）则整帧丢弃，不保存半图。"""
+        self._snap_until = 0.0
+        w, h = self._snap_meta
+        expected = w * h * 2
+        if not self._snap_buf or len(self._snap_buf) != expected:
+            self.health.event("snap_bad",
+                              size=len(self._snap_buf or b""),
+                              expected=expected)
+            self._snap_buf = None
+            return
+        pixels = bytearray(w * h * 3)
+        for i in range(w * h):
+            v = self._snap_buf[i * 2] | (self._snap_buf[i * 2 + 1] << 8)
+            pixels[i * 3] = ((v >> 11) & 0x1F) << 3       # R
+            pixels[i * 3 + 1] = ((v >> 5) & 0x3F) << 2    # G
+            pixels[i * 3 + 2] = (v & 0x1F) << 3           # B
+        try:
+            from PIL import Image
+            img = Image.frombytes("RGB", (w, h), bytes(pixels))
+            # 默认落到 ~/.workbuddy/snapshot.png；测试可注入 _snap_path
+            target = Path(path) if path else Path(
+                getattr(self, "_snap_path", None) or
+                (Path.home() / ".workbuddy" / "snapshot.png"))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            img.save(target, "PNG")
+        except Exception as exc:
+            self.health.event("snap_save_fail", err=str(exc)[:32])
+            self._snap_buf = None
+            return
+        self._snap_buf = None
+        self.snap_at = time.time()
+        self.health.event("snap_ok", w=w, h=h)
+
+    def snapshot_bytes(self) -> bytes | None:
+        png = Path.home() / ".workbuddy" / "snapshot.png"
+        try:
+            return png.read_bytes() if png.exists() else None
+        except OSError:
+            return None
+
+    def _launch_app(self, app_id: str) -> dict:
+        """快捷应用点击：普通条目按命令启动；@music 保留字交给默认音乐软件。"""
         with self.profile_lock:
             command = next((a["command"] for a in self.profile.get("apps", [])
                             if a["id"] == app_id), "")
+        if command == music.MUSIC_COMMAND:
+            return self.music_play()
         if command:
             self.control.launch(command)
+        return {"ok": True, "command": command}
+
+    def music_play(self) -> dict:
+        """启动默认音乐软件并开始播放（触屏「音乐」快捷应用的落点）。"""
+        result = music.play_default(self.cfg)
+        health = getattr(self, "health", None)
+        if health:
+            health.event("music_play", app=str(result.get("app", ""))[:16],
+                         launched=1 if result.get("launched") else 0,
+                         ok=1 if result.get("ok") else 0)
+        return result
+
+    def _np_loop(self):
+        """正在播放后台刷新：3 秒一轮，遥测与 Web 共用缓存，零阻塞。"""
+        time.sleep(2)
+        while not self._stop:
+            try:
+                info = music.now_playing(timeout=0.2)
+            except Exception:
+                info = None
+            self._np_cache = {"supported": info is not None,
+                              "now": info if isinstance(info, dict) else {}}
+            time.sleep(3)
+
+    def _music_status(self) -> dict:
+        """正在播放信息（后台线程已缓存，这里只读）。"""
+        return getattr(self, "_np_cache", {"supported": None, "now": {}})
 
     def _handle_key(self, action: str):
+        # ±10：osascript 改音量不触发 macOS 音量 HUD，步长太小用户会以为没反应
         if action == "VOL+":
-            self.control.volume_step(+5)
+            self.control.volume_step(+10)
         elif action == "VOL-":
-            self.control.volume_step(-5)
+            self.control.volume_step(-10)
         elif action == "MUTE":
             self.control.toggle_mute()
         elif action == "PLAY":
@@ -225,6 +435,7 @@ class App:
             self.control.media("prev")
 
     def save_profile(self, draft):
+        self.weather.kick()   # 城市列表可能变了：立刻拉一轮
         with self.profile_lock:
             candidate = validate_profile(draft)
             candidate["version"] = self.profile["version"] + 1
@@ -262,6 +473,12 @@ class App:
                     "telemetry_at": last_tick,
                     "interval": self.cfg.interval,
                     "paused": getattr(self, "paused", False),
+                    # 哪些 AI 工具真的在跑（进程识别，不是日志推断）
+                    "tools": _proc_report(),
+                    # 系统「正在播放」（MediaRemote；supported=False 表示读不到）
+                    "music": self._music_status(),
+                    # 最近完成的会话（「刚完成」条）；不靠列表重排提示完成
+                    "done": self._done_recent(),
                     "usage": (self.usage_scanner.snapshot()
                               if self.usage_scanner else None)}
 
@@ -273,6 +490,9 @@ class App:
             # 能力握手（PROTOCOL §5）：固件能力未知或schema不符时拒绝推送，
             # 避免"静默推送+无ACK+永久传输中"的死局。
             caps = self.fw_caps
+            if caps is None:
+                self.profile_status = "等待设备握手"
+                return
             if caps is not None:
                 if caps.get("schema") != 1:
                     self.profile_status = "同步失败"
@@ -291,14 +511,21 @@ class App:
                     return
             self.sync_sent_at = time.monotonic()
             self.profile_status = "传输中"
+            self.sync_requested = False
             self.health.event("sync_sent", version=profile["version"])
         # 限速发送：115200 下设备串口缓冲有限，突发会丢字节导致 NAK
         for line in encode_profile(profile):
             self.link.send(line)
             time.sleep(0.012)
 
-    def send_bg_image(self, data: bytes) -> bool:
-        """背景图分帧下发（IMG=BEGIN/DATA/END，同 CFG 事务风格）。"""
+    def send_bg_image(self, data: bytes, name: str = "bg.jpg") -> bool:
+        """背景图/相册图分帧下发（IMG=BEGIN/DATA/END，同 CFG 事务风格）。
+
+        name 白名单限定 bg.jpg（页面背景）与 sv1..8.jpg（屏保相册轮播），
+        防止经串口通道写任意路径。
+        """
+        if not re.fullmatch(r"(bg|sv[1-8])\.jpg", name):
+            return False
         if not self.link or not self.link.status.startswith("connected:"):
             return False
         crc = _zlib.crc32(data) & 0xFFFFFFFF
@@ -307,16 +534,39 @@ class App:
             chunk = _b64.b64encode(data[start:start + 90]).decode("ascii")
             self.link.send(f"IMG=DATA,{seq},{chunk}\n".encode())
             time.sleep(0.012)
-        self.link.send("IMG=END,bg.jpg\n".encode())
+        self._img_reply = None   # 先清确认标志（防快速 ACK 被清掉的竞态）
+        self.link.send(f"IMG=END,{name}\n".encode())
         self.health.event("bgimg_sent", size=len(data))
-        time.sleep(0.3)   # 等设备落盘/解码完成再允许后续流量
-        return True
+        # 等设备解码确认（ACK=IMG,APPLIED / NAK=IMG,原因）；超时如实上报
+        waited = 0.0
+        while waited < 5.0 and self._img_reply is None and not self._stop:
+            time.sleep(0.1); waited += 0.1
+        reply = self._img_reply
+        if reply is None:
+            self._last_bg_result = {"ok": False,
+                                    "reason": "设备未确认（传输或解码超时）"}
+        elif reply.get("ok"):
+            self._last_bg_result = {"ok": True, "reason": "APPLIED"}
+        else:
+            self._last_bg_result = {"ok": False, "reason": reply.get("reason", "")}
+        return self._last_bg_result["ok"]
 
     def clear_bg_image(self) -> bool:
         if not self.link or not self.link.status.startswith("connected:"):
             return False
         self.link.send("IMG=DELETE\n".encode())
         self.health.event("bgimg_cleared")
+        return True
+
+    def delete_album_image(self, name: str) -> bool:
+        """删除屏保相册中的一张（name = sv1.jpg..sv8.jpg，白名单同上传）。"""
+        import re as _re
+        if not _re.fullmatch(r"sv[1-8]\.jpg", name):
+            return False
+        if not self.link or not self.link.status.startswith("connected:"):
+            return False
+        self.link.send(f"IMG=DELETE,{name}\n".encode())
+        self.health.event("album_deleted", name=name[:8])
         return True
 
     def send_ota(self, data: bytes) -> bool:
@@ -375,9 +625,13 @@ class App:
             tasks = self.ai.poll_all(now)
             self.tasks = tasks
             t.update(self.ai.summary(tasks))
-            for i, tk in enumerate(tasks[:4]):
-                t[f"ai{i}"] = (f"{tk['tool']},{tk['state']},{tk['prog']},"
-                               f"{tk['elapsed']},{tk['project']},{tk['id']},{tk['age']}")
+            t.update(ai_wire_lines(tasks, self._done_recent()))
+            with self.weather._lock:
+                weather_data = dict(self.weather.data)
+            t.update(weather_wire_lines(
+                (self.profile.get("weather") or {}).get("cities", []), weather_data))
+            _pet = self.pet.snapshot()
+            t["ps"] = f"{_pet['hunger']},{_pet['thirst']},{_pet['energy']}"
         state = t.get("aistate", "")
         if state and state != self._last_ai_state:
             self.health.event("ai_state", state=state)
@@ -483,6 +737,7 @@ class App:
                 text = encode_telemetry(t)
                 if self.link:
                     online = self.link.status.startswith("connected:")
+                    snapping = time.monotonic() < self._snap_until
                     if online != self._was_online:
                         if online:
                             self.health.event("device_online")
@@ -492,16 +747,25 @@ class App:
                         self._was_online = online
                         self._online_since = now if online else 0.0
                     if self.link.consume_connected():
+                        with self.profile_lock:
+                            self.fw_caps = None
+                            self.sync_requested = True
+                            self.profile_status = "等待设备握手"
+                            self.applied_version = None
                         self.link.send(encode_caps(self.collector.caps))
-                        self.push_theme()
+                        self._caps_sent_at = time.monotonic()
+                    elif self.fw_caps is None and online:
+                        if time.monotonic() - self._caps_sent_at >= 3:
+                            self.link.send(encode_caps(self.collector.caps))
+                            self._caps_sent_at = time.monotonic()
+                    elif self.sync_requested and not snapping:
                         self.push_profile()
-                    elif self.sync_requested:
-                        self.push_theme()
-                        self.push_profile()
-                    self.link.send(text)
-                    if now - hb_last >= 5.0:
-                        self.link.send(encode_hb())
-                        hb_last = now
+                    # 实拍静默窗：设备正阻塞在回传帧上，任何下行都会打断传输
+                    if not snapping:
+                        self.link.send(text)
+                        if now - hb_last >= 5.0:
+                            self.link.send(encode_hb())
+                            hb_last = now
                 if self.on_tick:
                     try:
                         self.on_tick(t)
