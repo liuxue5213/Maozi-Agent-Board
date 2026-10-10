@@ -483,6 +483,15 @@ static lv_obj_t* pet_rect(lv_obj_t* parent, int x, int y, int w, int h,
 /* 画一只宠物：type = robot / cat / chick；sz=1 为 AI 卡小只（64×80），
    sz=2 为宠物页大只（128×160）。所有部件挂进 p.grp，摇摆动画作用其上，
    抖动/跳跃动画作用在 p.root——两组动画互不打架。 */
+/* 十六进制混色：wa = a 的权重（0-255）。宠物身体色 = 主题强调色×背景，
+   让猫/小鸡跟随主题色系（机器人保留钢蓝本体，描边三者都用强调色）。 */
+static uint32_t mix_hex(uint32_t a, uint32_t b, uint8_t wa) {
+    uint32_t wb = 255 - wa;
+    return (((a >> 16 & 0xFF) * wa + (b >> 16 & 0xFF) * wb) / 255 << 16)
+         | (((a >> 8 & 0xFF) * wa + (b >> 8 & 0xFF) * wb) / 255 << 8)
+         | (((a & 0xFF) * wa + (b & 0xFF) * wb) / 255);
+}
+
 static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
                      int x, int y, int sz) {
     if (p.root) lv_obj_del(p.root);   // 重建安全（旧动画随对象删除）
@@ -491,8 +500,11 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
     bool is_cat = !strcmp(type, "cat");
     bool is_chick = !strcmp(type, "chick");
     bool is_robot = !is_cat && !is_chick;
-    uint32_t body_c = is_cat ? 0xC88A4B : is_chick ? 0xF7D794 : 0x46689C;
-    uint32_t edge_c = is_cat ? 0x8A5A2B : is_chick ? 0xD9A441 : accent;
+    // 猫=强调色浓（62%）体积感强，小鸡=淡（38%）更娇嫩；描边统一主题强调色
+    uint32_t body_c = is_cat ? mix_hex(accent, bg, 158)
+                    : is_chick ? mix_hex(accent, bg, 97)
+                    : 0x46689C;
+    uint32_t edge_c = accent;
     uint32_t limb_c = body_c;
 
     p.root = lv_obj_create(parent);
@@ -519,8 +531,8 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
     p.glow_r = pet_rect(p.grp, 34*sz, (head_y+5)*sz, 14*sz, 14*sz, 7*sz, accent);
     lv_obj_set_style_bg_opa(p.glow_l, LV_OPA_50, 0);
     lv_obj_set_style_bg_opa(p.glow_r, LV_OPA_50, 0);
-    p.eye_l = pet_rect(p.grp, 19*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, COL_TEXT);
-    p.eye_r = pet_rect(p.grp, 37*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, COL_TEXT);
+    p.eye_l = pet_rect(p.grp, 19*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, text_color);
+    p.eye_r = pet_rect(p.grp, 37*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, text_color);
     p.eye_y = (head_y + 8) * sz;
     if (is_chick) p.beak = pet_rect(p.grp, 26*sz, (head_y+17)*sz, 12*sz, 6*sz, 2*sz, 0xFFB84D);
     else p.mouth = pet_rect(p.grp, 24*sz, (head_y+19)*sz, 16*sz, 3*sz, 1*sz, accent);
@@ -693,7 +705,7 @@ static void pet_apply_expression(PetParts& p, const char* st,
     int eh = 8, dy = 0, bob_ms = 700, bob_amp = 3, mouth_w = 12;
     bool blink = true;
     const char* badge = "";
-    uint32_t badge_col = COL_WARN, edge_col = accent, eye_col = COL_TEXT,
+    uint32_t badge_col = COL_WARN, edge_col = accent, eye_col = text_color,
              mouth_col = accent;
     switch (L) {
         case PL_WORKING:                                   break;

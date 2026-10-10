@@ -931,8 +931,11 @@ const PET_GEO = { // 与 firmware draw_pet 的坐标表一致（sz 已含）
   chick: { beak:[26,22,12,6] },
 };
 function petColors(type, ctx, st){
-  const c = type==='cat' ? {body:'#C88A4B',edge:'#8A5A2B',limb:'#C88A4B'}
-          : type==='chick' ? {body:'#F7D794',edge:'#D9A441',limb:'#D9A441'}
+  // 猫/小鸡身体 = 主题强调色×背景（猫浓 62%、鸡淡 38%），描边 = 强调色（镜像固件 mix_hex）
+  const themed = t=>{ const m=composite(hexToRgb(ctx.accent),hexToRgb(ctx.bg),t);
+    return '#'+m.map(v=>v.toString(16).padStart(2,'0')).join(''); };
+  const c = type==='cat' ? {body:themed(0.62),edge:ctx.accent,limb:themed(0.62)}
+          : type==='chick' ? {body:themed(0.38),edge:ctx.accent,limb:themed(0.38)}
           : {body:devSemantic('robot.body'),edge:ctx.accent,limb:devSemantic('robot.body')};
   if(st==='ERROR'){ c.edge=devSemantic('status.err'); c.eye=devSemantic('status.err'); }
   else c.eye=ctx.text;
