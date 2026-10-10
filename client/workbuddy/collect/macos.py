@@ -1,10 +1,11 @@
-"""macOS 扩展采集：SMC 温度/风扇（非 T2 机器可用，T2 机器自动禁用）+ 基频 + GPU 型号。"""
+"""macOS 扩展采集：SMC 温度/风扇（用户态直读；被拒时回落 smcpriv 特权采样文件）+ 基频 + GPU 型号。"""
 import subprocess
 import ctypes
 import ctypes.util
 import struct
 import threading
 
+from .. import smcpriv
 from .common import Collector
 
 SMC_KEYS = {"cputemp": "TC0P", "gputemp": "TG0D", "fan": "F0Ac", "fan2": "F1Ac"}
@@ -40,6 +41,18 @@ class MacCollector(Collector):
     def sample(self, now: float) -> dict:
         t = super().sample(now)
         if not self._smc.ok and self._smc.tried:
+            # 用户态 SMC 被拒（T2/新版 macOS）：改走特权采样文件。
+            # 未安装 helper 时 read() 返回 None，caps 维持 False，设备隐藏对应位。
+            if now - self._last_smc < 5.0:
+                t.update({k: v for k, v in self._extra.items() if v is not None})
+                return t
+            self._last_smc = now
+            vals = smcpriv.read()
+            if vals:
+                self._extra = vals
+                self.caps["cpu_temp"] = vals.get("cputemp") is not None
+                self.caps["fan"] = vals.get("fan") is not None
+                t.update({k: v for k, v in vals.items() if v is not None})
             return t
         if now - self._last_smc < 5.0:
             t.update({k: v for k, v in self._extra.items() if v is not None})

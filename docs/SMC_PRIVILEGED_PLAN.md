@@ -1,11 +1,16 @@
 # 开发方向与需求规划：T2 机型温度/风扇特权采集
 
-> 状态：**规划稿（待确认，未开发）**
-> 日期：2026-10-09
+> 状态：**M1 闸门已执行（2026-10-10），方案 B 修正后落地** —— 见文末「M1 执行结果」。
+> 日期：2026-10-09（规划）/ 2026-10-10（闸门执行 + 落地）
 > 关联结论：本机 MacBookPro16,1（2019 Intel 16"，带 T2 安全芯片），用户态直读 SMC 一律返回
 > `kIOReturnNotPrivileged (0xe00002c7)`（已用 ctypes 探针实测定论）。
 > 竞品（iStat Menus / TG Pro / Macs Fan Control）能读，是因为持有 Apple 签发的 SMC
 > entitlement 或以 root 特权 helper 身份读取。
+>
+> **⚠️ 历史教训：本文档写成后 M1 闸门（需一次 sudo）被搁置了一整天，复盘里错误地写了
+> 「T2 温度免 sudo 无解 → 永久搁置」。用户一句「授权一下不就行了吗」戳破：搁置的理由
+> （"root 可能也不行"）从未被验证。闸门执行后结论改变：root 直读 SMC 键确实仍被拒
+> （entitlement 门槛），但 root 通道 powermetrics 完全可用——问题有解，且已上线。**
 
 ---
 
@@ -122,3 +127,37 @@
 - 磁盘 93%、磁盘可用/总量（GiB 口径）、网速（Mbps）均已可采；仅温度/风扇缺。
 - `CAPS=cpu_temp:0,fan:0` 能力握手已让设备自动隐藏对应数据位——未授权场景体验是完好的。
 - 详见 `.workbuddy/memory/MEMORY.md` 中「遥测能力核验」条目。
+
+---
+
+## 9. M1 执行结果与最终方案（2026-10-10）
+
+### 闸门执行（osascript 弹系统管理员密码框，等效 sudo）
+
+| 探测 | uid | 结果 |
+|---|---|---|
+| `probe_smc.py`（AppleSMC IOKit 直读 TC0P/F0Ac 等 9 键） | **0（root，已验证 `id`）** | ❌ 全部 `kIOReturnNotPrivileged` —— 键级访问要求 Apple 私有 entitlement，**提权救不了直读** |
+| `/usr/bin/powermetrics -i 200 -n 1 --samplers smc` | 0（root） | ✅ `CPU die temperature: 86.19 C` / `GPU die temperature: 78.00 C` / `Fan: 5299.57 rpm` |
+
+**结论：方案 B 保留（授权 + root launchd），但 helper 内部不走 SMC 直读，改走 powermetrics。**
+单样本约 0.3s，每 20s 一次，负载可忽略。原 M2 的 C 语言 socket 守护（maozi-smcd.c）**不再需要**
+——改为更简单可审计的「launchd 定时跑 Python 采样器 → 写世界可读 JSON → 客户端读文件」，
+无 socket 生命周期管理、无编译依赖、卸载即删三个文件。
+
+### 已落地（全部在本机验证）
+
+- `client/workbuddy/smcpriv.py`：采样器源码 / plist 生成 / install·uninstall（osascript 授权，脚本 staging 在
+  **/tmp**——TCC 让提权进程读不了 ~/Desktop）/ status（文件级推断，无需 root）/ read（60s 新鲜度，绝不假数据）。
+- `collect/macos.py`：用户态 SMC 被拒后回落 `smcpriv.read()`，caps 自动翻转 `cpu_temp:1,fan:1`，设备自动显示
+  （固件零改动，渲染位本就存在）。
+- `web.py`：GET `/api/smc-status`；POST `/api/smc-install|uninstall`（必须在 do_POST 的 JSON 门槛之前）。
+- 设置 → 系统「温度与风扇」卡片：状态行（运行中 · CPU 87.5℃ / GPU 78.0℃ / 5301 RPM，Ns 前）+ 启用/停用。
+- 实测：launchd 每 20s 产出新采样（87.5 → 85.9℃），遥测 cputemp/gputemp/fan 已下发；296 测试全绿
+  （新增 `test_smcpriv.py` 14 例：解析/plist/新鲜度/取消授权/采样器可编译）。
+
+### 流程教训（写给下一个「无解」）
+
+1. **「需要授权」≠「无解」**。搁置前先跑 5 分钟的可行性闸门，别让未经实验的悲观假设进文档。
+2. 提权探测的正确姿势：`osascript -e 'do shell script "…" with administrator privileges'` 会弹系统密码框，
+   在 AI 会话里也能走通（用户在场时）；**提权进程读不了 ~/Desktop（TCC 不豁免 root），staging 必须放 /tmp**。
+3. 一次密码框可以打包多个探测（id + 探针 + powermetrics），别让用户输三次。
