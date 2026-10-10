@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import re
 from urllib.parse import parse_qs, urlsplit
 
 from .profile import validate_profile
@@ -14,6 +16,7 @@ WEB_ROOT = Path(__file__).with_name("web_assets")
 FILES = {"/": ("index.html", "text/html; charset=utf-8"),
          "/app.css": ("app.css", "text/css; charset=utf-8"),
          "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+         "/color-map.json": ("color-map.json", "application/json; charset=utf-8"),
          "/mini": ("mini.html", "text/html; charset=utf-8"),
          "/mini.css": ("mini.css", "text/css; charset=utf-8"),
          "/mini.js": ("mini.js", "text/javascript; charset=utf-8")}
@@ -76,7 +79,9 @@ def start_settings_server(app, port):
                          "device": snap["device"], "profile_status": snap["profile_status"],
                          "profile_error": snap["profile_error"],
                          "applied_version": snap["applied_version"],
-                         "profile_version": (snap["profile"] or {}).get("version")},
+                         "profile_version": (snap["profile"] or {}).get("version"),
+                         "tools": snap.get("tools"),
+                         "done": snap.get("done")},
                         sort_keys=True, default=str)
                     now = time.time()
                     if sig != last_sig:
@@ -138,12 +143,43 @@ def start_settings_server(app, port):
                     self._json(503, {"error": "设备未连接"})
                     return
                 data = self.rfile.read(length)
-                app.send_bg_image(data)
-                self._json(200, {"status": "已发送，等待设备应用"})
+                # ?target=svN → 屏保相册第 N 张；缺省 bg.jpg（页面背景）
+                target = parse_qs(urlsplit(self.path).query).get("target", ["bg"])[0]
+                name = (f"{target}.jpg" if re.fullmatch(r"(bg|sv[1-8])", target)
+                        else "bg.jpg")
+                if app.send_bg_image(data, name):
+                    self._json(200, {"status": f"已应用（{name}）"})
+                else:
+                    reason = getattr(app, "_last_bg_result", {}).get("reason", "未知原因")
+                    self._json(503, {"error": f"背景图失败：{reason}"})
                 return
             if path == "/api/bgimg-clear":
                 app.clear_bg_image()
                 self._json(200, {"status": "已请求恢复纯色"})
+                return
+            if path == "/api/bgimg-delete":
+                # ?target=svN → 删除屏保相册第 N 张（无 body 的 POST，须在 JSON 门槛前放行）
+                target = parse_qs(urlsplit(self.path).query).get("target", [""])[0]
+                if not re.fullmatch(r"sv[1-8]", target):
+                    self._json(400, {"error": "相册槽位无效"})
+                    return
+                app.delete_album_image(f"{target}.jpg")
+                self._json(200, {"status": f"已删除（{target}）"})
+                return
+            if path == "/api/pet":
+                self._json(200, app.pet.snapshot())
+                return
+            if path == "/api/music-apps":
+                # 本机装了哪些音乐软件 + 当前默认 + 是否在跑（设置页用）
+                from . import music as music_module
+                default = music_module.default_app(app.cfg)
+                self._json(200, {
+                    "apps": music_module.installed_apps(),
+                    "default": default,
+                    "running": music_module.is_running(default),
+                    "configured": str(getattr(app.cfg, "music_app", "auto") or "auto"),
+                    "supported": sys.platform == "darwin",
+                })
                 return
             if path == "/api/autostart-status":
                 try:
@@ -156,6 +192,27 @@ def start_settings_server(app, port):
                 # Hook 快通道接入状态（AI 采集第 2 层）
                 from . import hooks
                 self._json(200, hooks.status(hooks_settings_path()))
+                return
+            if path == "/api/smc-status":
+                # 温度/风扇特权采样状态（未安装≠错误，前端按中性态显示）
+                from . import smcpriv
+                self._json(200, smcpriv.status())
+                return
+            if path == "/api/snapshot":
+                # 设备实拍 PNG（无图或设备不支持时 404）
+                data = app.snapshot_bytes()
+                if not data:
+                    self._json(404, {"error": "还没有实拍图，请先点击「实拍」"})
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path == "/api/snapshot-meta":
+                self._json(200, {"at": getattr(app, "snap_at", None)})
                 return
             if path == "/api/trend":
                 # P1-4 行为遥测趋势：?hours=24（上限 7 天）
@@ -209,10 +266,32 @@ def start_settings_server(app, port):
 
         def do_POST(self):
             path = urlsplit(self.path).path
+            if path == "/api/snap-request":
+                # 实拍：立即返回，前端轮询 /api/snapshot-meta 等 snap_at 翻新
+                if not app.request_snap():
+                    self._json(503, {"error": "设备未连接"})
+                    return
+                self._json(200, {"status": "已请求，设备回传约需 10 秒"})
+                return
             if path.startswith("/hook/"):
                 self._hook(path)
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0]
+            if path == "/api/bgimg-clear":
+                # 无 body 的 POST：必须在 JSON 门槛之前放行，否则「恢复纯色」
+                # 按钮永远 415（fetch 不带 Content-Type，实测踩过）。
+                app.clear_bg_image()
+                self._json(200, {"status": "已请求恢复纯色"})
+                return
+            if path == "/api/bgimg-delete":
+                # ?target=svN → 删除屏保相册第 N 张（同上须在 JSON 门槛前放行）
+                target = parse_qs(urlsplit(self.path).query).get("target", [""])[0]
+                if not re.fullmatch(r"sv[1-8]", target):
+                    self._json(400, {"error": "相册槽位无效"})
+                    return
+                app.delete_album_image(f"{target}.jpg")
+                self._json(200, {"status": f"已删除（{target}）"})
+                return
             if path == "/api/bgimg":
                 # 背景图走二进制通道（客户端已压成 ≤120KB 的 JPEG）
                 length = int(self.headers.get("Content-Length", "0"))
@@ -222,8 +301,23 @@ def start_settings_server(app, port):
                 if not app.link or not app.link.status.startswith("connected:"):
                     self._json(503, {"error": "设备未连接"})
                     return
-                app.send_bg_image(self.rfile.read(length))
-                self._json(200, {"status": "已发送，等待设备应用"})
+                data = self.rfile.read(length)
+                target = parse_qs(urlsplit(self.path).query).get("target", ["bg"])[0]
+                name = (f"{target}.jpg" if re.fullmatch(r"(bg|sv[1-8])", target)
+                        else "bg.jpg")
+                if app.send_bg_image(data, name):
+                    self._json(200, {"status": f"已应用（{name}）"})
+                else:
+                    reason = getattr(app, "_last_bg_result", {}).get("reason", "未知原因")
+                    self._json(503, {"error": f"背景图失败：{reason}"})
+                return
+            if path in ("/api/smc-install", "/api/smc-uninstall"):
+                # 温度/风扇特权采样：弹系统管理员密码框，可能等待用户输密码
+                # （ThreadingHTTPServer 每连接一线程，不会拖住 SSE/轮询）。
+                # 无 body 语义的路由，同样必须在 JSON 门槛之前。
+                from . import smcpriv
+                self._json(200, smcpriv.install() if path.endswith("install")
+                           else smcpriv.uninstall())
                 return
             if content_type != "application/json":
                 self._json(415, {"error": "需要 application/json"})
@@ -234,6 +328,30 @@ def start_settings_server(app, port):
                 return
             try:
                 data = json.loads(self.rfile.read(length))
+                if path == "/api/pet-do":
+                    # 触屏/网页的宠物交互：喂食/喝水/运动
+                    self._json(200, app.pet.interact(str(data.get("action", ""))))
+                    return
+                if path == "/api/weather-search":
+                    # 省市区地理编码（Open-Meteo，中文，含省市标签）。
+                    # 网络错误必须兜住：处理线程抛异常会直接断连。
+                    from .weather import geocode
+                    try:
+                        results = geocode(str(data.get("q", "")))
+                    except Exception as exc:
+                        self._json(200, {"results": [], "error": f"搜索失败：{exc}"})
+                        return
+                    self._json(200, {"results": results})
+                    return
+                if path == "/api/pet-config":
+                    # 类型/名字改动 → 走标准保存（校验+版本递增），设备重建宠物形象
+                    candidate = dict(app.profile)
+                    candidate["pet"] = {"type": str(data.get("type", "robot")),
+                                        "name": str(data.get("name", "帽子"))}
+                    result = app.save_profile(candidate)
+                    self._json(200, {"status": "已保存，待同步",
+                                     "version": result["version"]})
+                    return
                 if path == "/api/validate":
                     self._json(200, {"profile": validate_profile(data)})
                 elif path == "/api/autostart":
@@ -259,8 +377,28 @@ def start_settings_server(app, port):
                     if not command:
                         self._json(400, {"error": "未找到该应用，请先在其他视图登记"})
                         return
-                    app.control.launch(command)
-                    self._json(200, {"status": "已启动", "id": app_id})
+                    launcher = getattr(app, "_launch_app", None)
+                    result = (launcher(app_id) or {}) if callable(launcher) else {}
+                    if not callable(launcher):
+                        app.control.launch(command)
+                    # @music 保留字：启动默认音乐软件并开始播放，回执里带上软件名
+                    status = (f"已启动：{result['app']}" if result.get("app")
+                              else "已启动")
+                    self._json(200, {"status": status, "id": app_id})
+                elif path == "/api/music-app":
+                    # 设定默认音乐软件（bundle id；"auto" = 自动挑）
+                    choice = str(data.get("id", "auto")) or "auto"
+                    app.cfg.music_app = choice
+                    try:
+                        app.cfg.save()
+                    except OSError:
+                        pass
+                    from . import music as music_module
+                    picked = music_module.default_app(app.cfg)
+                    self._json(200, {"status": "已保存", "default": picked})
+                elif path == "/api/music-play":
+                    # 试一下：启动默认软件并开始播放（设置页「试一下」按钮）
+                    self._json(200, app.music_play())
                 elif path == "/api/hooks-install":
                     from . import hooks
                     result = hooks.install(hooks_settings_path(),

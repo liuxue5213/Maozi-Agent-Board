@@ -7,18 +7,23 @@ const widgets = {
   ai_cost: ['AI 用量', '∑', 1]
 };
 const stateNames = {THINKING:'思考中',GENERATING:'生成中',TOOL:'执行工具',BUILD:'构建中',DONE:'已完成',ERROR:'出错',WAIT_INPUT:'等你回复',ASK:'进行中待确认'};
-const RUNNING_STATES = ['THINKING','GENERATING','TOOL','BUILD'];
-// 主题预设：card 与 bg 均已拉开亮度差（>=1.5:1），sub 均可读。
-// 修改配色时务必让 profile.validate_profile 的三项对比度校验通过。
+// 主题预设：每套自带 card_opa，card 与 bg 必须拉开亮度差——注意校验用的是
+// **合成后的填充色**（固件 box() 用 bg_opa=card_opa 把 card 叠在渐变上），
+// 所以不透明度越低、card 越要亮。下面这些值是照 1.6:1 解出来的，
+// 改任何一项都要让 profile.validate_profile 通过（tests/test_theme_presets.py 会拦）。
 const themePresets = {
-  '极光石板':{bg:'060A12',grad:'0E1726',card:'28384E',card_edge:'3C5070',accent:'4CC9F0',text:'F1F5F9',sub:'A6B6C9'},
-  '墨蓝夜':{bg:'05080F',grad:'0A1220',card:'223650',card_edge:'36588C',accent:'6AA0FF',text:'EEF3FB',sub:'9FB4D2'},
-  '深蓝科技':{bg:'0B1220',grad:'0E1B33',card:'274064',card_edge:'3E506E',accent:'22D3EE',text:'F3F7FF',sub:'A8BDD9'},
-  '紫夜':{bg:'120B22',grad:'1D1136',card:'3A2D5C',card_edge:'54427F',accent:'A78BFA',text:'F5F3FF',sub:'C4B5E8'},
-  '苍翠':{bg:'071A12',grad:'0C2A1B',card:'1D4A33',card_edge:'2A6B4A',accent:'34D399',text:'ECFDF5',sub:'A3D5BC'},
-  '暖阳':{bg:'1A1207',grad:'2A1C0C',card:'4A3418',card_edge:'6B4C24',accent:'F59E0B',text:'FFF8EB',sub:'DEC9A3'},
-  '玫瑰':{bg:'1A0B12',grad:'2A1120',card:'6E3E5E',card_edge:'8F4566',accent:'FB7185',text:'FFF1F3',sub:'E8B4C0'}
+  '实机校准·深蓝灰':{card_opa:100,bg:'060B16',grad:'0B1730',card:'304661',card_edge:'4B6685',accent:'57C8F5',text:'F4F8FF',sub:'C7D5E5'},
+  '极光石板':{card_opa:100,bg:'060A12',grad:'0E1726',card:'28384E',card_edge:'3C5070',accent:'4CC9F0',text:'F1F5F9',sub:'A6B6C9'},
+  '墨蓝夜':{card_opa:100,bg:'05080F',grad:'0A1220',card:'223650',card_edge:'36588C',accent:'6AA0FF',text:'EEF3FB',sub:'9FB4D2'},
+  '深蓝科技':{card_opa:70,bg:'0B1220',grad:'0E1B33',card:'2E4C76',card_edge:'3E506E',accent:'22D3EE',text:'F3F7FF',sub:'A8BDD9'},
+  '紫夜':{card_opa:72,bg:'120B22',grad:'1D1136',card:'4D3C7A',card_edge:'54427F',accent:'A78BFA',text:'F5F3FF',sub:'C4B5E8'},
+  '苍翠':{card_opa:70,bg:'071A12',grad:'0C2A1B',card:'21543A',card_edge:'2A6B4A',accent:'34D399',text:'ECFDF5',sub:'A3D5BC'},
+  '暖阳':{card_opa:66,bg:'1A1207',grad:'2A1C0C',card:'684922',card_edge:'6B4C24',accent:'F59E0B',text:'FFF8EB',sub:'DEC9A3'},
+  '玫瑰':{card_opa:68,bg:'1A0B12',grad:'2A1120',card:'6E3E5E',card_edge:'8F4566',accent:'FB7185',text:'FFF1F3',sub:'E8B4C0'}
 };
+// 画廊主题的 card 填充必须对 bg 保持 ≥1.5:1（profile.validate_profile 的
+// 硬门槛，按 RGB565 上屏值核算）。这些值就是照该门槛解出来的：低于它们
+// 「精选主题」会保存失败——曾经 7 套全都不达标，等于整个主题画廊是坏的。
 // 主题库（任务视图 → 主题库）的卡片清单在 galleryThemes 定义之后初始化
 // （见 themeLibrary），避免 const 初始化前读取的 TDZ 崩溃。
 let draft = null, saved = null, live = {tasks:[],telemetry:{},device:'等待设备'};
@@ -26,6 +31,7 @@ let selected = 0, dirty = false, dragPage = -1, dragWidget = -1, toastTimer = nu
 let polling = false, lastOkAt = 0, failStreak = 0, tickTimer = null;
 let currentView = 'overview';
 let selectedThemeKey = null, themeTab = 'preset';
+let colorMap = null;
 
 /* ---------- 颜色工具：预览按「半透明卡片叠在背景上」的真实合成色校验对比度 ---------- */
 function hexToRgb(hex){
@@ -58,35 +64,216 @@ function ensureContrast(candidates, bg, target){
   const pick = contrastRatio(hexToRgb(white), bg) >= contrastRatio(hexToRgb(black), bg) ? white : black;
   return pick;
 }
+/* 面板标定矩阵（24 格实测）：换屏 / 换控制器时用它核对通道序、换字节、反相。
+   数据来自 color-map.json 的 diagnosticVariants（第 7 格是实机确认的方案）。
+   这些格子代表的是「驱动层参数」，不是可选配色——改它要同步改固件的
+   PANEL_COLOR_ORDER_BGR / PANEL_COLOR_BYTESWAP / cfg.invert。 */
+function renderVariants(){
+  const root=$('variant-grid'); if(!root || !colorMap) return;
+  const list=colorMap.diagnosticVariants||[];
+  root.replaceChildren();
+  list.forEach(v=>{
+    const cell=el('div','variant-cell'+(v.selected?' on':''));
+    cell.append(el('strong','',`格 ${v.cell}${v.selected?' ✓':''}`));
+    cell.append(el('small','',`${v.channelOrder}${v.byteSwap?' · 换字节':''}`));
+    cell.append(el('small','',v.softwareInvert?'软件反相':'无软件反相'));
+    root.append(cell);
+  });
+  const note=$('variant-note');
+  if(note){
+    const cal=(colorMap.panel||{}).calibration||{};
+    const sel=list.find(v=>v.selected)||{};
+    note.textContent = cal.cell
+      ? `当前标定：第 ${cal.cell} 格（${cal.rgbOrder||sel.channelOrder||'RGB'}`
+        + `${cal.lvglFlushByteSwap?' + flush 换字节':''}`
+        + `${cal.panelInvert?' + 硬件反相':''}）`
+      : '未标注选定的格子';
+  }
+}
+
+/* ---------- 屏幕色彩管线：请求色 → RGB565 量化 → flush 字 ----------
+   小屏是 RGB565（ST7796，竖屏 320×480）。Web 里拿到一个 #RRGGBB **不能直接渲染**：
+   屏幕每个像素只有 5/6/5 位，颜色先被量化，观感可能和请求色不同（深色主题里
+   蓝紫偏移尤其明显）。所以预览一律先过这里，画出来的是屏幕真正显示的颜色。
+
+   位宽、通道序、flush 换字节全部读 color-map.json 的 panel 段——换屏或换控制器
+   时改 JSON（再跑 tools/gen_color_map.py），不改本文件。 */
+const PANEL_FALLBACK = {
+  pixelFormat:'RGB565',
+  calibration:{ rgbOrder:'RGB', lvglFlushByteSwap:true, panelInvert:true }
+};
+function panelSpec(){ return (colorMap && colorMap.panel) || PANEL_FALLBACK }
+function panelBits(){
+  const m = /^RGB(\d)(\d)(\d)$/.exec(String(panelSpec().pixelFormat || 'RGB565'));
+  return m ? {r:+m[1], g:+m[2], b:+m[3]} : {r:5, g:6, b:5};
+}
+function quantizeWord(hex){
+  const {r:br, g:bg, b:bb} = panelBits();
+  const [r,g,b] = hexToRgb(hex);
+  return ((r >> (8-br)) << (bg+bb)) | ((g >> (8-bg)) << bb) | (b >> (8-bb));
+}
+/* 565 → 888：位复制展开，与 LVGL 内部把量化值还原成像素的做法一致。
+   5 位 → (v<<3)|(v>>2)，6 位 → (v<<2)|(v>>4)，通式 (v<<s)|(v>>(2n-8))。 */
+function expandBits(value, n){
+  return n >= 8 ? value : ((value << (8-n)) | (value >> (2*n-8))) & 0xFF;
+}
+function wordToRgb(word){
+  const {r:br, g:bg, b:bb} = panelBits();
+  return [
+    expandBits((word >> (bg+bb)) & ((1<<br)-1), br),
+    expandBits((word >> bb) & ((1<<bg)-1), bg),
+    expandBits(word & ((1<<bb)-1), bb),
+  ];
+}
+function flushWordOf(word){ return ((word & 0xFF) << 8) | ((word >> 8) & 0xFF) }
+/** 一条主题色的完整链条：请求色 → 屏幕色。drift 是量化造成的最大通道偏移。
+ *
+ * ⚠️ WYSIWYG 不变量（换屏/改标定时由 test_color_map.py 锁死）：
+ *    返回的 hex 必须是「量化后的设计色」本身——它就是真机最终显示色。
+ *    原因：固件在 flush_cb 对 rgb565 做字节交换（lvglFlushByteSwap），
+ *    面板字节序相反、读回原式；panelInvert=true 是面板正常黑底模式（非额外取反）。
+ *    净效果：面板显示的就是设计色。所以这里【绝不】再补字节交换、也【绝不】对
+ *    设计色取反——否则预览会变成负片，与真机相反（回归）。
+ *    唯一需要处理的驱动层差异是通道序：BGR 面板上 R 与 B 落反，预览须跟着反。 */
+function panelColor(hex){
+  const req = String(hex || '').replace('#','').toUpperCase();
+  const raw = quantizeWord(req);
+  let rgb = wordToRgb(raw);
+  const cal = panelSpec().calibration || {};
+  const order = String(cal.rgbOrder || 'RGB').toUpperCase();
+  // 通道序是驱动层标定的结果：BGR 面板上 R 与 B 落反，预览必须跟着反，
+  // 否则「预览好看、实机偏色」又会重现。
+  if (order === 'BGR') rgb = [rgb[2], rgb[1], rgb[0]];
+  const wanted = hexToRgb(req);
+  return {
+    req,
+    hex: rgb.map(v=>v.toString(16).padStart(2,'0')).join('').toUpperCase(),
+    word: raw,
+    flush: flushWordOf(raw),
+    drift: Math.max(...wanted.map((v,i)=>Math.abs(v-rgb[i]))),
+    order,
+    swap: !!cal.lvglFlushByteSwap,
+    invert: !!cal.panelInvert,
+  };
+}
+/** 屏幕真正显示的颜色，'#RRGGBB'。预览的所有颜色都必须走它。 */
+function panelHex(hex){ return '#'+panelColor(hex).hex }
+function word4(value){ return value.toString(16).toUpperCase().padStart(4,'0') }
+/** 一行文字说明某色的映射结果，用于色卡与取色器提示。 */
+function panelNote(hex){
+  const c = panelColor(hex);
+  return `屏幕 #${c.hex} · 565 ${word4(c.word)} · flush ${word4(c.flush)}`;
+}
+/* 固件里写死、不随主题变的语义色（config.h / ui.cpp 字面值）。
+   值仍从映射文件读——这样「屏幕显示什么颜色」只有一份来源。 */
+const DEV_SEMANTIC_FALLBACK = {
+  'status.ok':'34D399', 'status.warn':'FBBF24', 'status.err':'F87171',
+  'robot.body':'46689C', 'robot.error':'2A1A1A', 'robot.done':'1A2A1A',
+  'saver.black':'000000', 'saver.frame':'0A0F14', 'saver.edge':'2E4370',
+  'saver.quote':'8CA3C7', 'saver.time':'22D3EE', 'saver.dim':'6B7A8F',
+  'saver.label':'3A4A5F',
+};
+function devSemantic(id){
+  const hit = colorMap && colorMap.semantic
+    ? colorMap.semantic.find(c => c.id === id) : null;
+  return panelHex(hit ? hit.hex : (DEV_SEMANTIC_FALLBACK[id] || '000000'));
+}
 function applyDeviceTheme(theme, root){
   const screen = root || $('screen');
   if (!screen) return;
-  const bg = hexToRgb(theme.bg), grad = hexToRgb(theme.grad);
+  // 写进 CSS 变量的必须是量化后的颜色，否则卡片色/描边比实机亮一档。
+  const q = k => panelHex(theme[k]);
   const opa = Math.max(0.3, Math.min(1, (theme.card_opa ?? 100) / 100));
-  const backdrop = composite(bg, grad, 0.5);
-  const cardBg = composite(hexToRgb(theme.card), backdrop, opa);
-  screen.style.setProperty('--dev-bg', '#'+theme.bg);
-  screen.style.setProperty('--dev-grad', '#'+theme.grad);
-  screen.style.setProperty('--dev-card', '#'+theme.card);
-  screen.style.setProperty('--dev-edge', '#'+(theme.card_edge||theme.card));
-  screen.style.setProperty('--dev-accent', '#'+theme.accent);
-  screen.style.setProperty('--dev-text', '#'+theme.text);
-  screen.style.setProperty('--dev-sub', '#'+theme.sub);
+  const backdrop = composite(hexToRgb(q('bg')), hexToRgb(q('grad')), 0.5);
+  const cardBg = composite(hexToRgb(q('card')), backdrop, opa);
+  screen.style.setProperty('--dev-bg', q('bg'));
+  screen.style.setProperty('--dev-grad', q('grad'));
+  screen.style.setProperty('--dev-card', q('card'));
+  screen.style.setProperty('--dev-edge', panelHex(theme.card_edge || theme.card));
+  screen.style.setProperty('--dev-accent', q('accent'));
+  screen.style.setProperty('--dev-text', q('text'));
+  screen.style.setProperty('--dev-sub', q('sub'));
   screen.style.setProperty('--dev-card-opa', String(opa));
-  screen.style.setProperty('--dev-card-ink', ensureContrast([theme.text, '#ffffff'], cardBg, 4.5));
-  screen.style.setProperty('--dev-sub-ink', ensureContrast([theme.sub, theme.text], cardBg, 3));
+  screen.style.setProperty('--dev-card-ink', ensureContrast([q('text'), '#ffffff'], cardBg, 4.5));
+  screen.style.setProperty('--dev-sub-ink', ensureContrast([q('sub'), q('text')], cardBg, 3));
+}
+async function loadColorMap(){
+  try{
+    const response=await fetch('/color-map.json');
+    if(!response.ok)throw new Error('色彩映射文件不可用');
+    colorMap=await response.json();
+    const target=$('color-map-target'), group=$('color-map-group');
+    target.replaceChildren();
+    Object.entries(colorMap.themeBindings).forEach(([key,meta])=>{
+      const option=el('option','',meta.label);option.value=key;target.append(option);
+    });
+    target.value='accent';
+    const groups=[...new Set([...colorMap.semantic,...colorMap.checks,...colorMap.palette].map(c=>c.group))];
+    groups.forEach(name=>{const option=el('option','',name);option.value=name;group.append(option)});
+    group.value='实机确认主题样本';
+    group.onchange=renderColorMap;
+    $('color-map-search').oninput=renderColorMap;
+    renderColorMap();
+    renderVariants();
+    // 映射文件到位后重画一次：预览与色卡都依赖 panel 标定参数，
+    // 首次渲染时 colorMap 可能还没加载完（本地 fetch 也不能假设同步）。
+    if(currentView==='tasks')renderTaskPreview();
+    if(currentView==='saver')renderSaverPreview();
+    if(currentView==='settings')renderInspector();
+  }catch(err){$('color-map-grid').textContent=err.message}
+}
+function renderColorMap(){
+  if(!colorMap)return;
+  const root=$('color-map-grid'), group=$('color-map-group').value;
+  const query=$('color-map-search').value.trim().toLowerCase();
+  root.replaceChildren();
+  const colors=[...colorMap.semantic,...colorMap.checks,...colorMap.palette];
+  colors.filter(c=>(!group||c.group===group)&&
+    (!query||[c.name,c.hex,c.rgb565,c.id].some(v=>String(v).toLowerCase().includes(query))))
+    .forEach(c=>{
+      // 色块显示的是**屏幕会显示的颜色**（hex 经 RGB565 量化后还原），
+      // 请求色只在有偏移时以小角标出现——否则用户会以为选了什么就得到什么。
+      const shown=panelColor(c.hex);
+      const item=el('button','color-map-item');item.type='button';
+      const chip=el('b');chip.style.background='#'+shown.hex;
+      chip.style.position='relative';
+      if(shown.drift>0){
+        const req=el('i');
+        req.style.cssText='position:absolute;right:2px;bottom:2px;width:9px;height:9px;'
+          +'border-radius:2px;border:1px solid rgba(0,0,0,.35);background:#'+c.hex;
+        req.title=`请求色 #${c.hex}`;
+        chip.append(req);
+      }
+      item.append(chip,el('span','',c.name),
+                  el('code','',`#${c.hex}→#${shown.hex} · ${word4(shown.word)}`));
+      item.title=`${c.name}\n请求色 #${c.hex}　屏幕色 #${shown.hex}`
+        +`\nRGB565 ${word4(shown.word)}　flush ${word4(shown.flush)}`
+        +`\n量化最大通道偏移 Δ${shown.drift}`;
+      item.onclick=()=>{
+        const key=$('color-map-target').value;
+        if(!draft||!colorMap.themeBindings[key])return;
+        draft.theme[key]=c.hex;
+        $('theme-'+key).value='#'+c.hex;
+        markDirty();updateQuantNote();
+        notice(shown.drift>=8
+          ? `${c.name} 已选为${colorMap.themeBindings[key].label}；该色过 RGB565 后偏移 Δ${shown.drift}（屏幕显示 #${shown.hex}）`
+          : `${c.name} 已选为${colorMap.themeBindings[key].label}，屏幕显示 #${shown.hex}`);
+      };
+      root.append(item);
+    });
+  if(!root.childElementCount)root.append(el('div','empty','没有匹配的颜色'));
 }
 
 // ---------- 主题画廊：程序绘制背景 ----------
 function srng(seed){let s=seed;return()=>{s=(s*9301+49297)%233280;return s/233280}};
 const galleryThemes = {
-  aurora:{name:'极光',card_opa:70,colors:{bg:'060A14',grad:'0B1428',card:'13223C',card_edge:'1E3A5F',accent:'5EEAD4',text:'E9FFFA',sub:'8FB6D9'}},
-  synthwave:{name:'赛博霓虹',card_opa:70,colors:{bg:'0D0221',grad:'1A0533',card:'260945',card_edge:'7B2CBF',accent:'F72585',text:'FFF8FE',sub:'B39DDB'}},
-  dusk:{name:'山峦黄昏',card_opa:65,colors:{bg:'221028',grad:'40203A',card:'33203F',card_edge:'7A4A63',accent:'FF9E64',text:'FFF3E9',sub:'D4A88F'}},
-  starry:{name:'星空',card_opa:70,colors:{bg:'050914',grad:'0A1230',card:'101C3C',card_edge:'27408B',accent:'8AB8FF',text:'EEF4FF',sub:'8FA3C9'}},
-  garden:{name:'像素花园',card_opa:70,colors:{bg:'0C1810',grad:'122418',card:'1A3322',card_edge:'2E5C40',accent:'A3E635',text:'F0FDF0',sub:'94C9A3'}},
-  waves:{name:'深海波浪',card_opa:70,colors:{bg:'03121E',grad:'062033',card:'0A2A42',card_edge:'1D5C7A',accent:'22D3EE',text:'E8FBFF',sub:'89B8C9'}},
-  ink:{name:'墨韵',card_opa:88,colors:{bg:'F2EFE9',grad:'E8E4DA',card:'FFFFFF',card_edge:'C9C2B4',accent:'B03A2E',text:'2B2B2B',sub:'6B6B60'}},
+  aurora:{name:'极光',card_opa:70,colors:{bg:'060A14',grad:'0B1428',card:'284880',card_edge:'1E3A5F',accent:'5EEAD4',text:'E9FFFA',sub:'8FB6D9'}},
+  synthwave:{name:'赛博霓虹',card_opa:70,colors:{bg:'0D0221',grad:'1A0533',card:'5D16A8',card_edge:'7B2CBF',accent:'F72585',text:'FFF8FE',sub:'B39DDB'}},
+  dusk:{name:'山峦黄昏',card_opa:65,colors:{bg:'221028',grad:'40203A',card:'704689',card_edge:'7A4A63',accent:'FF9E64',text:'FFF3E9',sub:'D4A88F'}},
+  starry:{name:'星空',card_opa:70,colors:{bg:'050914',grad:'0A1230',card:'244088',card_edge:'27408B',accent:'8AB8FF',text:'EEF4FF',sub:'8FA3C9'}},
+  garden:{name:'像素花园',card_opa:70,colors:{bg:'0C1810',grad:'122418',card:'295035',card_edge:'2E5C40',accent:'A3E635',text:'F0FDF0',sub:'94C9A3'}},
+  waves:{name:'深海波浪',card_opa:70,colors:{bg:'03121E',grad:'062033',card:'124C76',card_edge:'1D5C7A',accent:'22D3EE',text:'E8FBFF',sub:'89B8C9'}},
+  ink:{name:'墨韵',card_opa:93,colors:{bg:'D2CFCA',grad:'C9C6BD',card:'FFFFFF',card_edge:'AEA89C',accent:'B03A2E',text:'2B2B2B',sub:'6B6B60'}},
   ember:{name:'熔岩余烬',card_opa:70,colors:{bg:'0F0505',grad:'1F0808',card:'2A0E0E',card_edge:'6B2020',accent:'FF6B35',text:'FFF0E8',sub:'C9947E'}}
 };
 function galleryColors(key){
@@ -95,6 +282,7 @@ function galleryColors(key){
 // 主题库（任务视图 → 主题库）：预设 + 精选画廊的合一清单。
 // 必须在 galleryThemes 之后初始化（galleryColors 会读它）。
 const themeLibrary = [
+  {key:'preset-实机校准', name:'实机校准·深蓝灰', colors:themePresets['实机校准·深蓝灰'], opa:100, bright:62},
   {key:'preset-深蓝科技', name:'深蓝科技', colors:themePresets['深蓝科技'], opa:70},
   {key:'preset-紫夜', name:'紫夜', colors:themePresets['紫夜'], opa:72},
   {key:'preset-苍翠', name:'苍翠', colors:themePresets['苍翠'], opa:70},
@@ -104,7 +292,7 @@ const themeLibrary = [
   {key:'gallery-starry', name:'星空', colors:galleryColors('starry'), opa:70, gallery:'starry'},
   {key:'gallery-garden', name:'像素花园', colors:galleryColors('garden'), opa:70, gallery:'garden'},
   {key:'gallery-waves', name:'深海波浪', colors:galleryColors('waves'), opa:70, gallery:'waves'},
-  {key:'gallery-ink', name:'墨韵', colors:galleryColors('ink'), opa:88, gallery:'ink'},
+  {key:'gallery-ink', name:'墨韵', colors:galleryColors('ink'), opa:93, gallery:'ink'},
   {key:'gallery-dusk', name:'山峦黄昏', colors:galleryColors('dusk'), opa:65, gallery:'dusk'},
   {key:'gallery-ember', name:'熔岩余烬', colors:galleryColors('ember'), opa:70, gallery:'ember'}
 ];
@@ -216,7 +404,6 @@ function commandDefs(){
     {label:'切换深浅外观',run:()=>$('color-mode-btn').click()},
     {label:'上传背景图（其他视图）',run:()=>{switchView('extras');$('bgimg-file').click()}},
     {label:'导出配置 JSON',run:()=>$('btn-export').click()},
-    {label:'导出布局 JSON',run:()=>$('btn-layout-export').click()},
     {label:'撤销上一步配置（Cmd/Ctrl+Z）',run:()=>undoChange()},
     {label:'任务视图：多窗格预览',run:()=>{switchView('tasks');switchTaskTab('multi')}},
     {label:'查看键盘快捷键',key:'?',run:()=>toggleKbd(true)}
@@ -225,7 +412,7 @@ function commandDefs(){
   if(draft){
     (draft.pages||[]).forEach((page,i)=>{
       cmds.push({label:`编辑页面：${i+1} ${page.title}`,run:()=>{
-        switchView('settings');selected=i;renderSettings()}});
+        openSettings('pages');selected=i;renderSettings()}});
     });
     (draft.reminders||[]).slice(0,8).forEach(r=>{
       if(!r.enabled)return;
@@ -442,228 +629,732 @@ function drawTrendChart(){
   }).catch(()=>{});
 }
 
-/* ================= 任务视图配置（布局方案） ================= */
+/* 与 profile.py DEFAULT_PROFILE.theme 保持一致，避免两处默认主题漂移。 */
+const DEFAULT_THEME = {bg:'060A12', grad:'0E1726', card:'28384E', card_edge:'3C5070',
+  accent:'4CC9F0', text:'F1F5F9', sub:'A6B6C9', bright:90};
+
+/* 与 workbuddy/music.py 的 MUSIC_COMMAND 一致：快捷应用里用它表示
+   「用默认音乐软件播放」。 */
+const MUSIC_COMMAND = '@music';
+
+/* 自动按工具分页：全部 + 每工具一页（页面带 filter，固件据此过滤会话）。
+   只重排 AI 页，其它页面（电脑/环境…）原样保留；总页数硬上限 6，
+   放不下时先砍靠后的工具页（那些工具的会话仍在「全部」页可见）。 */
+function autoPages(){
+  const TOOL_TITLES = {claude:'Claude', codex:'Codex', zcode:'ZCode',
+                       opencode:'OpenCode', workbuddy:'智能体'};
+  const tools=[...new Set((live.tasks||[]).map(t=>t.tool).filter(Boolean))].sort();
+  const wCities=(draft.weather&&draft.weather.cities)||[];
+  // 非 AI 页 = 天气城市页 + 其余页面；城市页由本函数生成，其余原样保留
+  const others=(draft.pages||[]).filter(p=>!((p.widgets||[]).includes('ai_list'))
+                                          && !p.city);
+  const pages=[{id:'ai', title:'全部', layout:'list', widgets:['ai_list'], filter:''}];
+  tools.forEach(t=>{
+    if(pages.length>=6) return;
+    pages.push({id:('t'+t).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,16),
+                title:TOOL_TITLES[t]||t, layout:'list', widgets:['ai_list'], filter:t});
+  });
+  wCities.forEach(c=>{
+    if(pages.length>=6) return;
+    pages.push({id:('w'+c.name).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,16),
+                title:c.name, layout:'list', widgets:['weather'], city:c.name});
+  });
+  return [...pages, ...others].slice(0,6);
+}
+function regenAutoPages(){
+  const pages=autoPages();
+  const changed=JSON.stringify(pages)!==JSON.stringify(draft.pages);
+  draft.pages=pages;
+  if(changed){ selected=0; previewPage=0; markDirty(); }
+  return changed;
+}
+function regenAllPages(){ regenAutoPages(); }
+/* 手动排序意图：一旦用户拖动页面，自动分页立即关闭（否则保存时会被
+   autoPages 按固定顺序打回，手动排序形同虚设）。 */
+function manualOrder(){
+  if(draft.autopage){
+    draft.autopage=0;
+    const t=$('autopage-toggle'); if(t) t.checked=false;
+    notice('已切换为手动排序（自动按工具分页已关闭），保存后生效');
+  }
+}
+/* 任务视图「当前页面组合」的拖拽排序 */
+let dragTaskPage = -1;
+
+/* ================= 任务视图：布局预设 =================
+   这里的「四种布局」= 四套真实的页面组合（LAYOUT_PRESETS），点选即写入
+   draft.pages，和设备上看到的一页一页完全对应。
+
+   原来这里存着一整套 tv.* 参数（任务补充 / 任务数值 / 其他任务 / 空闲时显示 /
+   场景 / 氛围开关 / 显示内容 / 内容组合 / 显示指标…）。它们只喂浏览器里的
+   效果图，从不进 profile、也从不经 CFG 下发——用户在「任务视图」调半天，
+   小屏一点变化都没有。整块已移除：能改小屏的控件才留在界面上。 */
 const TV_KEY = 'workbuddy-taskview';
-const tvDefaults = {
-  layout:'focus',
-  fv:{supplement:'steps', value:'elapsed', others:'show', idle:'focus'},
-  tv:{range:'all', time:'event'},
-  crown:{mode:'auto', text:''},
-  cp:{scene:'yard', daynight:true, weather:false, fx:false, action:true, feedback:true, rest:false,
-      disp:{name:true, elapsed:true, model:false, tok:false, state:true}},
-  dv:{combo:'auto', middle:'usage',
-      metrics:{tok:true, model:true, task:false, elapsed:false, cpu:true, mem:true, disk:true, net:false}}
-};
+const tvDefaults = { layout:'focus' };
 function loadTV(){
   try{
     const raw = JSON.parse(localStorage.getItem(TV_KEY) || 'null');
-    if(!raw) return structuredClone(tvDefaults);
-    return structuredClone({...tvDefaults, ...raw,
-      fv:{...tvDefaults.fv, ...(raw.fv||{})},
-      tv:{...tvDefaults.tv, ...(raw.tv||{})},
-      crown:{...tvDefaults.crown, ...(raw.crown||{})},
-      cp:{...tvDefaults.cp, ...(raw.cp||{}), disp:{...tvDefaults.cp.disp, ...(raw.cp?.disp||{})}},
-      dv:{...tvDefaults.dv, ...(raw.dv||{}), metrics:{...tvDefaults.dv.metrics, ...(raw.dv?.metrics||{})}}});
-  }catch(e){ return structuredClone(tvDefaults) }
+    return {...tvDefaults, ...(raw && typeof raw === 'object' ? {layout:raw.layout} : {})};
+  }catch(e){ return {...tvDefaults} }
 }
 let tv = loadTV();
-function saveTV(){ localStorage.setItem(TV_KEY, JSON.stringify(tv)); }
-
-const schemeNames = {live:'实时状态', focus:'状态聚焦', timeline:'任务时间线', companion:'角色陪伴', dashboard:'数据看板'};
-function crownName(){
-  if(tv.crown.mode==='custom' && tv.crown.text.trim()) return tv.crown.text.trim();
-  return live.tasks?.[0]?.tool ? live.tasks[0].tool.toUpperCase() : 'WorkBuddy';
+function saveTV(){ localStorage.setItem(TV_KEY, JSON.stringify({layout:tv.layout})); }
+/* 默认页面组合＝与 client/workbuddy/profile.py 的 DEFAULT_PROFILE 一致。
+   「恢复默认」必须恢复成设备认得的页面，而不是另一份前端私有清单。 */
+function defaultPages(){
+  return [
+    {id:'ai', title:'帽子工作台', layout:'list', widgets:['ai_list']},
+    {id:'computer', title:'电脑', layout:'grid_2x2', widgets:['hw_cards']},
+    {id:'environment', title:'环境', layout:'grid_2x2', widgets:['environment','clock']},
+  ];
 }
-function isConnected(){ return live.device?.startsWith('connected:'); }
 
-/* ---------- 小屏预览：卡片构件 ---------- */
-function card(overline,value,sub,wide=false){
-  const n=el('div',`screen-card${wide?' wide':''}`);
-  n.append(el('div','overline',overline),el('div','hero-value',String(value)),el('div','subline',sub));return n;
-}
+/* ---------- 小屏预览：与固件同源的坐标复刻 ---------- */
 function clock(){return new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}
+/* 顶栏时钟要显示到秒（用户要求「秒的变化能体现出来」）。
+   固件每秒重刷同一串；预览由下方 1s ticker 只改这一个文本节点。
+   息屏页仍用 HH:MM——固件 build_saver() 的时间串就是短格式。 */
+function clockHMS(){
+  const d=new Date(), pad=n=>String(n).padStart(2,'0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 function fmtElapsed(sec){
   sec = Math.max(0, Math.round(sec||0));
   const m = Math.floor(sec/60), s = sec%60;
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
-function previewWidget(key, container) {
-  const t=live.telemetry||{}, tasks=live.tasks||[];
-  if(key==='ai_list'){
-    const top=tasks[0];
-    const focus=card(top?`${top.tool.toUpperCase()} · ${top.project||'未命名项目'} · #${top.id?.slice(0,4)}`:'AI 会话',
-      top?(stateNames[top.state]||top.state):'暂无任务',top?`已运行 ${Math.floor(top.elapsed/60)} 分 · ${top.age} 秒前更新 · 日志推断`:'连接电脑后显示当前会话');
-    focus.classList.add('ai-focus');container.append(focus);
-    const others=el('div','mini-tasks');
-    tasks.slice(1,4).forEach(x=>{const row=el('div','mini-task');row.append(el('span','',`${x.tool} · ${x.project||'未命名'} #${x.id?.slice(0,4)}`),el('em','',stateNames[x.state]||x.state));others.append(row)});
-    if(!others.childElementCount)others.append(el('div','mini-task','其他会话会出现在这里'));
-    container.append(others);return;
+
+/* ================= 设备屏忠实预览 =================
+   预览画的就是屏幕会画的东西：
+     · 几何取自 firmware/src/ui.cpp（320×480、BODY_Y=60、AI 卡 304×380、
+       硬件四卡 148×186、页码 32×22 等），不是另画一版效果图；
+     · 字号走 label() 的字库映射（20 请求实际按 24px 渲染）；
+     · 颜色一律过 panelColor()，即先量化成 RGB565 再上屏。
+
+   历史问题：这里原是一套 flex「效果图」，与实机不共享几何。最典型的是
+   「角色陪伴」画了一只猫和四个场景，而固件根本没有场景渲染——固件里的角色
+   是 AI 页右侧那只随状态改表情的像素机器人。现在全部换成同源复刻。 */
+const DEV = {
+  W:320, H:480, HEAD_Y:8, BODY_Y:60, BODY_H:380, FOOT_Y:446,
+  DOT_W:32, DOT_H:22, DOT_GAP:10, GRID_GAP:8,
+  AI:{x:8, y:60, w:304, h:380},
+  HW_CARD:{x0:8, y0:60, dx:156, dy:194, w:148, h:186},
+};
+const DEV_WIDGET_TITLES = {
+  clock:'本地时间', environment:'桌面环境', reminder_list:'提醒列表',
+  today_calendar:'今日日历', alarm:'闹钟', weather:'天气',
+  countdown:'倒计时', ai_cost:'AI 用量',
+};
+/* label() 的字库映射：>=40→48px、>=28→32px、>=20→24px、其余→20px。
+   所以固件里写 "20" 的文字实际以 24px 渲染，预览必须跟着放大。 */
+function devFont(size){ return size>=40 ? 48 : size>=28 ? 32 : size>=20 ? 24 : 20 }
+function devLineH(size){ return Math.round(devFont(size) * 1.3) }
+
+function devAbs(node,x,y,w,h){
+  node.style.left=x+'px'; node.style.top=y+'px';
+  node.style.width=w+'px'; node.style.height=h+'px';
+  return node;
+}
+function devLabel(parent,x,y,w,text,size,cls,color,align){
+  const n = devAbs(el('div','dev-label'+(cls?' '+cls:'')),x,y,w,devLineH(size));
+  n.style.fontSize = devFont(size)+'px';
+  if(color) n.style.color = color;
+  if(align) n.style.textAlign = align;
+  n.textContent = text===null||text===undefined ? '' : String(text);
+  parent.append(n); return n;
+}
+function devCard(parent,x,y,w,h){
+  const n = devAbs(el('div','dev-el dev-card'),x,y,w,h);
+  parent.append(n); return n;
+}
+/* 迷你进度条：轨道用 bg 半透明，填充条宽度＝百分比。
+   prog<0（未知）时固件不画填充——预览也不画，不拿假进度凑数。 */
+function devTrack(parent,x,y,w,pct,color){
+  const t = devAbs(el('div','dev-el dev-track'),x,y,w,4);
+  if(pct > 0){
+    const f = el('div','dev-el');
+    f.style.cssText = 'left:0;top:0;height:100%;border-radius:2px;width:'
+      + Math.min(100,pct) + '%;background:' + color;
+    t.append(f);
   }
-  if(key==='hw_cards'){
-    const grid=el('div','screen-grid');
-    grid.append(card('处理器',t.cpu===undefined?'—':`${t.cpu}%`,'即时负载'),
-      card('内存',t.mem===undefined?'—':`${t.mem}%`,t.memtotal?`${t.memused} / ${t.memtotal} GB`:'数据不可用'),
-      card('磁盘空间',t.disk===undefined?'—':`${t.disk}%`,t.diskfree?`可用 ${t.diskfree} GB`:'数据不可用'),
-      card('显卡',t.gpu===undefined?'未提供':`${t.gpu}%`,'即时负载'));
-    container.append(grid);return;
-  }
-  if(key==='clock')container.append(card('本地时间',clock(),'电脑时间同步'));
-  if(key==='environment')container.append(card('桌面环境',t.temp===undefined?'-- ℃':`${t.temp} ℃`,t.hum===undefined?'湿度不可用':`湿度 ${t.hum}%`));
-  if(key==='reminder_list'){
-    const items=draft.reminders.filter(x=>x.enabled).slice(0,2);
-    container.append(card('提醒列表',items[0]?`${items[0].time} ${items[0].text}`:'未设置',items[1]?`${items[1].time} ${items[1].text}`:'在下方添加提醒',true));
-  }
-  if(key==='today_calendar'){
-    const today=new Date().toLocaleDateString('en-CA');const items=draft.calendar.filter(x=>x.enabled&&x.date===today).slice(0,2);
-    container.append(card('今日日历',items[0]?`${items[0].time} ${items[0].title}`:'今天无日程',items[1]?`${items[1].time} ${items[1].title}`:'仅显示当天条目',true));
-  }
-  if(key==='alarm'){
-    const item=draft.alarms.find(x=>x.enabled);container.append(card('闹钟',item?item.time:'未设置',item?item.label:'到点屏幕提醒'));
-  }
-  if(key==='weather'){
-    container.append(card('天气',t.wx_temp===undefined?'-- ℃':`${t.wx_temp} ℃`,'在其他视图输入城市后显示'));
-  }
-  if(key==='countdown'){
-    const item=(draft.countdowns||[]).find(x=>x.enabled);
-    container.append(card('倒计时',item?`${item.date} ${item.time}`:'未设置',item?item.title:'添加目标日期'));
-  }
-  if(key==='ai_cost'){
-    container.append(card('AI 用量',t.ait===undefined?'--':`今日 ${String(t.ait).split(',')[0]}k tok`,
-      t.aiu?t.aiu.split(',').slice(0,2).join(' · '):'AI 会话活动后显示'));
-  }
+  parent.append(t); return t;
+}
+function devDot(parent,x,y,d,color){
+  const n = devAbs(el('div','dev-el'),x,y,d,d);
+  n.style.borderRadius = (d/2)+'px';
+  n.style.background = color;
+  parent.append(n); return n;
 }
 
-/* ---------- 四大布局渲染器 ---------- */
-function visibleTasks(){
-  const tasks = live.tasks||[];
-  return tv.tv.range==='running' ? tasks.filter(x=>RUNNING_STATES.includes(x.state)) : tasks;
+/* ---------- 任务状态：镜像固件的 state_short / state_color / state_running ---------- */
+const DEV_RUNNING = ['THINKING','GENERATING','TOOL','BUILD'];
+function devRunning(state){ return DEV_RUNNING.includes(String(state||'')) }
+function devStateShort(state){
+  const map = {ASK:'待确认', ERROR:'出错', WAIT_INPUT:'等回复', DONE:'已完成',
+               TOOL:'执行中', THINKING:'思考中'};
+  return map[String(state||'')] || '处理中';
 }
-function renderFocus(body){
-  const tasks=visibleTasks(), top=tasks[0];
-  const pill=el('div','focus-pill');
-  pill.append(el('span','focus-pill-icon',top&&top.state==='ASK'?'⏸':'◉'));
-  pill.append(el('span','',top?(stateNames[top.state]||top.state):'空闲中'));
-  body.append(pill);
-  body.append(el('div','focus-state',top?(stateNames[top.state]||top.state):'等待任务'));
-  if(top){
-    if(tv.fv.supplement==='steps') body.append(el('div','focus-sub',`步骤与结果 · ${top.prog||'进行中'} · ${top.project||'未命名项目'}`));
-    else if(tv.fv.supplement==='lastmsg') body.append(el('div','focus-sub',`最近消息 · ${top.project||'未命名项目'}`));
-    if(tv.fv.value!=='none'){
-      const v = tv.fv.value==='model' ? ((live.telemetry.aiu||'').split(',')[1]||'模型未知')
-              : tv.fv.value==='auto' ? `已运行 ${fmtElapsed(top.elapsed)}`
-              : `本轮用时 ${fmtElapsed(top.elapsed)}`;
-      body.append(el('div','focus-value',v));
-    }
+/* 状态色是固件写死的语义色（COL_OK/WARN/ERR），不随 profile 主题走。 */
+function devStateColor(state, accent, sub){
+  const s = String(state||'');
+  if(s === 'GENERATING' || s === 'TOOL') return accent;
+  if(s === 'WAIT_INPUT') return devSemantic('status.ok');
+  if(s === 'ASK' || s === 'THINKING') return devSemantic('status.warn');
+  if(s === 'ERROR') return devSemantic('status.err');
+  return sub;
+}
+
+/* ---------- 遥测取值：与固件的 render_generic 一一对应 ---------- */
+function weatherText(code){
+  const c = Number(code);
+  if(c === 0) return '晴';
+  if(c <= 2) return '多云';
+  if(c === 3) return '阴';
+  if(c === 45 || c === 48) return '雾';
+  if(c >= 51 && c <= 57) return '毛毛雨';
+  if(c >= 61 && c <= 67) return '雨';
+  if(c >= 71 && c <= 77) return '雪';
+  if(c >= 80 && c <= 82) return '阵雨';
+  if(c >= 85 && c <= 86) return '阵雪';
+  if(c >= 95) return '雷暴';
+  return '未知';
+}
+/* 协议里天气是单个 wx=temp,code,hi,lo（见 protocol.py 的 _ORDER）。
+   以前这里读 t.wx_temp，字段名对不上，所以「天气」永远是「—」。 */
+function devWx(){
+  const raw = (live.telemetry||{}).wx;
+  if(!raw) return null;
+  const [temp,code,hi,lo] = String(raw).split(',');
+  const t = parseFloat(temp);
+  if(!isFinite(t)) return null;
+  return {temp:t, code:parseInt(code,10), hi:parseFloat(hi), lo:parseFloat(lo)};
+}
+function devDateText(){ return String((live.telemetry||{}).date || '') }
+function devClockText(){
+  const raw = String((live.telemetry||{}).time || '');
+  if(!raw) return '--:--:--';
+  const p = raw.padStart(6,'0');
+  return `${p.slice(0,2)}:${p.slice(2,4)}:${p.slice(4,6)}`;
+}
+function devWeekday(dateStr){
+  const d = new Date(String(dateStr)+'T00:00:00');
+  return isNaN(d.getTime()) ? '' : '日一二三四五六'[d.getDay()];
+}
+function devCountdownText(item){
+  const at = new Date(`${item.date}T${item.time}:00`);
+  if(isNaN(at.getTime())) return null;
+  let remain = Math.floor((at - Date.now())/1000);
+  if(remain < 0) return {main:item.title, sub:'已结束'};
+  const days = Math.floor(remain/86400);
+  remain %= 86400;
+  const pad = n => String(n).padStart(2,'0');
+  return {main:`${days}天 ${pad(Math.floor(remain/3600))}:${pad(Math.floor(remain/60)%60)}:${pad(remain%60)}`,
+          sub:`${item.title} ${item.time}`};
+}
+/* 通用组件的文案，逐条对应 render_generic 的分支。 */
+function devGenericContent(kind){
+  const t = live.telemetry || {};
+  const today = devDateText(), wd = devWeekday(today);
+  if(kind === 'clock'){
+    const time = today ? devClockText() : '--:--:--';
+    const sub = today && wd ? `${today} 星期${wd}` : '时间未同步';
+    const parts = today.split('-');
+    const date = parts.length === 3 ? `${Number(parts[0])}/${Number(parts[1])}/${Number(parts[2])}` : today;
+    return {main:time, sub, date};
+  }
+  if(kind === 'environment'){
+    return {main: t.temp === undefined ? '温度不可用' : `${Number(t.temp).toFixed(1)} ℃`,
+            sub: t.hum === undefined ? '传感器读取失败' : `湿度 ${Math.round(t.hum)}%`};
+  }
+  if(kind === 'weather'){
+    const w = devWx();
+    if(!w) return {main:'天气未配置', sub:'等待客户端推送'};
+    return {main:`${w.temp.toFixed(1)}℃ ${weatherText(w.code)}`,
+            sub: isFinite(w.hi) ? `高 ${Math.round(w.hi)}°  低 ${Math.round(w.lo)}°` : '等待客户端推送'};
+  }
+  if(kind === 'ai_cost'){
+    if(t.ait === undefined) return {main:'今日暂无用量', sub:'AI 会话活动后显示'};
+    const k = Number(t.ait) || 0;
+    const model = String(t.aiu||'').split(',')[1] || '';
+    return {main: k >= 1000 ? `今日 ${(k/1000).toFixed(1)}M` : `今日 ${k}k`, sub: model};
+  }
+  if(kind === 'countdown'){
+    const item = (draft.countdowns||[]).find(x => x.enabled);
+    if(!item) return {main:'未设置', sub:'在工作台添加倒计时'};
+    return devCountdownText(item) || {main:'未设置', sub:'日期无效'};
+  }
+  if(kind === 'reminder_list'){
+    const day = new Date(today+'T00:00:00').getDay() || 7;   // 0=周日 → 7
+    const hit = (draft.reminders||[]).filter(x => x.enabled && (x.weekdays||[]).includes(day))
+      .sort((a,b) => String(a.time).localeCompare(String(b.time)))[0];
+    return hit ? {main:`${hit.time} ${hit.text}`, sub:'今天的下一条提醒'}
+               : {main:'今天无提醒', sub:''};
+  }
+  if(kind === 'today_calendar'){
+    const hit = (draft.calendar||[]).filter(x => x.enabled && x.date === today)
+      .sort((a,b) => String(a.time).localeCompare(String(b.time)))[0];
+    return hit ? {main:`${hit.time} ${hit.title}`, sub:'今日日程'} : {main:'今天无日程', sub:''};
+  }
+  if(kind === 'alarm'){
+    const day = new Date(today+'T00:00:00').getDay() || 7;
+    const hit = (draft.alarms||[]).filter(x => x.enabled && (x.weekdays||[]).includes(day))
+      .sort((a,b) => String(a.time).localeCompare(String(b.time)))[0];
+    return hit ? {main:`${hit.time} ${hit.label}`, sub:'到点触摸屏幕停止'}
+               : {main:'未设置闹钟', sub:''};
+  }
+  return {main:'—', sub:''};
+}
+
+/* ---------- 像素宠物：镜像固件 draw_pet / pet_apply_expression ----------
+   三种形象（robot/cat/chick）×两种尺寸（AI 卡小只 sz1 / 宠物页大只 sz2），
+   表情联动 AI 状态（出错红眼/抖动、完成眯眼跳、等你弹「!」），
+   饿/渴/累 徽标来自 PS 遥测（priority 低于 AI 徽标）。 */
+const PET_GEO = { // 与 firmware draw_pet 的坐标表一致（sz 已含）
+  robot: { ant:[29,0,6,6], head:[10,5,44,28,8] },
+  cat:   { ears:[[12,0,10,9],[42,0,10,9]], tail:[58,24,6,22] },
+  chick: { beak:[26,22,12,6] },
+};
+function petColors(type, ctx, st){
+  const c = type==='cat' ? {body:'#C88A4B',edge:'#8A5A2B',limb:'#C88A4B'}
+          : type==='chick' ? {body:'#F7D794',edge:'#D9A441',limb:'#D9A441'}
+          : {body:devSemantic('robot.body'),edge:ctx.accent,limb:devSemantic('robot.body')};
+  if(st==='ERROR'){ c.edge=devSemantic('status.err'); c.eye=devSemantic('status.err'); }
+  else c.eye=ctx.text;
+  return c;
+}
+function devPet(card, type, st, bx, by, sz){
+  const ctx = { accent: panelHex(draft.theme.accent),
+                text: panelHex(draft.theme.text),
+                sub: panelHex(draft.theme.sub),
+                bg: panelHex(draft.theme.bg) };
+  const col = petColors(type, ctx, st);
+  const isErr = st==='ERROR', isDone = st==='DONE', isWait = st==='WAIT_INPUT'||st==='ASK';
+  const U = (v)=>Math.round(v*sz);
+  const rect=(x,y,w,h,r,color,opa,border)=>{ const n=devAbs(el('div','dev-el'),U(x),U(y),U(w),U(h));
+    n.style.borderRadius=U(r)+'px'; if(color){n.style.background=color;}
+    n.style.opacity=opa==null?1:opa;
+    if(border){n.style.border=Math.max(1,Math.round(sz))+'px solid '+border;}
+    card.append(n); return n; };
+  const root=devAbs(el('div','dev-el'),U(bx),U(by),U(64),U(80)); root.style.opacity=1; card.append(root);
+  const grp=devAbs(el('div','dev-el'),0,0,U(64),U(80)); root.append(grp);
+  const R=(x,y,w,h,r,color,opa,border)=>{const n=devAbs(el('div','dev-el'),U(x),U(y),U(w),U(h));
+    n.style.borderRadius=U(r)+'px'; if(color){n.style.background=color;}
+    n.style.opacity=opa==null?1:opa;
+    if(border){n.style.border=Math.max(1,Math.round(sz))+'px solid '+border;}
+    grp.append(n); return n;};
+  if(type==='robot') R(29,0,6,6,3,devSemantic('status.ok'));
+  if(type==='cat'){ R(12,0,10,9,3,col.body,1,col.edge); R(42,0,10,9,3,col.body,1,col.edge); }
+  const hy = type==='cat'?7:5;
+  R(10,hy,44,28,8,col.body,1,col.edge);
+  R(16,hy+5,14,14,7,ctx.accent,0.5); R(34,hy+5,14,14,7,ctx.accent,0.5);
+  R(19,hy+8,8,8,4,col.eye); R(37,hy+8,8,8,4,col.eye);
+  if(type==='chick') R(26,hy+17,12,6,2,'#FFB84D');
+  else R(24,hy+19,16,3,1, isErr?devSemantic('status.err'):isDone?devSemantic('status.ok'):ctx.accent);
+  const by2 = hy+30;
+  R(8,by2,48,26,8,col.body,1,col.edge);
+  R(28,by2+8,8,5,2, type==='robot'?ctx.accent:col.edge);
+  R(0,by2+3,7,16,3,col.limb); R(57,by2+3,7,16,3,col.limb);
+  if(type==='cat') R(58,by2-12,6,22,3,col.limb);
+  R(16,by2+28,16,7,3,col.limb); R(34,by2+28,16,7,3,col.limb);
+  // 徽标：AI 出错/等你 > 宠物饿渴累
+  const ps=(live.telemetry||{}).ps||'';
+  const [h,t,e]=ps?ps.split(',').map(Number):[100,100,100];
+  let badge='', bcol=devSemantic('status.warn');
+  if(isErr){badge='×';bcol=devSemantic('status.err');}
+  else if(isWait)badge='!';
+  else if(h<20){badge='饿';}
+  else if(t<20){badge='渴';}
+  else if(e<20){badge='累';}
+  if(badge){ const n=devAbs(el('div','dev-label'),U(bx+44),U(by),U(20),devLineH(24));
+    n.style.fontSize=devFont(24)+'px'; n.style.color=bcol; n.textContent=badge; card.append(n); }
+}
+function devPetCompact(card, ctx, st){
+  devPet(card, (draft.pet&&draft.pet.type)||'robot', st, 229, 42, 1);
+}
+/* 宠物页（W_PET）：大宠物 ×2 + 三条状态条 + 三个交互按钮，几何照抄固件 */
+function devPetPage(screen, ctx){
+  const type=(draft.pet&&draft.pet.type)||'robot';
+  const st=((live.tasks||[])[0]||{}).state||'IDLE';
+  devPet(screen, type, st, 96, 66, 2);
+  const ps=(live.telemetry||{}).ps||'80,75,90';
+  const vals=ps.split(',').map(Number);
+  const names=['饱食','水分','活力'];
+  names.forEach((label,i)=>{
+    devLabel(screen, 24, 240+30*i, 60, label, 20, 'dev-dim');
+    const track=devAbs(el('div','dev-el'), 84, 244+30*i, 170, 10);
+    track.style.borderRadius='5px';
+    track.style.background=panelHex(draft.theme.bg);
+    track.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
+    screen.append(track);
+    const fill=devAbs(el('div','dev-el'), 0, 0, Math.max(0,Math.min(100,vals[i]||0))*1.7, 10);
+    fill.style.background=ctx.accent; fill.style.borderRadius='5px';
+    track.append(fill);
+    devLabel(screen, 262, 240+30*i, 44, String(vals[i]||0), 20, 'dev-ink');
+  });
+  ['喂食','喝水','运动'].forEach((t,i)=>{
+    const btn=devAbs(el('div','dev-el'), 12+102*i, 344, 92, 44);
+    btn.style.background=panelHex(draft.theme.card);
+    btn.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
+    btn.style.borderRadius='10px';
+    screen.append(btn);
+    devLabel(btn, 0, 0, 92, t, 20, null, ctx.text, 'center');
+  });
+  devLabel(screen, 10, 396, 300, '状态保存在电脑，互动立即生效', 20, 'dev-dim');
+}
+/* 工具页（页面带 filter）：顶部完成带 30px + 5 行会话（66px、间隔 4、y=94 起）。/* 工具页（页面带 filter）：顶部完成带 30px + 5 行会话（66px、间隔 4、y=94 起）。
+   与固件 make_ai_tool_page / render_ai_filtered 同源；完成带高亮 = 有 10 秒内
+   的新完成（已读状态与概览共用本地存储）。 */
+function agoText(sec){
+  sec = Math.max(0, Number(sec)||0);
+  if(sec < 60) return '刚刚';
+  if(sec < 3600) return `${Math.floor(sec/60)}分前`;
+  return `${Math.floor(sec/3600)}时前`;
+}
+function devAiToolPage(screen, ctx, filter){
+  const band = devCard(screen, 8, DEV.BODY_Y, 304, 30);
+  const fresh = (live.done||[]).some(d => (d.at||0) > doneSeenAt());
+  if(fresh) band.style.borderColor = ctx.accent;
+  const d0 = (live.done||[])[0];
+  devLabel(band, 10, 0, 284,
+           d0 ? `完成 ${d0.project||'未命名项目'} · ${agoText(d0.age)}` : '暂无完成的会话',
+           20, null, fresh ? ctx.accent : undefined);
+  const tasks = (live.tasks||[]).filter(t => !filter || t.tool === filter).slice(0,5);
+  for(let i=0;i<5;i++){
+    const row = devAbs(el('div','dev-el'), 8, 94 + 70*i, 304, 66);
+    row.style.background = ctx.bg;
+    row.style.border = '1px solid ' + panelHex(draft.theme.card_edge||draft.theme.card);
+    screen.append(row);
+    const task = tasks[i];
+    if(!task) continue;
+    devDot(row, 8, 10, 8, devStateColor(task.state, ctx.accent, ctx.sub));
+    devLabel(row, 22, 4, 104, task.tool, 20, null,
+             task.state === 'ERROR' ? devSemantic('status.err') : undefined);
+    devLabel(row, 126, 4, 170, `${task.project || '未命名'} · ${fmtElapsed(task.elapsed)}`,
+             20, 'dev-dim', null, 'right');
+    devTrack(row, 8, 46, 268, Number(task.prog)||0, ctx.accent);
+  }
+}
+/* 天气城市页预览：当前实况卡 + 5 天预报行，几何照抄固件 make_weather_city。
+   数据下标 = 页面 city 在 draft.weather.cities 里的序号（与固件的
+   g_profile.city_names 顺序一致——都来自同一份 profile）。 */
+function devWeatherCity(screen, ctx, page){
+  const cities=(draft.weather&&draft.weather.cities)||[];
+  let idx=cities.findIndex(c=>c.name===page.city); if(idx<0) idx=0;
+  const t=live.telemetry||{};
+  const d=t['w'+idx], f=t['wf'+idx];
+  const card=devCard(screen, 8, DEV.BODY_Y, 304, 116);
+  const parts=d?String(d).split(','):[];
+  // parts 经 split 后永远是数组（无数据时是 []），拿它判真恒为真——数据未到
+  // 时会把 "undefined℃" 画上屏。判据必须是原始的 d。
+  devLabel(card, 14, 4, 150, d?`${parts[0]}℃`:'--℃', 48, 'dev-ink');
+  devLabel(card, 14, 70, 140, d?weatherText(+parts[1]):'天气未配置', 24, null, ctx.accent);
+  devLabel(card, 150, 78, 140, d?`高 ${+parts[2]}° 低 ${+parts[3]}°`:'等客户端推送', 20, 'dev-dim');
+  const days=f?String(f).split(';'):[];
+  const today=new Date().getDay();     // 0=周日
+  for(let i=0;i<5;i++){
+    const row=devAbs(el('div','dev-el'), 8, 184 + 50*i, 304, 46);
+    row.style.background=ctx.bg;
+    row.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
+    screen.append(row);
+    const dp=days[i]?days[i].split(',').map(Number):null;
+    const wd='日一二三四五六'[(today+i)%7];
+    const name=i===0?'今天':i===1?'明天':i===2?'后天':`周${wd}`;
+    devLabel(row, 12, 4, 64, name, 20, 'dev-dim');
+    devLabel(row, 80, 4, 110, dp?weatherText(dp[0]):'--', 20);
+    devLabel(row, 194, 4, 98, dp?`${dp[1]}° ${dp[2]}°`:'', 20, null, null, 'right');
+  }
+}
+function devAiPage(screen, ctx, page){
+  const filter = (page && page.filter) || '';
+  if(filter){ devAiToolPage(screen, ctx, filter); return; }
+  const tasks = (live.tasks||[]).slice(0,4);
+  const card = devCard(screen, DEV.AI.x, DEV.AI.y, DEV.AI.w, DEV.AI.h);
+  const running = tasks.filter(t => devRunning(t.state)).length;
+  const focus = tasks[0];
+  devLabel(card, 14, 10, 178, focus ? `${focus.tool} · ${String(focus.id||'').slice(0,4)}` : 'AI 会话',
+           20, 'dev-dim');
+  devLabel(card, 192, 10, 98, `活跃 ${running}/${tasks.length}`, 20, 'dev-dim', null, 'right');
+  if(!focus){
+    devLabel(card, 14, 42, 208, '暂无活跃会话', 32, 'dev-ink');
+    devDot(card, 14, 102, 10, ctx.sub);
+    devLabel(card, 30, 96, 196, '等待编辑器活动', 20, null, ctx.accent);
+    devLabel(card, 14, 134, 276, '多编辑器启动后自动加入', 20, 'dev-dim');
+    devTrack(card, 14, 166, 276, 0, ctx.accent);
   }else{
-    body.append(el('div','focus-sub',tv.fv.idle==='focus'?'保持状态聚焦，等待新的会话':`空闲时将显示「${schemeNames[tv.fv.idle]||'状态聚焦'}」`));
+    devLabel(card, 14, 42, 208, focus.project || '未命名项目', 32, 'dev-ink');
+    const dotCol = devStateColor(focus.state, ctx.accent, ctx.sub);
+    devDot(card, 14, 102, 10, dotCol);
+    devLabel(card, 30, 96, 196, devStateShort(focus.state), 20, null, dotCol);
+    devLabel(card, 14, 134, 276,
+             `运行 ${fmtElapsed(focus.elapsed)} · ${Math.max(0,focus.age||0)} 秒前更新`, 20, 'dev-dim');
+    devTrack(card, 14, 166, 276, Number(focus.prog)||0, ctx.accent);
   }
-  if(tv.fv.others==='show'){
-    const others=el('div','mini-tasks');
-    tasks.slice(1,4).forEach(x=>{
-      const row=el('div','mini-task');
-      row.append(el('span','',`${x.tool} · ${x.project||'未命名'}`),el('em','',stateNames[x.state]||x.state));
-      others.append(row);
-    });
-    if(!others.childElementCount)others.append(el('div','mini-task','暂无其他进行中任务'));
-    body.append(others);
+  // 其他会话 3 行
+  const others = tasks.slice(1,4);
+  for(let i=0;i<3;i++){
+    const row = devAbs(el('div','dev-el'), 10, 174 + 68*i, 284, 62);
+    row.style.background = ctx.bg;
+    card.append(row);
+    const task = others[i];
+    if(!task) continue;
+    devDot(row, 8, 10, 8, devStateColor(task.state, ctx.accent, ctx.sub));
+    devLabel(row, 22, 4, 104, task.tool, 20, null,
+             task.state === 'ERROR' ? devSemantic('status.err') : undefined);
+    devLabel(row, 126, 4, 150, `${task.project || '未命名'} · ${fmtElapsed(task.elapsed)}`,
+             20, 'dev-dim', null, 'right');
+    devTrack(row, 8, 40, 268, Number(task.prog)||0, ctx.accent);
   }
-}
-function renderTimeline(body){
-  const tasks=visibleTasks();
-  body.append(el('div','tl-head','任务时间线'));
-  body.append(el('div','focus-sub',tasks.length?`${tasks.length} 个任务 · ${tv.tv.range==='running'?'仅进行中':'进行中与近期完成'}`:'暂无任务'));
-  const list=el('div','tl-list');
-  tasks.slice(0,4).forEach(x=>{
-    const row=el('div','tl-item');
-    row.append(el('i','tl-dot'));
-    const main=el('div','tl-main');
-    main.append(el('strong','',`${x.tool} · ${x.project||'未命名项目'}`));
-    main.append(el('small','',stateNames[x.state]||x.state));
-    row.append(main);
-    if(tv.tv.time!=='none'){
-      row.append(el('span','tl-time', tv.tv.time==='event' ? `${x.age} 秒前` : fmtElapsed(x.elapsed)));
+  // 单会话时用空位显示电脑摘要（固件逻辑：total<=1 才显示）
+  if(tasks.length <= 1){
+    const t = live.telemetry || {};
+    const box = devAbs(el('div','dev-el'), 10, 212, 284, 154);
+    box.style.background = ctx.bg;
+    card.append(box);
+    devLabel(box, 12, 10, 258, '电脑概览', 20, 'dev-dim');
+    if(isConnected()){
+      devLabel(box, 12, 52, 258, `CPU ${t.cpu===undefined?'--':t.cpu}%   内存 ${t.mem===undefined?'--':t.mem}%`,
+               20, null, ctx.text);
+      const net = (isFinite(t.netrx) && isFinite(t.nettx)) ? (Number(t.netrx)+Number(t.nettx)).toFixed(1) : null;
+      devLabel(box, 12, 98, 258, `磁盘 ${t.disk===undefined?'--':t.disk}%   网络 ${net===null?'--':net+' Mb'}`,
+               20, null, ctx.text);
+    }else{
+      devLabel(box, 12, 52, 258, '等待电脑数据', 20, null, ctx.text);
     }
-    list.append(row);
+  }
+  devPetCompact(card, ctx, focus ? focus.state : 'IDLE');
+}
+
+/* ---------- 硬件四卡页：镜像 make_hardware + render_hardware ---------- */
+function devHwPage(screen, ctx){
+  const t = live.telemetry || {};
+  const C = DEV.HW_CARD;
+  const titles = ['处理器','内存','磁盘','网络'];
+  const ok = isConnected();
+  titles.forEach((title,i) => {
+    const x = C.x0 + (i%2)*C.dx, y = C.y0 + Math.floor(i/2)*C.dy;
+    const card = devCard(screen, x, y, C.w, C.h);
+    devLabel(card, 12, 28, C.w-24, title, 20, 'dev-dim');
+    let value = '--', note = '数据不可用', pct = 0, color = ctx.accent;
+    if(ok){
+      if(i===0){ value = `${t.cpu===undefined?'--':t.cpu}%`; note = '即时负载'; pct = Number(t.cpu)||0; }
+      if(i===1){ value = `${t.mem===undefined?'--':t.mem}%`;
+                 note = t.memtotal ? `${t.memused}/${t.memtotal} GB` : '即时负载'; pct = Number(t.mem)||0; }
+      if(i===2){ value = `${t.disk===undefined?'--':t.disk}%`;
+                 note = t.diskfree===undefined ? '使用率' : `余 ${Math.round(t.diskfree)} G`;
+                 pct = Number(t.disk)||0;
+                 if(Number(t.disk) >= 90) color = devSemantic('status.warn'); }
+      if(i===3){
+        if(isFinite(t.netrx) && isFinite(t.nettx)){
+          const sum = Number(t.netrx)+Number(t.nettx);
+          value = `${Math.round(sum)} Mb`;
+          note = `下${Math.round(t.netrx)} 上${Math.round(t.nettx)}`;
+          pct = Math.round(sum*100/50);
+        }else{ value = '--'; note = '网速未提供'; }
+      }
+    }
+    devLabel(card, 12, 64, C.w-24, value, 32, 'dev-ink');
+    devTrack(card, 12, 120, C.w-24, pct, color);
+    devLabel(card, 12, 136, C.w-24, note, 20, 'dev-dim');
   });
-  if(!tasks.length)list.append(el('div','mini-task','连接 AI 会话后显示时间线'));
-  body.append(list);
 }
-function renderCompanion(body){
-  const t=live.telemetry||{}, top=(live.tasks||[])[0];
-  const scene=el('div',`cp-scene scene-${tv.cp.scene}${tv.cp.fx?' with-fx':''}${tv.cp.action?' with-action':''}`);
-  scene.append(el('span','cp-pet','🐱'));
-  scene.append(el('span','cp-ground'));
-  body.append(scene);
-  const info=el('div','cp-info');
-  const lines=[];
-  if(tv.cp.disp.state) lines.push(top?(stateNames[top.state]||top.state):'休息中');
-  if(tv.cp.disp.name&&top) lines.push(top.project||'未命名项目');
-  if(tv.cp.disp.elapsed&&top) lines.push(`本轮 ${fmtElapsed(top.elapsed)}`);
-  if(tv.cp.disp.model) lines.push((t.aiu||'').split(',')[1]||'模型待定');
-  if(tv.cp.disp.tok) lines.push(t.ait?`今日 Token ${String(t.ait).split(',')[0]}k`:'今日暂无用量');
-  info.append(el('div','cp-state',lines[0]||'状态待确认'));
-  if(lines.length>1)info.append(el('div','cp-meta',lines.slice(1).join(' · ')));
-  if(tv.cp.feedback && top?.state==='DONE') info.append(el('div','cp-cheer','🎉 任务完成，陪你庆祝一下'));
-  if(tv.cp.rest) info.append(el('div','cp-rest','记得起来喝口水'));
-  body.append(info);
-}
-function renderDashboard(body){
-  const t=live.telemetry||{}, top=(live.tasks||[])[0];
-  const m=tv.dv.metrics;
-  const sel=Object.entries(m).filter(([,v])=>v).length;
-  body.append(el('div','focus-sub', tv.dv.combo==='auto'?'自动组合 · 今日概览':'固定指标 · 今日概览'));
-  if(tv.dv.middle==='usage' && (m.tok||m.model)){
-    const mid=el('div','dash-mid');
-    if(m.tok) mid.append(card('今日 Token', t.ait===undefined?'--':`${String(t.ait).split(',')[0]}k`,'全部来源合计'));
-    if(m.model&&mid.childElementCount<2) mid.append(card('当前模型',(t.aiu||'').split(',')[1]||'待定', top?top.tool.toUpperCase():'—'));
-    if(mid.childElementCount)body.append(mid);
+
+/* ---------- 通用组件卡：镜像 make_generic + render_generic ---------- */
+function devGenericCard(screen, ctx, kind, x, y, w, h){
+  const card = devCard(screen, x, y, w, h);
+  devLabel(card, 12, 12, w-24, DEV_WIDGET_TITLES[kind] || '', 20, 'dev-dim');
+  const compact = h < 110;
+  const content = devGenericContent(kind);
+  // 大时钟卡（非紧凑 + 宽度够）：32px 时间 + 右栏「周X / YYYY/M/D」
+  if(kind === 'clock' && !compact && w >= 280){
+    const wd = devWeekday(devDateText());
+    devLabel(card, 12, 50, w-112, content.main, 32, 'dev-ink');
+    devLabel(card, w-96, 50, 84, wd ? `周${wd}` : '', 24, 'dev-dim', null, 'right');
+    devLabel(card, w-96, 86, 84, content.date, 20, null, ctx.accent, 'right');
+    return card;
   }
-  if(tv.dv.middle==='stats' && (m.task||m.elapsed)){
-    const mid=el('div','dash-mid');
-    if(m.task) mid.append(card('任务名称', top?(top.project||'未命名'):'无进行中任务', top?top.tool.toUpperCase():'—'));
-    if(m.elapsed&&mid.childElementCount<2) mid.append(card('本轮用时', top?fmtElapsed(top.elapsed):'--','当前会话'));
-    if(mid.childElementCount)body.append(mid);
-  }
-  const grid=el('div','screen-grid');
-  if(m.cpu) grid.append(card('处理器',t.cpu===undefined?'—':`${t.cpu}%`,'即时负载'));
-  if(m.mem) grid.append(card('内存',t.mem===undefined?'—':`${t.mem}%`,t.memtotal?`${t.memused} / ${t.memtotal} GB`:'数据不可用'));
-  if(m.disk) grid.append(card('存储',t.disk===undefined?'—':`${t.disk}%`,t.diskfree?`可用 ${t.diskfree} GB`:'数据不可用'));
-  if(m.net) grid.append(card('网络',t.netrx===undefined?'—':`${t.netrx}/${t.nettx} Mb`,'↓ 上行 / ↓ 下行'));
-  if(grid.childElementCount)body.append(grid);
-  else body.append(el('div','mini-task','请在右侧勾选至少一项显示指标'));
-  $('dv-metric-count').textContent=`已选 ${sel} 项`;
+  devLabel(card, 12, compact ? 44 : 68, w-24, content.main, compact ? 20 : 28, 'dev-ink');
+  if(!compact) devLabel(card, 12, h-40, w-24, content.sub, 20, 'dev-dim');
+  return card;
 }
+
+/* ---------- 页面组合 → 组件矩形：镜像 firmware build_page 的槽位算法 ---------- */
+function devWidgetUnits(kind){ return (kind === 'reminder_list' || kind === 'today_calendar') ? 2 : 1 }
+function devBodyLayout(page){
+  if(page.widgets.includes('ai_list')) return [{kind:'ai_list'}];
+  if(page.widgets.includes('hw_cards')) return [{kind:'hw_cards'}];
+  const slots = page.widgets.reduce((n,k) => n + devWidgetUnits(k), 0);
+  const rows = Math.max(1, Math.min(2, Math.ceil(slots/2)));
+  const cardH = Math.floor((DEV.BODY_H - (rows-1)*DEV.GRID_GAP) / rows);
+  const out = [];
+  if(page.layout === 'list'){
+    const h = Math.floor(DEV.BODY_H / page.widgets.length) - 6;
+    page.widgets.forEach((kind,i) => out.push({kind, x:8, y:DEV.BODY_Y + i*(h+6), w:304, h}));
+  }else{
+    let cursor = 0;
+    page.widgets.forEach(kind => {
+      const wide = devWidgetUnits(kind) === 2;
+      if(wide && (cursor % 2)) cursor++;
+      out.push({kind, x:8 + (cursor%2)*156,
+                y:DEV.BODY_Y + Math.floor(cursor/2)*(cardH+DEV.GRID_GAP),
+                w: wide ? 304 : 148, h:cardH});
+      cursor += wide ? 2 : 1;
+    });
+  }
+  return out;
+}
+
+/* 一整屏：顶栏 + 内容 + 页脚，全部按固件坐标摆放。 */
+function devScreen(pageIndex, theme, host){
+  const page = (draft.pages||[])[pageIndex] || (draft.pages||[])[0];
+  // host 是页面上已有的 .screen 容器；给了就填进去，不再套一层 bezel
+  // （HTML 里已经是 .screen-scale > .screen-bezel > .screen 的结构）。
+  const screen = host || el('div','screen');
+  if(host) screen.replaceChildren();
+  applyDeviceTheme(theme, screen);
+  if(!page) return screen;
+  const ctx = {
+    bg: panelHex(theme.bg), accent: panelHex(theme.accent),
+    sub: panelHex(theme.sub), text: panelHex(theme.text),
+  };
+  if(!isConnected()){
+    // 离线：顶部 4px 红条（固件的 offbar）
+    const bar = devAbs(el('div','dev-el'), 0, 0, DEV.W, 4);
+    bar.style.background = devSemantic('status.err');
+    screen.append(bar);
+  }
+  // 顶栏：左页面标题 · 中短时钟 · 右天气 + 状态点（对应 build_page 的 HEAD_Y 行）
+  // 坐标与 firmware build_page 的顶栏一致：时钟显示到秒后需要 ~96px，
+  // 标题收到 100px、天气右对齐收窄到 76px 让位（详见 ui.cpp 的注释）。
+  const topclock = Number(draft.theme.topclock ?? 1), topwx = Number(draft.theme.topwx ?? 1);
+  devLabel(screen, 8, DEV.HEAD_Y, topclock ? 100 : (topwx ? 174 : 190),
+           page.title, 20, 'dev-ink');
+  if(topclock){
+    const clk = devLabel(screen, 112, DEV.HEAD_Y, 100, clockHMS(), 20, null, ctx.accent, 'center');
+    clk.dataset.role = 'topclock';
+    // 浏览器字体的数字比 Noto Sans SC 宽约 6%（同样 8 个字符：102.4px vs 96.4px），
+    // 24px 会在 100px 盒子里被截成 "01:08:…"。盒子尺寸照抄固件不变，只把字号
+    // 收到 22px 让整串放得下——布局与实机一致，只有数字宽度这一点是近似的。
+    clk.style.fontSize = '22px';
+  }
+  if(topwx){
+    const w = devWx();
+    devLabel(screen, 216, DEV.HEAD_Y, 76, w ? weatherText(w.code) : '', 20, 'dev-dim', null, 'right');
+  }
+  if(topclock || topwx) devDot(screen, 300, DEV.HEAD_Y+6, 12, isConnected() ? devSemantic('status.ok') : devSemantic('status.err'));
+  else devLabel(screen, 210, DEV.HEAD_Y+2, 100, isConnected() ? '在线' : '电脑离线', 20, null,
+                isConnected() ? devSemantic('status.ok') : devSemantic('status.err'));
+  // 内容区
+  for(const slot of devBodyLayout(page)){
+    if(slot.kind === 'ai_list'){ devAiPage(screen, ctx, page); continue }
+    if(slot.kind === 'weather' && page.city){ devWeatherCity(screen, ctx, page); continue }
+    if(slot.kind === 'pet'){ devPetPage(screen, ctx); continue }
+    if(slot.kind === 'hw_cards'){ devHwPage(screen, ctx); continue }
+    devGenericCard(screen, ctx, slot.kind, slot.x, slot.y, slot.w, slot.h);
+  }
+  // 页脚：左下角「设」按钮 + 居中页码（视觉 32×22，间距 10）
+  devLabel(screen, 4, DEV.FOOT_Y-2, 40, '设', 20, null, ctx.text, 'center');
+  const counts = (draft.pages||[]).length;
+  const total = counts*DEV.DOT_W + (counts-1)*DEV.DOT_GAP;
+  const x0 = Math.floor((DEV.W-total)/2);
+  (draft.pages||[]).forEach((_,k) => {
+    const on = k === pageIndex;
+    const dot = devAbs(el('div','dev-el'), x0 + k*(DEV.DOT_W+DEV.DOT_GAP), DEV.FOOT_Y, DEV.DOT_W, DEV.DOT_H);
+    dot.style.background = on ? ctx.accent : panelHex(theme.card);
+    dot.style.borderRadius = '6px';
+    dot.style.border = '1px solid ' + panelHex(theme.card_edge||theme.card);
+    screen.append(dot);
+    devLabel(dot, 0, 0, DEV.DOT_W, String(k+1), 20, null,
+             on ? ctx.bg : ctx.text, 'center');
+  });
+  return screen;
+}
+/* 把 320×480 的舞台缩放进容器，避免窄栏溢出。scale<=1，只缩不放。 */
+function fitStage(container){
+  if(!container || !container.firstElementChild) return;
+  const avail = container.clientWidth || 0;
+  if(!avail) return;
+  const stage = container.firstElementChild;
+  const k = Math.min(1, avail / (DEV.W + 16));
+  stage.style.transform = `scale(${k})`;
+  container.style.height = Math.ceil((DEV.H + 16) * k) + 'px';
+}
+/* 四种布局预设＝真实的页面组合。每个页面都由固件真能渲染的组件组成；
+   以前这里写的是一套只有浏览器认识的布局参数（tv.*），从不下发到设备。 */
+const LAYOUT_PRESETS = {
+  focus:     {desc:'AI 页独占：焦点会话 + 像素机器人 + 进度条',
+              pages:[{id:'ai', title:'状态聚焦', layout:'list', widgets:['ai_list']}]},
+  timeline:  {desc:'AI 页（其余会话带用时，可当轻量时间线）+ 一页今日用量',
+              pages:[{id:'ai', title:'任务时间线', layout:'list', widgets:['ai_list']},
+                     {id:'cost', title:'用量', layout:'grid_2x2', widgets:['ai_cost','clock']}]},
+  companion: {desc:'AI 页的像素机器人随状态改表情（思考/出错/完成/等你），另加一页温湿度；小屏没有独立场景页',
+              pages:[{id:'ai', title:'角色陪伴', layout:'list', widgets:['ai_list']},
+                     {id:'env', title:'环境', layout:'grid_2x2', widgets:['environment','weather']}]},
+  dashboard: {desc:'电脑四卡（处理器/内存/磁盘/网络）+ 一页今日用量',
+              pages:[{id:'pc', title:'数据看板', layout:'grid_2x2', widgets:['hw_cards']},
+                     {id:'cost', title:'用量', layout:'grid_2x2', widgets:['ai_cost','clock']}]},
+};
+const schemeNames = {focus:'状态聚焦', timeline:'任务时间线', companion:'角色陪伴', dashboard:'数据看板'};
+function isConnected(){ return String(live.device||'').startsWith('connected:') }
+
+let previewPage = 0;
 function renderTaskPreview(){
-  const scheme = $('scheme-select').value;
-  const body=$('screen-body');
-  applyDeviceTheme(draft.theme);
-  $('screen-clock').textContent=clock();
-  $('screen-title').textContent=crownName();
-  $('screen-conn').textContent=isConnected()?'设备在线':'设备离线';
-  $('screen-source').textContent=live.tasks?.length?'实时会话预览':'配置预览';
-  body.replaceChildren();
-  if(scheme==='live'){
-    const page=current();
-    $('screen-title').textContent = tv.crown.mode==='custom'&&tv.crown.text.trim() ? tv.crown.text.trim() : page.title;
-    if(page.widgets.length===1&&['ai_list','hw_cards'].includes(page.widgets[0]))previewWidget(page.widgets[0],body);
-    else {const grid=el('div','screen-grid');page.widgets.forEach(key=>previewWidget(key,grid));body.append(grid)}
+  const host = $('screen');
+  if(!host) return;
+  devScreen(previewPage, draft.theme, host);
+  const pages = draft.pages||[];
+  $('preview-caption').textContent =
+    `第 ${previewPage+1}/${pages.length} 页 · ${pages[previewPage]?.title||'—'} · ` +
+    (isConnected() ? '小屏已连接，实时生效' : '小屏未连接，画面按本机遥测渲染');
+  const cal = panelSpec().calibration || {};
+  if($('panel-pipeline')){
+    $('panel-pipeline').textContent =
+      `预览已过屏幕色彩管线：${panelSpec().pixelFormat} 量化` +
+      `（标定第 ${cal.cell||'—'} 格：${String(cal.rgbOrder||'RGB')}` +
+      `${cal.lvglFlushByteSwap?' + flush 换字节':''}${cal.panelInvert?' + 硬件反相':''}）`;
   }
-  else if(scheme==='focus')renderFocus(body);
-  else if(scheme==='timeline')renderTimeline(body);
-  else if(scheme==='companion')renderCompanion(body);
-  else renderDashboard(body);
-  $('preview-caption').textContent=`${schemeNames[scheme]} · ${crownName()} · ${isConnected()?'小屏已连接，实时生效':'小屏未连接，仅电脑预览'}`;
+  fitStage($('screen-scale'));
 }
-function renderCfgPanels(){
-  const scheme=$('scheme-select').value;
-  $('cfg-focus').hidden = scheme!=='focus';
-  $('cfg-timeline').hidden = scheme!=='timeline';
-  $('cfg-companion').hidden = scheme!=='companion';
-  $('cfg-dashboard').hidden = scheme!=='dashboard';
-  document.querySelectorAll('.layout-btn').forEach(b=>{
-    b.classList.toggle('active', b.dataset.layout===tv.layout);
-    b.setAttribute('aria-pressed', b.dataset.layout===tv.layout ? 'true':'false');
+function renderPageSelect(){
+  const sel = $('page-select');
+  if(!sel) return;
+  const pages = draft.pages||[];
+  sel.replaceChildren();
+  pages.forEach((page,i) => {
+    const option = el('option','',`第 ${i+1} 页 · ${page.title}`);
+    option.value = String(i);
+    sel.append(option);
   });
+  if(previewPage >= pages.length) previewPage = 0;
+  sel.value = String(previewPage);
+}
+/* 任务视图右栏：列出真实页面组合，让用户看见具体下发什么。 */
+function renderTaskPages(){
+  const root = $('task-pages');
+  if(!root) return;
+  root.replaceChildren();
+  (draft.pages||[]).forEach((page,i) => {
+    const b = el('button','page-item'+(i===previewPage?' active':''));
+    b.type = 'button';
+    b.append(el('span','page-number',String(i+1).padStart(2,'0')),
+             el('strong','',page.title + (page.filter?`（只看 ${page.filter}）`:'')),
+             el('small','',page.widgets.map(k => (widgets[k]||[k])[0]).join(' · ')));
+    b.draggable = true;
+    b.onclick = () => { previewPage = i; renderPageSelect(); renderTaskPreview(); renderTaskPages() };
+    b.ondragstart = () => { dragTaskPage = i; b.classList.add('dragging') };
+    b.ondragend = () => { b.classList.remove('dragging') };
+    b.ondragover = e => e.preventDefault();
+    b.ondrop = e => {
+      e.preventDefault();
+      if(dragTaskPage < 0 || dragTaskPage === i) return;
+      manualOrder();
+      reorder(draft.pages, dragTaskPage, i);
+      previewPage = i;
+      renderPageSelect(); renderTaskPages(); renderTaskPreview();
+    };
+    root.append(b);
+  });
+  const page = (draft.pages||[])[previewPage];
+  if($('task-page-title') && page) $('task-page-title').value = page.title;
 }
 
 /* ---------- 主题库 ---------- */
@@ -714,6 +1405,7 @@ async function applySelectedTheme(){
       logHist('bg', `主题背景「${item.name}」已推送`);
     }
     Object.assign(draft.theme, item.colors, {card_opa:item.opa});
+    if(item.bright)draft.theme.bright=item.bright;
     markDirty();
     await save(true);
     await request('/api/sync',{});
@@ -728,13 +1420,8 @@ const dialDefs = [
   {v:0, name:'时序', desc:'极简时钟'},
   {v:1, name:'方寸仪表', desc:'紧凑数据'},
   {v:2, name:'像素夜色', desc:'低亮度夜钟'},
-  {v:3, name:'诗词短句', desc:'名句伴眠'}
-];
-const POEMS=[
-  ['空山新雨后','王维《山居秋暝》'],
-  ['月落乌啼霜满天','张继《枫桥夜泊》'],
-  ['晚来天欲雪','白居易《问刘十九》'],
-  ['星垂平野阔','杜甫《旅夜书怀》']
+  {v:3, name:'诗词短句', desc:'名句伴眠·可轮换'},
+  {v:4, name:'相册轮播', desc:'图片轮换'}
 ];
 let sv = {mode:'theme', dial:0, hideLock:false};
 function loadSV(){
@@ -748,37 +1435,125 @@ function renderDials(){
     cell.type='button';
     const prev=el('div','dial-prev');
     prev.append(el('span','dial-time',clock()));
-    if(d.v===1)prev.append(el('span','dial-sub','CPU 12%'));
+    if(d.v===1){
+      const t=live.telemetry||{};
+      prev.append(el('span','dial-sub',
+        t.temp===undefined&&t.hum===undefined ? '传感离线'
+          : `${t.temp===undefined?'--':Number(t.temp).toFixed(1)}℃ ${t.hum===undefined?'--':Math.round(t.hum)+'%'}`));
+    }
     if(d.v===2)prev.append(el('i','dial-pixel'));
-    if(d.v===3)prev.append(el('span','dial-poem','空山新雨后'));
+    // 诗词样式缩略图显示用户真正会看到的短句，不再写死示范诗句
+    if(d.v===3)prev.append(el('span','dial-poem',
+      (draft.theme.savermsg||'').trim().slice(0,6)||'（未设置）'));
     cell.append(prev, el('span','dial-name',d.name), el('small','dial-desc',d.desc));
     cell.onclick=()=>{sv.dial=d.v;sv.mode='theme';saveSVLocal();renderSaverView()};
     root.append(cell);
   });
 }
-function renderSaverPreview(){
-  const now=new Date();
-  $('sv-date').textContent=`${now.getMonth()+1}月${now.getDate()}日 星期${'日一二三四五六'[now.getDay()]}`;
-  const poem=POEMS[sv.dial%POEMS.length];
-  $('sv-poem').textContent=poem[0]; $('sv-author').textContent=poem[1];
-  $('sv-corner').textContent=crownName();
-  $('sv-screen').className='saver-screen'+(sv.mode==='always'?' always':'');
-  if(sv.mode==='always'){
-    $('sv-title').textContent='屏幕常亮'; $('sv-lunar').textContent='小屏将保持当前画面';
-    $('sv-count').textContent='不会进入息屏';
-    $('sv-mode-note').textContent='当前使用：常亮（不息屏）';
-    return;
+/* 息屏画面预览：与 firmware build_saver() 同源。
+   黑底是固件写死的（ui.cpp 用 0x000000），四款样式的坐标与固定配色照搬；
+   只有「像素夜色」的色带取主题强调色。短句用 draft.theme.savermsg——
+   以前这里放的是硬编码诗句，改「息屏语句」输入框画面纹丝不动。 */
+function svStage(style,msg,always,host){
+  const screen = host || el('div','sv-screen');
+  if(host) screen.replaceChildren();
+  screen.style.background=devSemantic('saver.black');
+  const date=devDateText(), wd=devWeekday(date);
+  const dateLine=date?`${date} 星期${wd}`:'';
+  const time=devClockText().slice(0,5);
+  if(always){
+    devLabel(screen,0,190,320,time,48,null,devSemantic('saver.dim'),'center');
+    devLabel(screen,0,262,320,'屏幕常亮 · 不会进入息屏',24,null,devSemantic('saver.label'),'center');
+    return screen;
   }
-  $('sv-title').textContent=dialDefs[sv.dial].name;
-  const target=new Date(now); target.setHours(21,40,0,0);
-  const days=Math.max(1,Math.ceil((target-now)/86400000));
-  $('sv-lunar').textContent='农历 '+now.toLocaleDateString('zh-CN',{month:'long',day:'numeric'});
-  $('sv-count').textContent=`距宵禁提醒还有 ${days} 天`;
-  $('sv-mode-note').textContent=`当前使用：${dialDefs[sv.dial].name}`;
+  if(style===1){
+    const frame=devAbs(el('div','dev-el'),20,130,280,220);
+    frame.style.background=devSemantic('saver.frame');
+    frame.style.border='2px solid '+devSemantic('saver.edge');
+    frame.style.borderRadius='14px';
+    screen.append(frame);
+    devLabel(frame,30,30,220,time,32,null,devSemantic('saver.time'));
+    devLabel(frame,30,80,220,dateLine,20,null,devSemantic('saver.quote'));
+    const t=live.telemetry||{};
+    devLabel(frame,30,120,220,
+             (t.temp===undefined&&t.hum===undefined) ? '传感离线'
+               : `${t.temp===undefined?'--':Number(t.temp).toFixed(1)}℃  ${t.hum===undefined?'--':Math.round(t.hum)}%`,
+             20,null,devSemantic('saver.dim'));
+    devLabel(frame,30,156,220,wd?`星期${wd}`:'',20,null,devSemantic('saver.dim'));
+    devLabel(screen,10,8,120,'方寸仪表',20,null,devSemantic('saver.label'));
+  }else if(style===2){
+    const band=devAbs(el('div','dev-el'),0,190,320,96);
+    band.style.background=panelHex(draft.theme.accent);
+    screen.append(band);
+    devLabel(band,0,12,320,time,48,null,devSemantic('saver.black'),'center');
+    devLabel(screen,0,300,320,dateLine,24,null,devSemantic('saver.dim'),'center');
+    devLabel(screen,10,8,200,'PIXEL NIGHT',20,null,devSemantic('saver.label'));
+  }else if(style===3){
+    devLabel(screen,10,8,140,time,24,null,devSemantic('saver.dim'));
+    // 固件用 LV_LABEL_LONG_WRAP + set_width(272)，高度自适应：短句可以多行。
+    // 所以这里必须放开固定行高，否则第二行起会被 overflow:hidden 吃掉。
+    const quote=devLabel(screen,24,150,272,msg||'代码写完了吗？\n起来喝口水吧',
+                         24,null,devSemantic('saver.quote'));
+    quote.style.whiteSpace='pre-wrap';
+    quote.style.height='auto';
+    quote.style.lineHeight='1.5';
+    devLabel(screen,10,430,300,dateLine,20,null,devSemantic('saver.label'));
+  }else{
+    devLabel(screen,0,190,320,time,48,null,devSemantic('saver.dim'),'center');
+    devLabel(screen,0,262,320,dateLine,24,null,devSemantic('saver.label'),'center');
+  }
+  return screen;
+}
+function renderSaverPreview(){
+  const always = sv.mode==='always';
+  const style = always ? 0 : (Number(draft.theme.saver)||0);
+  const host=$('sv-screen');
+  if(host){
+    try{ svStage(style, draft.theme.savermsg, always, host) }
+    catch(e){ host.replaceChildren(); host.append(el('p','hint','渲染失败：'+e.message)) }
+    fitStage($('sv-scale'));
+  }
+  if($('sv-mode-note')){
+    $('sv-mode-note').textContent = always
+      ? '当前使用：常亮（不息屏）'
+      : `当前使用：${dialDefs[style] ? dialDefs[style].name : '时序'}`;
+  }
+  if($('sv-quote-note')){
+    const msg=(draft.theme.savermsg||'').trim();
+    $('sv-quote-note').textContent = (style===3 && !always)
+      ? `预览中的短句就是设备上会显示的那句：${msg||'（未设置，用固件默认）'}`
+      : '短句只在「诗词短句」样式上显示。';
+  }
+}
+function renderPoemList(){
+  const root=$('poem-list'); if(!root) return;
+  root.replaceChildren();
+  const poems=draft.poems||[];
+  if(!poems.length){ root.append(el('div','empty','诗句库为空——设备用内置四句轮换，可在下方添加')); return }
+  poems.forEach((p,i)=>{
+    const row=el('div','weather-result');
+    row.append(el('b','',`第 ${i+1} 句`));
+    row.append(el('small','',p));
+    const del=el('button','button danger','删除');
+    del.onclick=()=>{ draft.poems.splice(i,1); markDirty(); renderPoemList(); };
+    row.append(del);
+    root.append(row);
+  });
 }
 function renderSaverView(){
   $('saver-mode').value=sv.mode;
   $('saver-hide-lock').checked=!!sv.hideLock;
+  // 屏保增强控件：按样式联动显隐 + 回填当前值
+  const dial=Number(draft.theme.saver||0);
+  if($('saver-extra')) $('saver-extra').hidden=!(dial===4||dial===3);
+  if($('album-mgr')) $('album-mgr').hidden=dial!==4;
+  if($('poem-lib')) $('poem-lib').hidden=dial!==3;
+  if($('sv-int')) $('sv-int').value=String(draft.theme.svint||60);
+  if($('sv-fx')) $('sv-fx').value=String(draft.theme.svfx==null?1:draft.theme.svfx);
+  if($('poem-int')) $('poem-int').value=String(draft.theme.pint||5);
+  if($('album-state')) $('album-state').textContent=
+    `已上传 ${Number(draft.svalbum||0)} 张（设备最多存 8 张，重传同槽位即替换）`;
+  renderPoemList();
   renderDials(); renderSaverPreview();
   const detail=$('saver-detail');
   detail.hidden = !$('btn-saver-detail').dataset.open;
@@ -815,7 +1590,7 @@ function renderPages() {
     b.ondragstart=()=>{dragPage=i;b.classList.add('dragging')};
     b.ondragend=()=>{dragPage=-1;b.classList.remove('dragging')};
     b.ondragover=e=>e.preventDefault();
-    b.ondrop=e=>{e.preventDefault();reorder(draft.pages,dragPage,i);selected=i};
+    b.ondrop=e=>{e.preventDefault();manualOrder();reorder(draft.pages,dragPage,i);selected=i;renderTaskPages()};
     root.append(b);
   });
 }
@@ -850,10 +1625,126 @@ function renderInspector() {
   $('bright-auto').checked=!!Number(draft.theme.bright_auto??0);
   $('topclock-toggle').checked=!!Number(draft.theme.topclock??1);
   $('topwx-toggle').checked=!!Number(draft.theme.topwx??1);
-  for(const key of ['bg','grad','card','accent','text']) $('theme-'+key).value='#'+draft.theme[key];
+  for(const key of ['bg','grad','card','card_edge','accent','text','sub']) $('theme-'+key).value='#'+draft.theme[key];
   $('theme-bright').value=draft.theme.bright;$('bright-value').textContent=draft.theme.bright+'%';
+  updateQuantNote();
 }
-function renderSettings(){renderPages();renderPalette();renderInspector()}
+/* 取色器下方那行：把「请求色 → 屏幕色」的量化结果摆出来。
+   深色主题里量化偏移往往肉眼可辨，选完色就该看见，而不是等上屏才发现。 */
+function updateQuantNote(){
+  const el=$('theme-quant-note');
+  if(!el||!draft||!draft.theme)return;
+  const keys=['bg','grad','card','card_edge','accent','text','sub'];
+  const rows=keys.map(k=>({k, c:panelColor(draft.theme[k])}));
+  const worst=rows.reduce((a,b)=>b.c.drift>a.c.drift?b:a, rows[0]);
+  const cal=panelSpec().calibration||{};
+  el.textContent = `屏幕色彩管线：${panelSpec().pixelFormat} 量化，标定第 ${cal.cell||'—'} 格`
+    + `（${String(cal.rgbOrder||'RGB')}${cal.lvglFlushByteSwap?' + flush 换字节':''}`
+    + `${cal.panelInvert?' + 硬件反相':''}）。最大量化偏移：`
+    + `${COLOR_FIELD_NAMES[worst.k]||worst.k} Δ${worst.c.drift}`
+    + `（#${worst.c.req} → #${worst.c.hex}）`;
+  el.className = worst.c.drift>=8 ? 'hint quant-warn' : 'hint';
+}
+const COLOR_FIELD_NAMES={bg:'背景',grad:'渐变',card:'卡片',card_edge:'描边',accent:'强调',text:'文字',sub:'次要文字'};
+/* ================= 设置 · 天气（多城市） =================
+   draft.weather.cities：[{name, lat, lon, label}]，最多 3 个。
+   删除城市时同步删除绑定它的页面，否则 profile 校验不过（页面 city
+   必须指向已配置的城市）。 */
+function renderWeatherTab(){
+  const list=$('weather-city-list'); if(!list) return;
+  const cities=(draft.weather&&draft.weather.cities)||[];
+  const count=$('weather-city-count');
+  if(count) count.textContent=`${cities.length}/3`;
+  list.replaceChildren();
+  if(!cities.length){
+    list.append(el('div','empty','还没有城市。搜索并添加，最多 3 个。'));
+  }
+  cities.forEach((c,i)=>{
+    const row=el('div','weather-result');
+    row.append(el('b','',c.name));
+    row.append(el('small','',c.label||''));
+    const del=el('button','button danger','删除');
+    del.onclick=()=>{
+      cities.splice(i,1);
+      // 同步删除绑定该城市的页面，保证 profile 可保存
+      draft.pages=(draft.pages||[]).filter(p=>p.city!==c.name);
+      if(previewPage>=draft.pages.length) previewPage=Math.max(0,draft.pages.length-1);
+      markDirty(); renderWeatherTab(); renderPages(); renderPageSelect(); renderTaskPages(); renderTaskPreview();
+      notice(`已删除「${c.name}」及其小屏页面，保存并同步生效`);
+    };
+    row.append(del);
+    list.append(row);
+  });
+}
+function renderWeatherSearch(results, q){
+  const root=$('weather-search-results'); if(!root) return;
+  root.replaceChildren();
+  if(!results.length){ root.append(el('div','empty',`没有找到「${q}」的匹配城市——试试更短的关键词（如「天津」「杭州」）`)); return }
+  results.forEach(r=>{
+    const row=el('div','weather-result');
+    row.append(el('b','',r.name));
+    row.append(el('small','',r.label));
+    const add=el('button','button','添加');
+    add.onclick=()=>{
+      const cities=(draft.weather=draft.weather||{}).cities=draft.weather.cities||[];
+      if(cities.length>=3){notice('天气城市最多 3 个，先删一个再试',true);return}
+      if(cities.some(c=>c.name===r.name)){notice(`「${r.name}」已经在列表里`);return}
+      cities.push(r);
+      markDirty(); renderWeatherTab();
+      notice(`已添加「${r.name}」，保存并同步后小屏生效`);
+    };
+    row.append(add);
+    root.append(row);
+  });
+}
+
+/* ================= 设置 · 宠物 =================
+   状态在客户端 pet.py（本机持久化，惰性衰减），设备只负责显示+触控。
+   类型/名字走 profile（/api/pet-config），设备重建宠物形象。 */
+const PET_TYPES = {robot:'机器人', cat:'小猫', chick:'小鸡'};
+const PET_FACES = {robot:'🤖', cat:'🐱', chick:'🐤'};
+let petCache = null;
+function renderPetTab(){
+  const types=$('pet-types'); if(!types) return;
+  types.replaceChildren();
+  Object.entries(PET_TYPES).forEach(([key,label])=>{
+    const card=el('button','pet-type'+((petCache?.type||draft.pet?.type||'robot')===key?' active':''));
+    card.type='button';
+    card.append(el('span','pet-face',PET_FACES[key]), el('span','',label));
+    card.onclick=()=>{ if(petCache) petCache.type=key; renderPetTab(); };
+    types.append(card);
+  });
+  const name=$('pet-name');
+  if(name && document.activeElement!==name) name.value=draft.pet?.name||'帽子';
+  renderPetStats();
+}
+function renderPetStats(){
+  const root=$('pet-stats'); if(!root) return;
+  const m=petCache||{};
+  root.replaceChildren();
+  [['饱食',m.hunger,'喂食'],['水分',m.thirst,'喝水'],['活力',m.energy,'运动']].forEach(([label,val])=>{
+    const row=el('div','pet-stat');
+    row.append(el('span','',label));
+    const track=el('span','track'); const fill=el('span','fill');
+    fill.style.width=(val==null?0:Math.max(0,Math.min(100,val)))+'%';
+    track.append(fill); row.append(track);
+    row.append(el('span','val',val==null?'—':val+''));
+    root.append(row);
+  });
+  const mood=$('pet-mood');
+  if(mood) mood.textContent=({ok:'状态不错',hungry:'饿了',thirsty:'渴了',tired:'累了'})[m.mood]||'—';
+}
+async function petRefresh(){
+  try{ petCache=await request('/api/pet'); }catch(e){}
+  renderPetStats();
+}
+
+function renderSettings(){
+  renderPages();renderPalette();renderInspector();
+  renderMusic();renderMusicNow();
+  renderWeatherTab(); petRefresh(); renderPetTab();
+  switchSettingsTab(settingsTab);
+}
 function renderEntries(key){
   const root=$(key+'-list');root.replaceChildren();
   const items=draft[key];if(!items.length){root.append(el('div','empty',key==='calendar'?'暂无日程':key==='apps'?'尚未添加应用':key==='countdowns'?'尚未添加倒计时':'尚未添加'));return}
@@ -989,14 +1880,18 @@ function openFocus(task){
 }
 function closeFocus(){$('focus-stage').hidden=true}
 function renderOverview(){
-  const t=live.telemetry||{}, tasks=sortTasks(live.tasks||[]);
+  const t=live.telemetry||{};
+  renderDone();
+  // 已完成的不进主列表：它归「刚完成」条。主列表只放还要你做点什么的会话，
+  // 列表长度因此不再随「刚跑完一个」而波动。
+  const tasks=sortTasks((live.tasks||[]).filter(x=>x.state!=='DONE'));
   const connected=isConnected();
   $('ov-device-state').textContent=connected?'已连接':'未连接';
   $('ov-device-state').className='ov-device-state'+(connected?' ok':'');
   $('ov-device-sub').textContent=connected?live.device.replace('connected:','串口 '):'等待 ESP32-S3 小屏通过 USB 接入。';
   $('ov-version').textContent=`v${saved?.version||'—'}`;
   $('ov-applied').textContent=live.applied_version?`设备已应用 v${live.applied_version}`:'设备尚未应用配置';
-  $('ov-task-count').textContent=`${tasks.length} 个会话`;
+  $('ov-task-count').textContent=`${tasks.length} 个进行中`;
   // 优化#8：按来源统计生成筛选条；alert=只看 出错/等你
   const sourceCount={};
   tasks.forEach(task=>{const k=task.tool||'其他';sourceCount[k]=(sourceCount[k]||0)+1});
@@ -1006,7 +1901,11 @@ function renderOverview(){
   if(ovFilter==='alert')shown=tasks.filter(x=>ALERT_STATES.includes(x.state));
   else if(ovFilter!=='all')shown=tasks.filter(x=>(x.tool||'其他')===ovFilter);
   const root=$('ov-task-list');root.replaceChildren();
-  if(!tasks.length){root.append(el('div','empty','暂无活跃会话。连接 Claude Code、Codex、ZCode 或 WorkBuddy 后将在这里显示。'))}
+  if(!tasks.length){
+    root.append(el('div','empty',(live.done||[]).length
+      ? '当前没有进行中的会话；刚完成的在上一行的「刚完成」里。'
+      : '暂无活跃会话。连接 Claude Code、Codex、ZCode 或 WorkBuddy 后将在这里显示。'));
+  }
   else if(!shown.length){root.append(el('div','empty','当前筛选下没有会话。'))}
   else{
     // 优化#1：按来源（claude/codex/zcode/workbuddy）分窗格的多窗格监控，
@@ -1051,13 +1950,46 @@ function renderOverview(){
   $('ov-net').textContent=t.netrx===undefined?'—':`${t.netrx} / ${t.nettx}`;
   $('ov-net-sub').textContent='Mbps ↓ / ↑';
   $('ov-usage').textContent=t.ait===undefined?'—':`${String(t.ait).split(',')[0]}k token`;
-  $('ov-weather').textContent=t.wx_temp===undefined?'—':`${t.wx_temp} ℃`;
+  // 遥测里天气是 wx="temp,code,hi,lo"（见 protocol.py 的 _ORDER），没有
+  // wx_temp 字段——旧代码读 wx_temp，概览天气永远是「—」。
+  const wxParts=typeof t.wx==='string'?t.wx.split(','):[];
+  $('ov-weather').textContent=wxParts.length>=4&&isFinite(parseFloat(wxParts[0]))?`${wxParts[0]} ℃`:'—';
   $('ov-remind').textContent=t.remind||'—';
   $('ov-fresh-pill').textContent=typeof live.telemetry_age==='number'?`数据延迟 ${Math.round(live.telemetry_age)} 秒`:'—';
   if(live.paused)$('ov-fresh-pill').textContent='已暂停采集';
+  renderTools();
   drawUsageChart();
   renderSyncState();
   renderConnState();
+}
+/* 概览「AI 工具」：进程识别的结果。
+   日志推断有天然盲区——工具关掉后日志不再变化，最后状态会被新鲜度窗口
+   兜住（Codex 的「等你回复」可挂 30 分钟）。进程表能直接回答「它还开着吗」，
+   未运行的工具有会话也一律被忽略（见 aiwatch._gate_inactive）。 */
+function renderTools(){
+  const root=$('ov-tool-chips'); if(!root) return;
+  const note=$('ov-tools-note');
+  const info=live.tools||{};
+  root.replaceChildren();
+  if(info.ok===false){
+    note.textContent='进程扫描不可用';
+    root.append(el('div','empty',
+      `无法枚举进程：${info.error||'未知原因'}；当前仍按日志推断显示会话。`));
+    return;
+  }
+  const tools=info.tools||[];
+  if(!tools.length){
+    note.textContent='未检测到';
+    root.append(el('div','empty','没有检测到 AI 工具进程。'));
+    return;
+  }
+  note.textContent=`${tools.filter(t=>t.running).length}/${tools.length} 在运行`;
+  tools.forEach(t=>{
+    const chip=el('span','tool-chip'+(t.running?' on':''));
+    chip.append(el('i','tool-dot'),el('span','',t.label),
+                el('small','',t.running?'运行中':(t.gates?'未运行 · 会话已忽略':'未运行')));
+    root.append(chip);
+  });
 }
 /* 优化#14：今日 token 每小时用量折线（canvas 本地绘制，无外部库、CSP 安全）。
    数据点来自 /api/status 的 usage.today_k，按小时分桶存 localStorage（保留 24 桶）。 */
@@ -1124,8 +2056,137 @@ function renderConnState(){
   $('ver-text').textContent=`版本 v${saved?.version||'—'} · LVGL 8.3`;
 }
 
+/* ================= 概览 · 刚完成 =================
+   完成提示不靠主列表重排：重排只在正好看到的那一刻可见，还会打乱空间记忆。
+   改成固定位置的一条带子（顺序＝时间），配一个「未读」计数解决"当时没看"。
+   数据来自 aiwatch 的完成记录（服务端保留 30 分钟、最多 8 条）。 */
+const DONE_SEEN_KEY='workbuddy-done-seen';
+function doneSeenAt(){
+  const raw=Number(localStorage.getItem(DONE_SEEN_KEY));
+  return isFinite(raw)&&raw>0 ? raw : 0;
+}
+function renderDone(){
+  const rail=$('ov-done-rail'); if(!rail) return;
+  const items=live.done||[];
+  if(!items.length){ rail.hidden=true; return }
+  rail.hidden=false;
+  const seen=doneSeenAt();
+  const unread=items.filter(d=>(d.at||0)>seen).length;
+  const pill=$('ov-done-count');
+  if(pill){
+    pill.textContent = unread ? `${unread} 条未读` : `共 ${items.length} 条`;
+    pill.className = unread ? 'count-pill' : 'count-pill muted';
+  }
+  const root=$('ov-done-items'); if(!root) return;
+  root.replaceChildren();
+  items.slice(0,4).forEach(d=>{
+    const row=el('div','done-item'+((d.at||0)>seen?' unread':''));
+    row.append(el('b','',d.project||'未命名项目'));
+    row.append(el('span','',d.tool||''));
+    row.append(el('small','',`完成 ${fmtElapsed(d.age)} 前`));
+    row.title=`${d.tool||''} · ${d.project||'未命名项目'} · #${d.id||''}`;
+    root.append(row);
+  });
+  const clear=$('btn-done-clear');
+  if(clear) clear.disabled=!unread;
+}
+
+/* ================= 音乐（默认软件 + 正在播放） =================
+   后端见 workbuddy/music.py：媒体命令走 macOS MediaRemote（系统「正在播放」中枢），
+   所以播放/切歌作用于真正在放歌的软件；旧的 AppleScript 逐个试法只有
+   Music/Spotify 有字典，必然落到 Apple 音乐。 */
+let musicInfo = null;
+async function loadMusicApps(force){
+  if(musicInfo && !force) return musicInfo;
+  try{ musicInfo = await request('/api/music-apps'); }
+  catch(e){ musicInfo = null }
+  return musicInfo;
+}
+async function renderMusic(){
+  const sel=$('music-app-select'); if(!sel) return;
+  const info=await loadMusicApps(true);
+  const note=$('music-note');
+  if(!info){
+    sel.replaceChildren(el('option','','（读取失败）'));
+    if(note) note.textContent='无法读取本机音乐软件列表。';
+    return;
+  }
+  sel.replaceChildren();
+  const auto=el('option','','自动（优先网易云 → QQ音乐 → Apple 音乐）');
+  auto.value='auto'; sel.append(auto);
+  (info.apps||[]).forEach(app=>{
+    const option=el('option','',app.name); option.value=app.id; sel.append(option);
+  });
+  // 配置值可能指向一个已卸载/未发现的软件：补一个条目，避免下拉框显示成空
+  const configured=info.configured||'auto';
+  if(configured!=='auto' && !(info.apps||[]).some(a=>a.id===configured)){
+    const option=el('option','',`${configured}（未检测到）`); option.value=configured;
+    sel.append(option);
+  }
+  sel.value=configured;
+  if(note){
+    if(!info.supported){
+      note.textContent='当前系统不支持统一读取播放信息（仅 macOS 支持）。';
+    }else if(!(info.apps||[]).length){
+      note.textContent='没有在本机发现音乐软件；可在下方「快捷应用」里直接填启动命令。';
+    }else{
+      const cur=info.default||{};
+      note.textContent=`本机找到 ${info.apps.length} 个音乐软件，当前默认「${cur.name||'—'}」` +
+        `（${info.running?'正在运行':'未运行'}）。`;
+    }
+  }
+}
+function renderMusicNow(){
+  const pill=$('music-state'), now=$('music-now');
+  if(!pill||!now) return;
+  const info=live.music||{};
+  const data=info.now||{};
+  if(info.supported===false){ pill.textContent='不支持'; now.textContent='当前系统读不到播放信息。'; return }
+  if(!data.title){ pill.textContent='无播放'; now.textContent='系统里没有正在播放的软件。'; return }
+  pill.textContent=data.playing?'播放中':'已暂停';
+  const meta=[data.artist,data.album].filter(Boolean).join(' · ');
+  const pos=data.position!==undefined&&data.duration
+    ? `　${fmtElapsed(data.position)} / ${fmtElapsed(data.duration)}` : '';
+  now.textContent=`${data.title}${meta?` — ${meta}`:''}${pos}`;
+}
+
+/* ================= 设置页内部标签 =================
+   页面编排 / 主题与显示 / 音乐 / 系统——每个功能域一个页签，
+   新增设置项=新增一个页签，不再堆成一根长滚动页。 */
+const SETTINGS_TABS = {
+  pages:  ['stab-pages', 'spane-pages'],
+  look:   ['stab-look',  'spane-look'],
+  music:  ['stab-music', 'spane-music'],
+  weather:['stab-weather','spane-weather'],
+  pet:   ['stab-pet',   'spane-pet'],
+  system: ['stab-system','spane-system'],
+};
+let settingsTab = 'pages';
+function switchSettingsTab(which){
+  if(!SETTINGS_TABS[which]) which='pages';
+  settingsTab=which;
+  try{ localStorage.setItem('workbuddy-settings-tab',which); }catch(e){}
+  Object.entries(SETTINGS_TABS).forEach(([key,[tabId,paneId]])=>{
+    const on = key===which;
+    const tab=$(tabId), pane=$(paneId);
+    if(tab){ tab.classList.toggle('active',on); tab.setAttribute('aria-selected',on?'true':'false'); }
+    if(pane) pane.hidden=!on;
+  });
+}
+/* 带落点的设置入口（任务视图「详细编排」→页面、主题选项→主题与显示…） */
+function openSettings(tab){
+  switchView('settings');
+  if(tab) switchSettingsTab(tab);
+}
+
 /* ================= 视图路由 ================= */
-function renderExtras(){['reminders','calendar','alarms','countdowns','apps'].forEach(key=>{if(draft&&draft[key])renderEntries(key)})}
+function renderExtras(){
+  ['reminders','calendar','alarms','countdowns','apps'].forEach(key=>{if(draft&&draft[key])renderEntries(key)});
+  // 城市输入框要回填当前值：已配置「天津」时打开本视图若显示空框，
+  // 用户会以为之前没配过，随手一改就覆盖了旧值。焦点在框上时不动它。
+  const city=$('weather-city');
+  if(city&&document.activeElement!==city) city.value=(draft.weather&&draft.weather.city)||'';
+}
 function switchView(name){
   currentView=name;
   document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.view===name));
@@ -1143,10 +2204,17 @@ function switchView(name){
   if(name==='history'){renderHistory();drawTrendChart()}
   window.scrollTo({top:0,behavior:'smooth'});
 }
-function renderTaskView(){renderCfgPanels();renderTaskPreview();renderThemeGrid();if(!$('pane-multi').hidden)renderMultiPane()}
+function renderTaskView(){
+  if($('autopage-toggle')) $('autopage-toggle').checked=!!Number(draft.autopage||0);
+  renderPageSelect(); renderTaskPages(); renderTaskPreview(); renderThemeGrid();
+  if(!$('pane-multi').hidden)renderMultiPane();
+}
 
 /* ================= 轮询与保存 ================= */
-function render(){renderOverview();if(currentView==='tasks')renderTaskView();if(currentView==='saver')renderSaverView();if(currentView==='extras')renderExtras()}
+function render(){
+  renderOverview();
+  if(currentView==='settings')renderMusicNow();
+  if(currentView==='tasks')renderTaskView();if(currentView==='saver')renderSaverView();if(currentView==='extras')renderExtras()}
 // 趋势视图：每 60s 重画（新桶会推进曲线）；范围切换立即重画
 setInterval(()=>{if(currentView==='history')drawTrendChart()},60000);
 async function poll(){
@@ -1224,6 +2292,7 @@ function updateFreshness(){
   markFresh();
 }
 async function save(silent=false){
+  if(draft.autopage) regenAutoPages();
   const check=await request('/api/validate',draft);
   const result=await request('/api/save',check.profile);
   saved=result.profile;draft=structuredClone(saved);dirty=false;localStorage.removeItem('workbuddy-draft');
@@ -1284,24 +2353,39 @@ function bind(){
     catch(e){notice(e.message,true)}});
 
   // ---- 任务视图 ----
-  // 默认落「状态聚焦」而非实时状态：预览直接呈现效果图布局，
-  // 右侧配置面板也有内容（实时状态无配置项，右半屏会大面积留白）。
-  $('scheme-select').value=['live','focus','timeline','companion','dashboard'].includes(tv.scheme)?tv.scheme:'focus';
-  $('scheme-select').onchange=e=>{
-    tv.scheme=e.target.value;
-    if(tv.scheme!=='live')tv.layout=tv.scheme;
-    saveTV();renderCfgPanels();renderTaskPreview();
+  if(!LAYOUT_PRESETS[tv.layout]) tv.layout='focus';
+  const markLayoutButtons=()=>{
+    document.querySelectorAll('.layout-btn').forEach(b=>{
+      const on=b.dataset.layout===tv.layout;
+      b.classList.toggle('active',on);
+      b.setAttribute('aria-pressed',on?'true':'false');
+    });
+    if($('layout-hint')&&LAYOUT_PRESETS[tv.layout])
+      $('layout-hint').textContent=LAYOUT_PRESETS[tv.layout].desc;
+  };
+  $('page-select').onchange=e=>{
+    previewPage=Math.max(0,Number(e.target.value)||0);
+    renderTaskPreview();renderTaskPages();
   };
   document.querySelectorAll('.layout-btn').forEach(b=>b.onclick=()=>{
-    tv.layout=b.dataset.layout;tv.scheme=b.dataset.layout;
-    $('scheme-select').value=tv.scheme;saveTV();
-    renderCfgPanels();renderTaskPreview();
+    const key=b.dataset.layout, preset=LAYOUT_PRESETS[key];
+    if(!preset)return;
+    draft.pages=structuredClone(preset.pages);
+    selected=0;previewPage=0;tv.layout=key;saveTV();markDirty();
+    markLayoutButtons();renderPageSelect();renderTaskPages();renderTaskPreview();
+    notice(`已套用「${schemeNames[key]}」页面组合，保存并同步后上屏`);
   });
+  $('task-page-title').onchange=e=>{
+    const page=(draft.pages||[])[previewPage];if(!page)return;
+    page.title=e.target.value.trim().slice(0,24)||page.title;
+    e.target.value=page.title;markDirty();
+    renderPageSelect();renderTaskPages();renderTaskPreview();
+  };
   $('btn-reset-layout').onclick=()=>{
-    tv=structuredClone(tvDefaults);saveTV();
-    $('scheme-select').value='live';
-    hydrateTaskControls();renderCfgPanels();renderTaskPreview();
-    notice('已恢复默认布局');
+    draft.pages=structuredClone(defaultPages());
+    selected=0;previewPage=0;markDirty();
+    renderPageSelect();renderTaskPages();renderTaskPreview();
+    notice('已恢复默认页面组合，保存并同步后生效');
   };
   $('tab-layouts').onclick=()=>switchTaskTab('layouts');
   $('tab-themes').onclick=()=>switchTaskTab('themes');
@@ -1315,75 +2399,40 @@ function bind(){
     $('tab-my-themes').classList.add('active');$('tab-preset-themes').classList.remove('active');
     $('tab-my-themes').setAttribute('aria-selected','true');$('tab-preset-themes').setAttribute('aria-selected','false');
     renderThemeGrid()};
-  $('btn-theme-options').onclick=()=>switchView('settings');
+  $('btn-theme-options').onclick=()=>openSettings('look');
   $('btn-apply-theme').onclick=pending($('btn-apply-theme'),applySelectedTheme);
-  $('btn-crown').onclick=()=>{
-    tv.scheme='timeline';tv.layout='timeline';$('scheme-select').value='timeline';saveTV();
-    renderCfgPanels();renderTaskPreview();
-    $('crown-mode').focus();
-  };
   $('btn-source-jump').onclick=()=>switchView('overview');
-  $('btn-deep-edit').onclick=()=>switchView('settings');
+  $('btn-deep-edit').onclick=()=>openSettings('pages');
+  // 实拍：请求后轮询 meta（snap_at 翻新即完成），最长等 25s
+  $('btn-snap').onclick=pending($('btn-snap'),async()=>{
+    try{
+      await request('/api/snap-request',{});
+      notice('已请求实拍，设备回传约需 10 秒…');
+      const start=Date.now(), baseline=Date.now()/1000;
+      while(Date.now()-start<25000){
+        await new Promise(ok=>setTimeout(ok,2000));
+        const meta=await request('/api/snapshot-meta');
+        if(meta.at && meta.at>baseline){
+          $('snapshot-img').src=`/api/snapshot?ts=${meta.at}`;
+          $('snapshot-img').hidden=false;
+          notice('实拍完成');
+          return;
+        }
+      }
+      notice('实拍超时：设备无响应或固件过旧', true);
+    }catch(e){notice(e.message, true)}
+  });
   $('btn-apply-task').onclick=pending($('btn-apply-task'),async()=>{
     try{
-      const presets={
-        focus:[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']}],
-        timeline:[{id:'ai',title:'AI 时间线',layout:'list',widgets:['ai_list']}],
-        companion:[{id:'ai',title:crownName(),layout:'grid_2x2',widgets:['clock','weather']}],
-        dashboard:[{id:'ai',title:'数据看板',layout:'list',widgets:['ai_list']},{id:'pc',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']}]
-      };
-      if(tv.scheme!=='live'){
-        draft.pages=structuredClone(presets[tv.layout]||presets.focus);
-        selected=0;markDirty();
-      }
+      // 页面组合已经是 draft.pages（预览画的就是它），这里只负责落盘 + 下发。
       await save(true);
       await request('/api/sync',{});
-      logHist('layout', `布局「${schemeNames[tv.scheme]}」已应用到任务`);
-      notice(`「${schemeNames[tv.scheme]}」已应用到任务并同步`);
+      logHist('layout', `页面组合已应用到设备（${(draft.pages||[]).length} 页）`);
+      notice(`已应用到设备并同步（${(draft.pages||[]).length} 页）`);
       poll();
     }catch(e){notice(e.message,true)}
   });
-  // 布局配置控件 ↔ 状态
-  bindRadios('fv-supplement',v=>tv.fv.supplement=v);
-  bindRadios('fv-value',v=>tv.fv.value=v);
-  bindRadios('fv-others',v=>tv.fv.others=v);
-  bindRadios('fv-idle',v=>tv.fv.idle=v);
-  bindRadios('tv-range',v=>tv.tv.range=v);
-  bindRadios('tv-time',v=>tv.tv.time=v);
-  bindRadios('dv-combo',v=>tv.dv.combo=v);
-  bindRadios('dv-middle',v=>tv.dv.middle=v);
-  const dvIds={tok:'dm-tok',model:'dm-model',task:'dm-task',elapsed:'dm-elapsed',cpu:'dm-cpu',mem:'dm-mem',disk:'dm-disk',net:'dm-net'};
-  Object.entries(dvIds).forEach(([k,id])=>{$(id).onchange=e=>{tv.dv.metrics[k]=e.target.checked;saveTV();renderTaskPreview()}});
-  const cpToggles={daynight:'cp-daynight',weather:'cp-weather',fx:'cp-fx',action:'cp-action',feedback:'cp-feedback',rest:'cp-rest'};
-  Object.entries(cpToggles).forEach(([k,id])=>{$(id).onchange=e=>{tv.cp[k]=e.target.checked;saveTV();renderTaskPreview()}});
-  const cpDisp={name:'cpd-name',elapsed:'cpd-elapsed',model:'cpd-model',tok:'cpd-tok',state:'cpd-state'};
-  Object.entries(cpDisp).forEach(([k,id])=>{$(id).onchange=e=>{tv.cp.disp[k]=e.target.checked;saveTV();renderTaskPreview()}});
-  $('scene-select').onchange=e=>{tv.cp.scene=e.target.value;saveTV();renderTaskPreview()};
-  $('crown-mode').onchange=e=>{tv.crown.mode=e.target.value;saveTV();renderTaskPreview()};
-  $('crown-text').oninput=e=>{tv.crown.text=e.target.value;saveTV();renderTaskPreview()};
-  $('btn-layout-export').onclick=()=>{
-    const blob=new Blob([JSON.stringify(tv,null,2)],{type:'application/json'});
-    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
-    a.download='maozi-layout.json';a.click();URL.revokeObjectURL(a.href);
-    logHist('export','布局配置已导出');notice('布局已导出为 JSON 文件');
-  };
-  $('btn-layout-import').onclick=()=>$('layout-file').click();
-  $('layout-file').onchange=async e=>{
-    const file=e.target.files[0];e.target.value='';
-    if(!file)return;
-    try{
-      const data=JSON.parse(await file.text());
-      tv=structuredClone({...tvDefaults,...data,
-        fv:{...tvDefaults.fv,...(data.fv||{})},tv:{...tvDefaults.tv,...(data.tv||{})},
-        crown:{...tvDefaults.crown,...(data.crown||{})},
-        cp:{...tvDefaults.cp,...(data.cp||{}),disp:{...tvDefaults.cp.disp,...(data.cp?.disp||{})}},
-        dv:{...tvDefaults.dv,...(data.dv||{}),metrics:{...tvDefaults.dv.metrics,...(data.dv?.metrics||{})}}});
-      saveTV();hydrateTaskControls();$('scheme-select').value=tv.scheme||'live';
-      renderCfgPanels();renderTaskPreview();
-      logHist('import','布局配置已导入');notice('布局已导入');
-    }catch(err){notice('布局文件无效：'+err.message,true)}
-  };
-  hydrateTaskControls();
+  markLayoutButtons();
 
   // ---- 息屏 ----
   loadSV();
@@ -1401,6 +2450,128 @@ function bind(){
   $('topclock-toggle').onchange=e=>{draft.theme.topclock=e.target.checked?1:0;markDirty()};
   $('topwx-toggle').onchange=e=>{draft.theme.topwx=e.target.checked?1:0;markDirty()};
   $('btn-saver-save').onclick=pending($('btn-saver-save'),applySaver);
+
+  // ---- 屏保增强：相册轮播 / 诗句库 ----
+  $('album-file').onchange=async e=>{
+    const files=[...e.target.files||[]];
+    e.target.value='';
+    if(!files.length) return;
+    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
+    let slot=Number(draft.svalbum||0);
+    let okN=0;
+    notice(`开始上传 ${files.length} 张…`);
+    for(const file of files){
+      if(slot>=8){notice('相册最多 8 张',true);break}
+      slot+=1;
+      try{
+        const img=await new Promise((ok2,bad)=>{
+          const i=new Image();
+          i.onload=()=>ok2(i);
+          i.onerror=()=>bad(new Error('图片解码失败'));
+          i.src=URL.createObjectURL(file);
+        });
+        const canvas=document.createElement('canvas');
+        canvas.width=320; canvas.height=480;
+        const c2=canvas.getContext('2d');
+        const scale=Math.max(320/img.width,480/img.height);
+        const w=img.width*scale,h=img.height*scale;
+        c2.drawImage(img,(320-w)/2,(480-h)/2,w,h);
+        const blob=await new Promise(ok2=>canvas.toBlob(ok2,'image/jpeg',0.72));
+        if(!blob || blob.size>120*1024){notice('图片压缩后仍超 120KB，换一张试试',true);continue}
+        const r=await fetch(`/api/bgimg?target=sv${slot}`,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:await blob.arrayBuffer()});
+        const d2=await r.json();
+        if(!r.ok) throw new Error(d2.error||'上传失败');
+        okN+=1;
+        draft.svalbum=slot;
+      }catch(err){notice(`上传失败：${err.message}`,true)}
+    }
+    if(okN){
+      markDirty(); renderSaverView();
+      notice(`已上传 ${okN} 张到相册，样式选「相册轮播」并同步后生效`);
+    }
+  };
+  $('album-clear').onclick=async()=>{
+    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
+    for(let i=1;i<=8;i++){
+      try{ await fetch(`/api/bgimg-delete?target=sv${i}`,{method:'POST'}); }catch(err){}
+    }
+    draft.svalbum=0; markDirty(); renderSaverView();
+    notice('相册已清空');
+  };
+  $('poem-add').onclick=()=>{
+    const v=$('poem-new').value.trim();
+    if(!v) return;
+    draft.poems=draft.poems||[];
+    if(draft.poems.length>=10){notice('诗句库最多 10 条',true);return}
+    draft.poems.push(v);
+    $('poem-new').value='';
+    markDirty(); renderPoemList();
+    notice('已加入诗句库，保存并同步后小屏轮换显示');
+  };
+  $('poem-int').onchange=e=>{draft.theme.pint=Number(e.target.value);markDirty()};
+  $('sv-int').onchange=e=>{draft.theme.svint=Number(e.target.value);markDirty()};
+  $('sv-fx').onchange=e=>{draft.theme.svfx=Number(e.target.value);markDirty()};
+
+  // ---- 屏保增强：相册轮播 / 诗句库 ----
+  $('album-file').onchange=async e=>{
+    const files=[...e.target.files||[]];
+    e.target.value='';
+    if(!files.length) return;
+    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
+    let slot=Number(draft.svalbum||0);
+    let okN=0;
+    notice(`开始上传 ${files.length} 张…`);
+    for(const file of files){
+      if(slot>=8){notice('相册最多 8 张',true);break}
+      slot+=1;
+      try{
+        const img=await new Promise((ok2,bad)=>{
+          const i=new Image();
+          i.onload=()=>ok2(i);
+          i.onerror=()=>bad(new Error('图片解码失败'));
+          i.src=URL.createObjectURL(file);
+        });
+        const canvas=document.createElement('canvas');
+        canvas.width=320; canvas.height=480;
+        const c2=canvas.getContext('2d');
+        const scale=Math.max(320/img.width,480/img.height);
+        const w=img.width*scale,h=img.height*scale;
+        c2.drawImage(img,(320-w)/2,(480-h)/2,w,h);
+        const blob=await new Promise(ok2=>canvas.toBlob(ok2,'image/jpeg',0.72));
+        if(!blob || blob.size>120*1024){notice('图片压缩后仍超 120KB，换一张试试',true);continue}
+        const r=await fetch(`/api/bgimg?target=sv${slot}`,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:await blob.arrayBuffer()});
+        const d2=await r.json();
+        if(!r.ok) throw new Error(d2.error||'上传失败');
+        okN+=1;
+        draft.svalbum=slot;
+      }catch(err){notice(`上传失败：${err.message}`,true)}
+    }
+    if(okN){
+      markDirty(); renderSaverView();
+      notice(`已上传 ${okN} 张到相册，样式选「相册轮播」并同步后生效`);
+    }
+  };
+  $('album-clear').onclick=async()=>{
+    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
+    for(let i=1;i<=8;i++){
+      try{ await fetch(`/api/bgimg-delete?target=sv${i}`,{method:'POST'}); }catch(err){}
+    }
+    draft.svalbum=0; markDirty(); renderSaverView();
+    notice('相册已清空');
+  };
+  $('poem-add').onclick=()=>{
+    const v=$('poem-new').value.trim();
+    if(!v) return;
+    draft.poems=draft.poems||[];
+    if(draft.poems.length>=10){notice('诗句库最多 10 条',true);return}
+    draft.poems.push(v);
+    $('poem-new').value='';
+    markDirty(); renderPoemList();
+    notice('已加入诗句库，保存并同步后小屏轮换显示');
+  };
+  $('poem-int').onchange=e=>{draft.theme.pint=Number(e.target.value);markDirty()};
+  $('sv-int').onchange=e=>{draft.theme.svint=Number(e.target.value);markDirty()};
+  $('sv-fx').onchange=e=>{draft.theme.svfx=Number(e.target.value);markDirty()};
   $('btn-saver-cancel').onclick=()=>{sv.dial=draft.theme.saver??0;sv.mode='theme';saveSVLocal();renderSaverView();notice('已还原为当前配置的息屏设置')};
 
   // ---- 页面编排 ----
@@ -1427,7 +2598,11 @@ function bind(){
   Object.entries(themePresets).forEach(([name,colors])=>{
     const b=el('button','preset-swatch');b.title=name;
     b.style.background=`linear-gradient(160deg,#${colors.bg},#${colors.grad} 60%,#${colors.accent})`;
-    b.onclick=()=>{Object.assign(draft.theme,colors,{bright:draft.theme.bright});markDirty();notice(`已应用「${name}」主题，保存并同步后生效`)};
+    // 预设自带 card_opa（colors 里就带），不再沿用用户当前的透明度——
+    // 否则同一套预设「在 100% 时能存、在 70% 时报边界看不见」。
+    b.onclick=()=>{Object.assign(draft.theme,colors,{bright:name==='实机校准·深蓝灰'?62:draft.theme.bright});
+      markDirty();updateQuantNote();renderInspector();
+      notice(`已应用「${name}」主题，保存并同步后生效`)};
     presets.append(b);
   });
   const gal=$('theme-gallery');gal.replaceChildren();
@@ -1453,7 +2628,7 @@ function bind(){
           logHist('bg',`画廊背景「${th.name}」已推送`);
         }
         Object.assign(draft.theme,th.colors,{card_opa:th.card_opa});
-        markDirty();await save(true);await request('/api/sync',{});
+        markDirty();renderInspector();await save(true);await request('/api/sync',{});
         logHist('theme',`画廊主题「${th.name}」已应用`);
         notice(`「${th.name}」主题已应用：背景+配色+卡片透明度`);
         poll();
@@ -1461,7 +2636,9 @@ function bind(){
     };
     gal.append(cell);
   });
-  for(const key of ['bg','grad','card','accent','text'])$('theme-'+key).oninput=e=>{draft.theme[key]=e.target.value.slice(1).toUpperCase();markDirty()};
+  for(const key of ['bg','grad','card','card_edge','accent','text','sub'])$('theme-'+key).oninput=e=>{
+    draft.theme[key]=e.target.value.slice(1).toUpperCase();markDirty();updateQuantNote();
+  };
   $('theme-bright').oninput=e=>{draft.theme.bright=Number(e.target.value);markDirty()};
   $('card-opa').oninput=e=>{draft.theme.card_opa=Number(e.target.value);$('opa-value').textContent=e.target.value+'%';markDirty()};
   $('bright-auto').onchange=e=>{draft.theme.bright_auto=e.target.checked?1:0;markDirty();notice(e.target.checked?'已开启自动亮度（白天亮/夜间暗）':'已切回手动亮度')};
@@ -1516,6 +2693,94 @@ function bind(){
     catch(err){notice(err.message,true)}
   };
 
+  // ---- 设置 · 天气 ----
+  $('weather-search-btn').onclick=pending($('weather-search-btn'),async()=>{
+    const q=$('weather-q').value.trim();
+    if(!q){notice('先输入城市名',true);return}
+    try{
+      const result=await request('/api/weather-search',{q});
+      renderWeatherSearch(result.results||[], q);
+    }catch(e){notice(e.message,true)}
+  });
+  $('weather-q').onkeydown=e=>{ if(e.key==='Enter') $('weather-search-btn').click(); };
+  $('weather-gen-pages').onclick=()=>{
+    regenAllPages(); renderPageSelect(); renderTaskPages(); renderTaskPreview();
+    notice('已按城市生成天气页面，保存并同步后上屏');
+  };
+
+  // ---- 设置 · 宠物 ----
+  $('pet-save').onclick=pending($('pet-save'),async()=>{
+    try{
+      const r=await request('/api/pet-config',{type:petCache?.type||'robot',
+        name:$('pet-name').value.trim()||'帽子'});
+      notice(`宠物形象已保存（v${r.version}），同步后设备换新装`);
+      poll();
+    }catch(e){notice(e.message,true)}
+  });
+  $('pet-page-gen').onclick=()=>{
+    draft.pages=(draft.pages||[]).filter(p=>p.id!=='pet');
+    draft.pages.splice(1,0,{id:'pet',title:$('pet-name').value.trim()||'宠物',
+      layout:'list',widgets:['pet']});
+    markDirty(); renderPages(); renderPageSelect(); renderTaskPages(); renderTaskPreview();
+    notice('已生成「宠物」小屏页面，保存并同步后上屏');
+  };
+  [['pet-feed','feed'],['pet-water','water'],['pet-play','play']].forEach(([id,action])=>{
+    $(id).onclick=pending($(id),async()=>{
+      try{
+        petCache=await request('/api/pet-do',{action});
+        renderPetStats();
+        notice({feed:'喂饱了！',water:'喝上水了！',play:'运动了一下，活力下降了'}[action]);
+      }catch(e){notice(e.message,true)}
+    });
+  });
+
+  // ---- 设置页内部标签 ----
+  let savedTab=null;
+  try{ savedTab=localStorage.getItem('workbuddy-settings-tab'); }catch(e){}
+  if(savedTab) settingsTab=savedTab;
+  Object.keys(SETTINGS_TABS).forEach(key=>{ $(SETTINGS_TABS[key][0]).onclick=()=>switchSettingsTab(key); });
+
+  // ---- 自动按工具分页 ----
+  // bind() 在首轮 /api/status 之前执行，draft 此时还是 null；
+  // 回填在 renderTaskView 里每次都会做，这里只绑事件，绝不碰 draft。
+  $('autopage-toggle').onchange=e=>{
+    if(!draft)return;
+    draft.autopage=e.target.checked?1:0; markDirty();
+    if(draft.autopage){
+      regenAutoPages(); renderPageSelect(); renderTaskPages(); renderTaskPreview();
+      notice('已按当前会话的工具重排 AI 页，保存并同步后上屏');
+    }
+  };
+
+  // ---- 音乐 ----
+  const addMusicApp=async()=>{
+    const apps=draft.apps||[];
+    if(apps.length>=12){notice('快捷应用最多 12 个',true);return}
+    if(apps.some(a=>a.command===MUSIC_COMMAND)){notice('已经有一个音乐入口了');return}
+    apps.push({id:uniqueId('app'),name:'音乐',command:MUSIC_COMMAND});
+    markDirty();renderExtras();renderMusic();
+    notice('已添加「音乐」快捷入口，保存并同步后触屏可用');
+  };
+  $('music-add-app').onclick=addMusicApp;
+  $('music-add-app2').onclick=addMusicApp;
+  $('music-app-select').onchange=async e=>{
+    try{
+      const result=await request('/api/music-app',{id:e.target.value});
+      musicInfo=null;
+      await renderMusic();
+      notice(`默认音乐软件已设为「${(result.default||{}).name||e.target.value}」`);
+    }catch(err){notice(err.message,true)}
+  };
+  $('music-test-btn').onclick=pending($('music-test-btn'),async()=>{
+    try{
+      const result=await request('/api/music-play',{});
+      notice(result.ok
+        ? `${result.app}${result.launched?' 已启动并开始播放':' 已下发播放'}`
+        : `没能播放：${result.reason||'系统里没有正在播放的软件'}`);
+      poll();
+    }catch(err){notice(err.message,true)}
+  });
+
   // ---- Hook 快通道接入（采集第 2 层） ----
   async function refreshHooks(){
     const elState=$('hooks-state');
@@ -1549,14 +2814,45 @@ function bind(){
   refreshHooks();
 
   // ---- 历史记录 ----
+  // 「系统趋势」默认收起：收起时 canvas 的 clientWidth 为 0，画不出来，
+  // 所以展开时补画一次（switchView 里那次调用在收起状态下不生效）。
+  const trendDetails=$('trend-details');
+  if(trendDetails) trendDetails.addEventListener('toggle',()=>{
+    if(trendDetails.open) drawTrendChart();
+  });
   $('btn-history-clear').onclick=()=>{localStorage.removeItem(HIST_KEY);renderHistory();notice('历史已清空')};
+  const doneClear=$('btn-done-clear');
+  if(doneClear) doneClear.onclick=()=>{
+    localStorage.setItem(DONE_SEEN_KEY,String(Date.now()/1000));
+    renderDone();
+    notice('完成记录已标记为已读（记录仍保留 30 分钟）');
+  };
   $('trend-range').onchange=()=>drawTrendChart();
+
+  // ---- 其他视图与设置各页签的保存/同步入口 ----
+  // 保存按钮原来只在「概览」和「页面编排」有：用户在其他视图/主题/音乐/天气
+  // 里改完，本视图内没有任何可保存的地方（用户反馈「有的地方没有保存按钮」）。
+  const bindSavePair=(saveId,syncId)=>{
+    if(!$(saveId)||!$(syncId))return;
+    $(saveId).onclick=pending($(saveId),async()=>{try{await save()}catch(e){notice(e.message,true)}});
+    $(syncId).onclick=pending($(syncId),async()=>{try{if(dirty)await save();await request('/api/sync',{});logHist('sync','已请求同步到设备');notice('已请求同步，等待设备应用回执');poll()}catch(e){notice(e.message,true)}});
+  };
+  bindSavePair('extras-save-btn','extras-sync-btn');
+  bindSavePair('look-save-btn','look-sync-btn');
+  bindSavePair('music-save-btn','music-sync-btn');
+  bindSavePair('weather-save-btn','weather-sync-btn');
 
   // ---- 设置：保存/同步/维护 ----
   $('validate-btn').onclick=pending($('validate-btn'),async()=>{try{await request('/api/validate',draft);notice('配置检查通过，可以保存')}catch(e){notice(e.message,true)}});
   $('save-btn').onclick=pending($('save-btn'),async()=>{try{await save()}catch(e){notice(e.message,true)}});
   $('sync-btn').onclick=pending($('sync-btn'),async()=>{try{if(dirty)await save();await request('/api/sync',{});logHist('sync','已请求同步到设备');notice('已请求同步，等待设备应用回执');poll()}catch(e){notice(e.message,true)}});
-  $('reset-btn').onclick=()=>{if(!confirm('恢复默认档案？当前未保存修改会丢失。'))return;draft={schema:1,version:saved.version,pages:[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'computer',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']},{id:'environment',title:'环境',layout:'grid_2x2',widgets:['environment','clock']}],reminders:[],calendar:[],alarms:[],apps:[],theme:{bg:'0B1220',grad:'0E1B33',card:'274064',card_edge:'3E506E',accent:'22D3EE',text:'F3F7FF',sub:'A8BDD9',bright:90}};selected=0;markDirty()};
+  $('reset-btn').onclick=()=>{
+    if(!confirm('恢复默认档案？当前未保存修改会丢失。'))return;
+    draft={schema:1,version:saved.version,pages:defaultPages(),
+           reminders:[],calendar:[],alarms:[],apps:[],countdowns:[],
+           theme:structuredClone(DEFAULT_THEME)};
+    selected=0;previewPage=0;markDirty();
+  };
   $('btn-export').onclick=async()=>{
     try{
       const data=await request('/api/export');
@@ -1598,30 +2894,38 @@ function bind(){
       e.target.checked=r.enabled;notice(r.enabled?'已开启开机自启':'已关闭开机自启')}
     catch(err){e.target.checked=!e.target.checked;notice(err.message,true)}
   };
-}
-function bindRadios(name,setter){
-  document.querySelectorAll(`input[name="${name}"]`).forEach(r=>{
-    r.onchange=e=>{if(e.target.checked){setter(e.target.value);saveTV();renderTaskPreview()}};
+  const smcState=$('smc-state');
+  const smcRefresh=async()=>{
+    try{const s=await(await fetch('/api/smc-status')).json();
+      if(s.installed&&s.fresh&&s.data){
+        const parts=[];
+        if(s.data.cputemp!=null)parts.push('CPU '+s.data.cputemp+'℃');
+        if(s.data.gputemp!=null)parts.push('GPU '+s.data.gputemp+'℃');
+        if(s.data.fan!=null)parts.push(s.data.fan+' RPM');
+        smcState.textContent='运行中 · '+(parts.join(' / ')||'采样中')+'（'+s.age+'s 前）';
+      }else if(s.installed){smcState.textContent='已安装但暂无数据';}
+      else{smcState.textContent='未启用（小屏隐藏该项）';}
+    }catch(e){smcState.textContent='状态未知';}
+  };
+  smcRefresh(); setInterval(smcRefresh,10000);
+  $('btn-smc-install').onclick=pending($('btn-smc-install'),async()=>{
+    notice('请在弹出的系统密码框输入管理员密码…');
+    try{
+      const r=await request('/api/smc-install',{});
+      if(r.ok){notice('温度采样已启用：CPU '+(r.data.cputemp??'?')+'℃ / 风扇 '+(r.data.fan??'?')+' RPM');
+        logHist('smc','温度采样已启用');}
+      else{notice(r.err||'启用失败',true);logHist('smc','温度采样启用失败',false);}
+      smcRefresh();
+    }catch(err){notice('启用失败：'+err.message,true)}
   });
-}
-function hydrateTaskControls(){
-  const setRadio=(name,v)=>{const r=document.querySelector(`input[name="${name}"][value="${v}"]`);if(r)r.checked=true};
-  setRadio('fv-supplement',tv.fv.supplement);setRadio('fv-value',tv.fv.value);
-  setRadio('fv-others',tv.fv.others);setRadio('fv-idle',tv.fv.idle);
-  setRadio('tv-range',tv.tv.range);setRadio('tv-time',tv.tv.time);
-  setRadio('dv-combo',tv.dv.combo);setRadio('dv-middle',tv.dv.middle);
-  const dvIds={tok:'dm-tok',model:'dm-model',task:'dm-task',elapsed:'dm-elapsed',cpu:'dm-cpu',mem:'dm-mem',disk:'dm-disk',net:'dm-net'};
-  Object.entries(dvIds).forEach(([k,id])=>{$(id).checked=!!tv.dv.metrics[k]});
-  $('cp-daynight').checked=!!tv.cp.daynight;$('cp-weather').checked=!!tv.cp.weather;
-  $('cp-fx').checked=!!tv.cp.fx;$('cp-action').checked=!!tv.cp.action;
-  $('cp-feedback').checked=!!tv.cp.feedback;$('cp-rest').checked=!!tv.cp.rest;
-  $('cpd-name').checked=!!tv.cp.disp.name;$('cpd-elapsed').checked=!!tv.cp.disp.elapsed;
-  $('cpd-model').checked=!!tv.cp.disp.model;$('cpd-tok').checked=!!tv.cp.disp.tok;
-  $('cpd-state').checked=!!tv.cp.disp.state;
-  $('scene-select').value=tv.cp.scene;
-  $('crown-mode').value=tv.crown.mode;$('crown-text').value=tv.crown.text;
-  const sel=Object.entries(tv.dv.metrics).filter(([,v])=>v).length;
-  $('dv-metric-count').textContent=`已选 ${sel} 项`;
+  $('btn-smc-uninstall').onclick=pending($('btn-smc-uninstall'),async()=>{
+    try{
+      const r=await request('/api/smc-uninstall',{});
+      notice(r.ok?'已停用温度采样':'停用未完成（组件可能已部分移除）',!r.ok);
+      if(r.ok)logHist('smc','温度采样已停用');
+      smcRefresh();
+    }catch(err){notice('停用失败：'+err.message,true)}
+  });
 }
 function switchTaskTab(which){
   const layouts=which==='layouts';
@@ -1637,25 +2941,26 @@ function switchTaskTab(which){
   if(!layouts&&which==='themes')renderThemeGrid();
   if(which==='multi')renderMultiPane();
 }
-/* 优化#11：多窗格预览——同一份数据、四种布局并排（虚拟多副屏）。
-   屏内样式全部走容器查询单位，小尺寸自动缩放，无需为迷你窗单独适配。 */
+/* 多窗格：把配置里的页面逐页平铺。用的是同一个 devScreen()，
+   所以每块小窗都是该页在小屏上的真实样子，不是另画一版缩略图。 */
 function renderMultiPane(){
   const root=$('multi-grid');if(!root)return;
-  const schemes=[['focus','状态聚焦',renderFocus],['timeline','任务时间线',renderTimeline],
-                 ['companion','角色陪伴',renderCompanion],['dashboard','数据看板',renderDashboard]];
   root.replaceChildren();
-  schemes.forEach(([key,name,renderer])=>{
+  (draft.pages||[]).forEach((page,i)=>{
     const cell=el('div','multi-cell');
-    const pane=el('div','screen mini');
-    const body=el('div','screen-body');
-    pane.append(body);
-    applyDeviceTheme(draft.theme,pane);
-    try{renderer(body)}catch(e){body.append(el('div','mini-task','渲染失败'))}
-    cell.append(pane,el('span','multi-cap',name));
-    cell.onclick=()=>{tv.scheme=key;tv.layout=key;$('scheme-select').value=key;saveTV();
-      switchTaskTab('layouts');renderCfgPanels();renderTaskPreview()};
+    const wrap=el('div','screen-scale');
+    const bezel=el('div','screen-bezel');
+    try{ bezel.append(devScreen(i, draft.theme)) }catch(e){ bezel.append(el('div','empty','渲染失败：'+e.message)) }
+    wrap.append(bezel); cell.append(wrap);
+    cell.append(el('span','multi-cap',`第 ${i+1} 页 · ${page.title}`));
+    cell.onclick=()=>{
+      previewPage=i;tv.layout=tv.layout;renderPageSelect();renderTaskPages();
+      switchTaskTab('layouts');renderTaskPreview();
+    };
+    /* 多窗格点击落点保持在本视图，不进设置 */
     root.append(cell);
   });
+  requestAnimationFrame(()=>root.querySelectorAll('.screen-scale').forEach(fitStage));
 }
 async function downloadFile(path, filename){
   const r=await fetch(path);
@@ -1665,6 +2970,7 @@ async function downloadFile(path, filename){
   a.download=filename;a.click();URL.revokeObjectURL(a.href);
 }
 bind();
+loadColorMap();
 poll();
 let sse=null, sseLive=false;
 startSSE();
@@ -1699,13 +3005,21 @@ function startTicker(){
     },delay);
   }
 }
+/* 舞台随侧栏宽度变化重新缩放（预览是缩放渲染，不是响应式重排）。 */
+window.addEventListener('resize',()=>{
+  fitStage($('screen-scale'));
+  fitStage($('sv-scale'));
+  document.querySelectorAll('#multi-grid .screen-scale').forEach(fitStage);
+});
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden){clearTimeout(tickTimer);return}
   failStreak=0;clearTimeout(tickTimer);
   poll().finally(startTicker);
 });
 window.addEventListener('focus',()=>{if(!document.hidden){failStreak=0;poll()}});
-// 预览时钟每秒走字
+// 预览顶栏时钟每秒走字：只改文本，不重建整块舞台
 setInterval(()=>{
-  if($('screen-clock'))$('screen-clock').textContent=clock();
+  document.querySelectorAll('.screen [data-role="topclock"]').forEach(node=>{
+    node.textContent=clockHMS();
+  });
 },1000);

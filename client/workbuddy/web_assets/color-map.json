@@ -1,0 +1,3243 @@
+{
+  "schema": 1,
+  "description": "触摸屏 sRGB888 → RGB565 色彩对照。hex 为期望颜色；rgb565 为量化色；flushWord 为第 7 格校准后在 LVGL flush 中交换字节所得数值。色卡仅代表数学转换，实机观感需照片或仪器确认。",
+  "panel": {
+    "controller": "ST7796",
+    "resolution": [
+      320,
+      480
+    ],
+    "pixelFormat": "RGB565",
+    "calibration": {
+      "source": "2026-10-10 实机 24 格测试，用户确认第 7 格颜色更准确（第 5 格更深）",
+      "cell": 7,
+      "rgbOrder": "RGB",
+      "lvglFlushByteSwap": true,
+      "panelInvert": true,
+      "redGreenBlueWhiteObserved": true,
+      "mixedColorInstrumentVerified": false,
+      "observations": {
+        "cell5": "用户观察为颜色较深",
+        "cell7": "用户观察较浅，选择为正式校准方案"
+      }
+    }
+  },
+  "conversion": {
+    "input": "sRGB888 #RRGGBB",
+    "r5": "R >> 3",
+    "g6": "G >> 2",
+    "b5": "B >> 3",
+    "rgb565": "(r5 << 11) | (g6 << 5) | b5",
+    "flushWord": "((rgb565 & 0xFF) << 8) | (rgb565 >> 8)",
+    "note": "Web 配色输入仍用 RGB888；固件 LVGL 渲染时做量化，flush_cb 统一换字节。不要在 Web 端手工换字节。"
+  },
+  "themeBindings": {
+    "bg": {
+      "label": "页面背景",
+      "profilePath": "theme.bg",
+      "editableInWeb": true
+    },
+    "grad": {
+      "label": "页面渐变",
+      "profilePath": "theme.grad",
+      "editableInWeb": true
+    },
+    "card": {
+      "label": "卡片背景",
+      "profilePath": "theme.card",
+      "editableInWeb": true
+    },
+    "card_edge": {
+      "label": "卡片描边",
+      "profilePath": "theme.card_edge",
+      "editableInWeb": true
+    },
+    "accent": {
+      "label": "强调色",
+      "profilePath": "theme.accent",
+      "editableInWeb": true
+    },
+    "text": {
+      "label": "主要文字",
+      "profilePath": "theme.text",
+      "editableInWeb": true
+    },
+    "sub": {
+      "label": "次要文字",
+      "profilePath": "theme.sub",
+      "editableInWeb": true
+    }
+  },
+  "semantic": [
+    {
+      "id": "theme.bg",
+      "name": "页面背景",
+      "group": "实机确认主题样本",
+      "hex": "060B16",
+      "rgb565": "0042",
+      "flushWord": "4200",
+      "webField": "bg",
+      "editable": true
+    },
+    {
+      "id": "theme.grad",
+      "name": "页面渐变",
+      "group": "实机确认主题样本",
+      "hex": "0B1730",
+      "rgb565": "08A6",
+      "flushWord": "A608",
+      "webField": "grad",
+      "editable": true
+    },
+    {
+      "id": "theme.card",
+      "name": "卡片背景",
+      "group": "实机确认主题样本",
+      "hex": "304661",
+      "rgb565": "322C",
+      "flushWord": "2C32",
+      "webField": "card",
+      "editable": true
+    },
+    {
+      "id": "theme.card_edge",
+      "name": "卡片描边",
+      "group": "实机确认主题样本",
+      "hex": "4B6685",
+      "rgb565": "4B30",
+      "flushWord": "304B",
+      "webField": "card_edge",
+      "editable": true
+    },
+    {
+      "id": "theme.accent",
+      "name": "强调色",
+      "group": "实机确认主题样本",
+      "hex": "57C8F5",
+      "rgb565": "565E",
+      "flushWord": "5E56",
+      "webField": "accent",
+      "editable": true
+    },
+    {
+      "id": "theme.text",
+      "name": "主要文字",
+      "group": "实机确认主题样本",
+      "hex": "F4F8FF",
+      "rgb565": "F7DF",
+      "flushWord": "DFF7",
+      "webField": "text",
+      "editable": true
+    },
+    {
+      "id": "theme.sub",
+      "name": "次要文字",
+      "group": "实机确认主题样本",
+      "hex": "C7D5E5",
+      "rgb565": "C6BC",
+      "flushWord": "BCC6",
+      "webField": "sub",
+      "editable": true
+    },
+    {
+      "id": "status.ok",
+      "name": "成功/在线",
+      "group": "固件状态色",
+      "hex": "34D399",
+      "rgb565": "3693",
+      "flushWord": "9336",
+      "editable": false,
+      "firmwareConstant": "COL_OK"
+    },
+    {
+      "id": "status.warn",
+      "name": "警告/思考",
+      "group": "固件状态色",
+      "hex": "FBBF24",
+      "rgb565": "FDE4",
+      "flushWord": "E4FD",
+      "editable": false,
+      "firmwareConstant": "COL_WARN"
+    },
+    {
+      "id": "status.err",
+      "name": "错误/离线",
+      "group": "固件状态色",
+      "hex": "F87171",
+      "rgb565": "FB8E",
+      "flushWord": "8EFB",
+      "editable": false,
+      "firmwareConstant": "COL_ERR"
+    },
+    {
+      "id": "robot.body",
+      "name": "机器人身体",
+      "group": "固件固定色",
+      "hex": "46689C",
+      "rgb565": "4353",
+      "flushWord": "5343",
+      "editable": false
+    },
+    {
+      "id": "robot.error",
+      "name": "机器人错误",
+      "group": "固件固定色",
+      "hex": "2A1A1A",
+      "rgb565": "28C3",
+      "flushWord": "C328",
+      "editable": false
+    },
+    {
+      "id": "robot.done",
+      "name": "机器人完成",
+      "group": "固件固定色",
+      "hex": "1A2A1A",
+      "rgb565": "1943",
+      "flushWord": "4319",
+      "editable": false
+    },
+    {
+      "id": "saver.black",
+      "name": "息屏背景",
+      "group": "固件固定色",
+      "hex": "000000",
+      "rgb565": "0000",
+      "flushWord": "0000",
+      "editable": false
+    },
+    {
+      "id": "saver.frame",
+      "name": "息屏卡片",
+      "group": "固件固定色",
+      "hex": "0A0F14",
+      "rgb565": "0862",
+      "flushWord": "6208",
+      "editable": false
+    },
+    {
+      "id": "saver.edge",
+      "name": "息屏描边",
+      "group": "固件固定色",
+      "hex": "2E4370",
+      "rgb565": "2A0E",
+      "flushWord": "0E2A",
+      "editable": false
+    },
+    {
+      "id": "saver.quote",
+      "name": "息屏短句",
+      "group": "固件固定色",
+      "hex": "8CA3C7",
+      "rgb565": "8D18",
+      "flushWord": "188D",
+      "editable": false
+    },
+    {
+      "id": "saver.time",
+      "name": "saver_time",
+      "group": "固件固定色",
+      "hex": "22D3EE",
+      "purpose": "息屏「方寸仪表」时间，等同默认主题强调色",
+      "editable": false,
+      "rgb565": "269D",
+      "flushWord": "9D26"
+    },
+    {
+      "id": "saver.dim",
+      "name": "saver_dim",
+      "group": "固件固定色",
+      "hex": "6B7A8F",
+      "purpose": "息屏日期/温湿度等次要文字",
+      "editable": false,
+      "rgb565": "6BD1",
+      "flushWord": "D16B"
+    },
+    {
+      "id": "saver.label",
+      "name": "saver_label",
+      "group": "固件固定色",
+      "hex": "3A4A5F",
+      "purpose": "息屏左上角样式名，最低对比装饰文字",
+      "editable": false,
+      "rgb565": "3A4B",
+      "flushWord": "4B3A"
+    }
+  ],
+  "checks": [
+    {
+      "id": "check-black",
+      "name": "黑",
+      "group": "校验色",
+      "hex": "000000",
+      "rgb565": "0000",
+      "flushWord": "0000",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-white",
+      "name": "白",
+      "group": "校验色",
+      "hex": "FFFFFF",
+      "rgb565": "FFFF",
+      "flushWord": "FFFF",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-red",
+      "name": "红",
+      "group": "校验色",
+      "hex": "FF0000",
+      "rgb565": "F800",
+      "flushWord": "00F8",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-green",
+      "name": "绿",
+      "group": "校验色",
+      "hex": "00FF00",
+      "rgb565": "07E0",
+      "flushWord": "E007",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-blue",
+      "name": "蓝",
+      "group": "校验色",
+      "hex": "0000FF",
+      "rgb565": "001F",
+      "flushWord": "1F00",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-cyan",
+      "name": "青",
+      "group": "校验色",
+      "hex": "00FFFF",
+      "rgb565": "07FF",
+      "flushWord": "FF07",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-magenta",
+      "name": "洋红",
+      "group": "校验色",
+      "hex": "FF00FF",
+      "rgb565": "F81F",
+      "flushWord": "1FF8",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-yellow",
+      "name": "黄",
+      "group": "校验色",
+      "hex": "FFFF00",
+      "rgb565": "FFE0",
+      "flushWord": "E0FF",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-orange",
+      "name": "橙",
+      "group": "校验色",
+      "hex": "FF8000",
+      "rgb565": "FC00",
+      "flushWord": "00FC",
+      "purpose": "可用于校准通道与混合色"
+    },
+    {
+      "id": "check-gray",
+      "name": "中灰",
+      "group": "校验色",
+      "hex": "808080",
+      "rgb565": "8410",
+      "flushWord": "1084",
+      "purpose": "可用于校准通道与混合色"
+    }
+  ],
+  "palette": [
+    {
+      "id": "neutral-000",
+      "name": "中性 0%",
+      "group": "中性灰",
+      "hex": "000000",
+      "rgb565": "0000",
+      "flushWord": "0000",
+      "lightness": 0
+    },
+    {
+      "id": "neutral-005",
+      "name": "中性 5%",
+      "group": "中性灰",
+      "hex": "0D0D0D",
+      "rgb565": "0861",
+      "flushWord": "6108",
+      "lightness": 5
+    },
+    {
+      "id": "neutral-010",
+      "name": "中性 10%",
+      "group": "中性灰",
+      "hex": "1A1A1A",
+      "rgb565": "18C3",
+      "flushWord": "C318",
+      "lightness": 10
+    },
+    {
+      "id": "neutral-015",
+      "name": "中性 15%",
+      "group": "中性灰",
+      "hex": "262626",
+      "rgb565": "2124",
+      "flushWord": "2421",
+      "lightness": 15
+    },
+    {
+      "id": "neutral-020",
+      "name": "中性 20%",
+      "group": "中性灰",
+      "hex": "333333",
+      "rgb565": "3186",
+      "flushWord": "8631",
+      "lightness": 20
+    },
+    {
+      "id": "neutral-025",
+      "name": "中性 25%",
+      "group": "中性灰",
+      "hex": "404040",
+      "rgb565": "4208",
+      "flushWord": "0842",
+      "lightness": 25
+    },
+    {
+      "id": "neutral-030",
+      "name": "中性 30%",
+      "group": "中性灰",
+      "hex": "4C4C4C",
+      "rgb565": "4A69",
+      "flushWord": "694A",
+      "lightness": 30
+    },
+    {
+      "id": "neutral-035",
+      "name": "中性 35%",
+      "group": "中性灰",
+      "hex": "595959",
+      "rgb565": "5ACB",
+      "flushWord": "CB5A",
+      "lightness": 35
+    },
+    {
+      "id": "neutral-040",
+      "name": "中性 40%",
+      "group": "中性灰",
+      "hex": "666666",
+      "rgb565": "632C",
+      "flushWord": "2C63",
+      "lightness": 40
+    },
+    {
+      "id": "neutral-045",
+      "name": "中性 45%",
+      "group": "中性灰",
+      "hex": "737373",
+      "rgb565": "738E",
+      "flushWord": "8E73",
+      "lightness": 45
+    },
+    {
+      "id": "neutral-050",
+      "name": "中性 50%",
+      "group": "中性灰",
+      "hex": "808080",
+      "rgb565": "8410",
+      "flushWord": "1084",
+      "lightness": 50
+    },
+    {
+      "id": "neutral-055",
+      "name": "中性 55%",
+      "group": "中性灰",
+      "hex": "8C8C8C",
+      "rgb565": "8C71",
+      "flushWord": "718C",
+      "lightness": 55
+    },
+    {
+      "id": "neutral-060",
+      "name": "中性 60%",
+      "group": "中性灰",
+      "hex": "999999",
+      "rgb565": "9CD3",
+      "flushWord": "D39C",
+      "lightness": 60
+    },
+    {
+      "id": "neutral-065",
+      "name": "中性 65%",
+      "group": "中性灰",
+      "hex": "A6A6A6",
+      "rgb565": "A534",
+      "flushWord": "34A5",
+      "lightness": 65
+    },
+    {
+      "id": "neutral-070",
+      "name": "中性 70%",
+      "group": "中性灰",
+      "hex": "B2B2B2",
+      "rgb565": "B596",
+      "flushWord": "96B5",
+      "lightness": 70
+    },
+    {
+      "id": "neutral-075",
+      "name": "中性 75%",
+      "group": "中性灰",
+      "hex": "BFBFBF",
+      "rgb565": "BDF7",
+      "flushWord": "F7BD",
+      "lightness": 75
+    },
+    {
+      "id": "neutral-080",
+      "name": "中性 80%",
+      "group": "中性灰",
+      "hex": "CCCCCC",
+      "rgb565": "CE79",
+      "flushWord": "79CE",
+      "lightness": 80
+    },
+    {
+      "id": "neutral-085",
+      "name": "中性 85%",
+      "group": "中性灰",
+      "hex": "D9D9D9",
+      "rgb565": "DEDB",
+      "flushWord": "DBDE",
+      "lightness": 85
+    },
+    {
+      "id": "neutral-090",
+      "name": "中性 90%",
+      "group": "中性灰",
+      "hex": "E6E6E6",
+      "rgb565": "E73C",
+      "flushWord": "3CE7",
+      "lightness": 90
+    },
+    {
+      "id": "neutral-095",
+      "name": "中性 95%",
+      "group": "中性灰",
+      "hex": "F2F2F2",
+      "rgb565": "F79E",
+      "flushWord": "9EF7",
+      "lightness": 95
+    },
+    {
+      "id": "neutral-100",
+      "name": "中性 100%",
+      "group": "中性灰",
+      "hex": "FFFFFF",
+      "rgb565": "FFFF",
+      "flushWord": "FFFF",
+      "lightness": 100
+    },
+    {
+      "id": "h000-l05",
+      "name": "红 5%",
+      "group": "红",
+      "hex": "170303",
+      "rgb565": "1000",
+      "flushWord": "0010",
+      "hue": 0,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l10",
+      "name": "红 10%",
+      "group": "红",
+      "hex": "2D0606",
+      "rgb565": "2820",
+      "flushWord": "2028",
+      "hue": 0,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l15",
+      "name": "红 15%",
+      "group": "红",
+      "hex": "440808",
+      "rgb565": "4041",
+      "flushWord": "4140",
+      "hue": 0,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l20",
+      "name": "红 20%",
+      "group": "红",
+      "hex": "5B0B0B",
+      "rgb565": "5841",
+      "flushWord": "4158",
+      "hue": 0,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l25",
+      "name": "红 25%",
+      "group": "红",
+      "hex": "710E0E",
+      "rgb565": "7061",
+      "flushWord": "6170",
+      "hue": 0,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l30",
+      "name": "红 30%",
+      "group": "红",
+      "hex": "881111",
+      "rgb565": "8882",
+      "flushWord": "8288",
+      "hue": 0,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l35",
+      "name": "红 35%",
+      "group": "红",
+      "hex": "9F1414",
+      "rgb565": "98A2",
+      "flushWord": "A298",
+      "hue": 0,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l40",
+      "name": "红 40%",
+      "group": "红",
+      "hex": "B61616",
+      "rgb565": "B0A2",
+      "flushWord": "A2B0",
+      "hue": 0,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l45",
+      "name": "红 45%",
+      "group": "红",
+      "hex": "CC1919",
+      "rgb565": "C8C3",
+      "flushWord": "C3C8",
+      "hue": 0,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l50",
+      "name": "红 50%",
+      "group": "红",
+      "hex": "E31C1C",
+      "rgb565": "E0E3",
+      "flushWord": "E3E0",
+      "hue": 0,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l55",
+      "name": "红 55%",
+      "group": "红",
+      "hex": "E63333",
+      "rgb565": "E186",
+      "flushWord": "86E1",
+      "hue": 0,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l60",
+      "name": "红 60%",
+      "group": "红",
+      "hex": "E94949",
+      "rgb565": "EA49",
+      "flushWord": "49EA",
+      "hue": 0,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l65",
+      "name": "红 65%",
+      "group": "红",
+      "hex": "EB6060",
+      "rgb565": "EB0C",
+      "flushWord": "0CEB",
+      "hue": 0,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l70",
+      "name": "红 70%",
+      "group": "红",
+      "hex": "EE7777",
+      "rgb565": "EBAE",
+      "flushWord": "AEEB",
+      "hue": 0,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l75",
+      "name": "红 75%",
+      "group": "红",
+      "hex": "F18E8E",
+      "rgb565": "F471",
+      "flushWord": "71F4",
+      "hue": 0,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l80",
+      "name": "红 80%",
+      "group": "红",
+      "hex": "F4A4A4",
+      "rgb565": "F534",
+      "flushWord": "34F5",
+      "hue": 0,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l85",
+      "name": "红 85%",
+      "group": "红",
+      "hex": "F7BBBB",
+      "rgb565": "F5D7",
+      "flushWord": "D7F5",
+      "hue": 0,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l90",
+      "name": "红 90%",
+      "group": "红",
+      "hex": "F9D2D2",
+      "rgb565": "FE9A",
+      "flushWord": "9AFE",
+      "hue": 0,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h000-l95",
+      "name": "红 95%",
+      "group": "红",
+      "hex": "FCE8E8",
+      "rgb565": "FF5D",
+      "flushWord": "5DFF",
+      "hue": 0,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l05",
+      "name": "橙 5%",
+      "group": "橙",
+      "hex": "170D03",
+      "rgb565": "1060",
+      "flushWord": "6010",
+      "hue": 30,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l10",
+      "name": "橙 10%",
+      "group": "橙",
+      "hex": "2D1A06",
+      "rgb565": "28C0",
+      "flushWord": "C028",
+      "hue": 30,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l15",
+      "name": "橙 15%",
+      "group": "橙",
+      "hex": "442608",
+      "rgb565": "4121",
+      "flushWord": "2141",
+      "hue": 30,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l20",
+      "name": "橙 20%",
+      "group": "橙",
+      "hex": "5B330B",
+      "rgb565": "5981",
+      "flushWord": "8159",
+      "hue": 30,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l25",
+      "name": "橙 25%",
+      "group": "橙",
+      "hex": "71400E",
+      "rgb565": "7201",
+      "flushWord": "0172",
+      "hue": 30,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l30",
+      "name": "橙 30%",
+      "group": "橙",
+      "hex": "884C11",
+      "rgb565": "8A62",
+      "flushWord": "628A",
+      "hue": 30,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l35",
+      "name": "橙 35%",
+      "group": "橙",
+      "hex": "9F5914",
+      "rgb565": "9AC2",
+      "flushWord": "C29A",
+      "hue": 30,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l40",
+      "name": "橙 40%",
+      "group": "橙",
+      "hex": "B66616",
+      "rgb565": "B322",
+      "flushWord": "22B3",
+      "hue": 30,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l45",
+      "name": "橙 45%",
+      "group": "橙",
+      "hex": "CC7319",
+      "rgb565": "CB83",
+      "flushWord": "83CB",
+      "hue": 30,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l50",
+      "name": "橙 50%",
+      "group": "橙",
+      "hex": "E3801C",
+      "rgb565": "E403",
+      "flushWord": "03E4",
+      "hue": 30,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l55",
+      "name": "橙 55%",
+      "group": "橙",
+      "hex": "E68C33",
+      "rgb565": "E466",
+      "flushWord": "66E4",
+      "hue": 30,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l60",
+      "name": "橙 60%",
+      "group": "橙",
+      "hex": "E99949",
+      "rgb565": "ECC9",
+      "flushWord": "C9EC",
+      "hue": 30,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l65",
+      "name": "橙 65%",
+      "group": "橙",
+      "hex": "EBA660",
+      "rgb565": "ED2C",
+      "flushWord": "2CED",
+      "hue": 30,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l70",
+      "name": "橙 70%",
+      "group": "橙",
+      "hex": "EEB277",
+      "rgb565": "ED8E",
+      "flushWord": "8EED",
+      "hue": 30,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l75",
+      "name": "橙 75%",
+      "group": "橙",
+      "hex": "F1BF8E",
+      "rgb565": "F5F1",
+      "flushWord": "F1F5",
+      "hue": 30,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l80",
+      "name": "橙 80%",
+      "group": "橙",
+      "hex": "F4CCA4",
+      "rgb565": "F674",
+      "flushWord": "74F6",
+      "hue": 30,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l85",
+      "name": "橙 85%",
+      "group": "橙",
+      "hex": "F7D9BB",
+      "rgb565": "F6D7",
+      "flushWord": "D7F6",
+      "hue": 30,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l90",
+      "name": "橙 90%",
+      "group": "橙",
+      "hex": "F9E6D2",
+      "rgb565": "FF3A",
+      "flushWord": "3AFF",
+      "hue": 30,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h030-l95",
+      "name": "橙 95%",
+      "group": "橙",
+      "hex": "FCF2E8",
+      "rgb565": "FF9D",
+      "flushWord": "9DFF",
+      "hue": 30,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l05",
+      "name": "黄 5%",
+      "group": "黄",
+      "hex": "171703",
+      "rgb565": "10A0",
+      "flushWord": "A010",
+      "hue": 60,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l10",
+      "name": "黄 10%",
+      "group": "黄",
+      "hex": "2D2D06",
+      "rgb565": "2960",
+      "flushWord": "6029",
+      "hue": 60,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l15",
+      "name": "黄 15%",
+      "group": "黄",
+      "hex": "444408",
+      "rgb565": "4221",
+      "flushWord": "2142",
+      "hue": 60,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l20",
+      "name": "黄 20%",
+      "group": "黄",
+      "hex": "5B5B0B",
+      "rgb565": "5AC1",
+      "flushWord": "C15A",
+      "hue": 60,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l25",
+      "name": "黄 25%",
+      "group": "黄",
+      "hex": "71710E",
+      "rgb565": "7381",
+      "flushWord": "8173",
+      "hue": 60,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l30",
+      "name": "黄 30%",
+      "group": "黄",
+      "hex": "888811",
+      "rgb565": "8C42",
+      "flushWord": "428C",
+      "hue": 60,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l35",
+      "name": "黄 35%",
+      "group": "黄",
+      "hex": "9F9F14",
+      "rgb565": "9CE2",
+      "flushWord": "E29C",
+      "hue": 60,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l40",
+      "name": "黄 40%",
+      "group": "黄",
+      "hex": "B6B616",
+      "rgb565": "B5A2",
+      "flushWord": "A2B5",
+      "hue": 60,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l45",
+      "name": "黄 45%",
+      "group": "黄",
+      "hex": "CCCC19",
+      "rgb565": "CE63",
+      "flushWord": "63CE",
+      "hue": 60,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l50",
+      "name": "黄 50%",
+      "group": "黄",
+      "hex": "E3E31C",
+      "rgb565": "E703",
+      "flushWord": "03E7",
+      "hue": 60,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l55",
+      "name": "黄 55%",
+      "group": "黄",
+      "hex": "E6E633",
+      "rgb565": "E726",
+      "flushWord": "26E7",
+      "hue": 60,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l60",
+      "name": "黄 60%",
+      "group": "黄",
+      "hex": "E9E949",
+      "rgb565": "EF49",
+      "flushWord": "49EF",
+      "hue": 60,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l65",
+      "name": "黄 65%",
+      "group": "黄",
+      "hex": "EBEB60",
+      "rgb565": "EF4C",
+      "flushWord": "4CEF",
+      "hue": 60,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l70",
+      "name": "黄 70%",
+      "group": "黄",
+      "hex": "EEEE77",
+      "rgb565": "EF6E",
+      "flushWord": "6EEF",
+      "hue": 60,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l75",
+      "name": "黄 75%",
+      "group": "黄",
+      "hex": "F1F18E",
+      "rgb565": "F791",
+      "flushWord": "91F7",
+      "hue": 60,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l80",
+      "name": "黄 80%",
+      "group": "黄",
+      "hex": "F4F4A4",
+      "rgb565": "F7B4",
+      "flushWord": "B4F7",
+      "hue": 60,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l85",
+      "name": "黄 85%",
+      "group": "黄",
+      "hex": "F7F7BB",
+      "rgb565": "F7B7",
+      "flushWord": "B7F7",
+      "hue": 60,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l90",
+      "name": "黄 90%",
+      "group": "黄",
+      "hex": "F9F9D2",
+      "rgb565": "FFDA",
+      "flushWord": "DAFF",
+      "hue": 60,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h060-l95",
+      "name": "黄 95%",
+      "group": "黄",
+      "hex": "FCFCE8",
+      "rgb565": "FFFD",
+      "flushWord": "FDFF",
+      "hue": 60,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l05",
+      "name": "黄绿 5%",
+      "group": "黄绿",
+      "hex": "0D1703",
+      "rgb565": "08A0",
+      "flushWord": "A008",
+      "hue": 90,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l10",
+      "name": "黄绿 10%",
+      "group": "黄绿",
+      "hex": "1A2D06",
+      "rgb565": "1960",
+      "flushWord": "6019",
+      "hue": 90,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l15",
+      "name": "黄绿 15%",
+      "group": "黄绿",
+      "hex": "264408",
+      "rgb565": "2221",
+      "flushWord": "2122",
+      "hue": 90,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l20",
+      "name": "黄绿 20%",
+      "group": "黄绿",
+      "hex": "335B0B",
+      "rgb565": "32C1",
+      "flushWord": "C132",
+      "hue": 90,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l25",
+      "name": "黄绿 25%",
+      "group": "黄绿",
+      "hex": "40710E",
+      "rgb565": "4381",
+      "flushWord": "8143",
+      "hue": 90,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l30",
+      "name": "黄绿 30%",
+      "group": "黄绿",
+      "hex": "4D8811",
+      "rgb565": "4C42",
+      "flushWord": "424C",
+      "hue": 90,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l35",
+      "name": "黄绿 35%",
+      "group": "黄绿",
+      "hex": "599F14",
+      "rgb565": "5CE2",
+      "flushWord": "E25C",
+      "hue": 90,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l40",
+      "name": "黄绿 40%",
+      "group": "黄绿",
+      "hex": "66B616",
+      "rgb565": "65A2",
+      "flushWord": "A265",
+      "hue": 90,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l45",
+      "name": "黄绿 45%",
+      "group": "黄绿",
+      "hex": "73CC19",
+      "rgb565": "7663",
+      "flushWord": "6376",
+      "hue": 90,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l50",
+      "name": "黄绿 50%",
+      "group": "黄绿",
+      "hex": "80E31C",
+      "rgb565": "8703",
+      "flushWord": "0387",
+      "hue": 90,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l55",
+      "name": "黄绿 55%",
+      "group": "黄绿",
+      "hex": "8CE633",
+      "rgb565": "8F26",
+      "flushWord": "268F",
+      "hue": 90,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l60",
+      "name": "黄绿 60%",
+      "group": "黄绿",
+      "hex": "99E949",
+      "rgb565": "9F49",
+      "flushWord": "499F",
+      "hue": 90,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l65",
+      "name": "黄绿 65%",
+      "group": "黄绿",
+      "hex": "A6EB60",
+      "rgb565": "A74C",
+      "flushWord": "4CA7",
+      "hue": 90,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l70",
+      "name": "黄绿 70%",
+      "group": "黄绿",
+      "hex": "B3EE77",
+      "rgb565": "B76E",
+      "flushWord": "6EB7",
+      "hue": 90,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l75",
+      "name": "黄绿 75%",
+      "group": "黄绿",
+      "hex": "BFF18E",
+      "rgb565": "BF91",
+      "flushWord": "91BF",
+      "hue": 90,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l80",
+      "name": "黄绿 80%",
+      "group": "黄绿",
+      "hex": "CCF4A4",
+      "rgb565": "CFB4",
+      "flushWord": "B4CF",
+      "hue": 90,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l85",
+      "name": "黄绿 85%",
+      "group": "黄绿",
+      "hex": "D9F7BB",
+      "rgb565": "DFB7",
+      "flushWord": "B7DF",
+      "hue": 90,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l90",
+      "name": "黄绿 90%",
+      "group": "黄绿",
+      "hex": "E6F9D2",
+      "rgb565": "E7DA",
+      "flushWord": "DAE7",
+      "hue": 90,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h090-l95",
+      "name": "黄绿 95%",
+      "group": "黄绿",
+      "hex": "F2FCE8",
+      "rgb565": "F7FD",
+      "flushWord": "FDF7",
+      "hue": 90,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l05",
+      "name": "绿 5%",
+      "group": "绿",
+      "hex": "031703",
+      "rgb565": "00A0",
+      "flushWord": "A000",
+      "hue": 120,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l10",
+      "name": "绿 10%",
+      "group": "绿",
+      "hex": "062D06",
+      "rgb565": "0160",
+      "flushWord": "6001",
+      "hue": 120,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l15",
+      "name": "绿 15%",
+      "group": "绿",
+      "hex": "084408",
+      "rgb565": "0A21",
+      "flushWord": "210A",
+      "hue": 120,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l20",
+      "name": "绿 20%",
+      "group": "绿",
+      "hex": "0B5B0B",
+      "rgb565": "0AC1",
+      "flushWord": "C10A",
+      "hue": 120,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l25",
+      "name": "绿 25%",
+      "group": "绿",
+      "hex": "0E710E",
+      "rgb565": "0B81",
+      "flushWord": "810B",
+      "hue": 120,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l30",
+      "name": "绿 30%",
+      "group": "绿",
+      "hex": "118811",
+      "rgb565": "1442",
+      "flushWord": "4214",
+      "hue": 120,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l35",
+      "name": "绿 35%",
+      "group": "绿",
+      "hex": "149F14",
+      "rgb565": "14E2",
+      "flushWord": "E214",
+      "hue": 120,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l40",
+      "name": "绿 40%",
+      "group": "绿",
+      "hex": "16B616",
+      "rgb565": "15A2",
+      "flushWord": "A215",
+      "hue": 120,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l45",
+      "name": "绿 45%",
+      "group": "绿",
+      "hex": "19CC19",
+      "rgb565": "1E63",
+      "flushWord": "631E",
+      "hue": 120,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l50",
+      "name": "绿 50%",
+      "group": "绿",
+      "hex": "1CE31C",
+      "rgb565": "1F03",
+      "flushWord": "031F",
+      "hue": 120,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l55",
+      "name": "绿 55%",
+      "group": "绿",
+      "hex": "33E633",
+      "rgb565": "3726",
+      "flushWord": "2637",
+      "hue": 120,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l60",
+      "name": "绿 60%",
+      "group": "绿",
+      "hex": "49E949",
+      "rgb565": "4F49",
+      "flushWord": "494F",
+      "hue": 120,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l65",
+      "name": "绿 65%",
+      "group": "绿",
+      "hex": "60EB60",
+      "rgb565": "674C",
+      "flushWord": "4C67",
+      "hue": 120,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l70",
+      "name": "绿 70%",
+      "group": "绿",
+      "hex": "77EE77",
+      "rgb565": "776E",
+      "flushWord": "6E77",
+      "hue": 120,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l75",
+      "name": "绿 75%",
+      "group": "绿",
+      "hex": "8EF18E",
+      "rgb565": "8F91",
+      "flushWord": "918F",
+      "hue": 120,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l80",
+      "name": "绿 80%",
+      "group": "绿",
+      "hex": "A4F4A4",
+      "rgb565": "A7B4",
+      "flushWord": "B4A7",
+      "hue": 120,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l85",
+      "name": "绿 85%",
+      "group": "绿",
+      "hex": "BBF7BB",
+      "rgb565": "BFB7",
+      "flushWord": "B7BF",
+      "hue": 120,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l90",
+      "name": "绿 90%",
+      "group": "绿",
+      "hex": "D2F9D2",
+      "rgb565": "D7DA",
+      "flushWord": "DAD7",
+      "hue": 120,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h120-l95",
+      "name": "绿 95%",
+      "group": "绿",
+      "hex": "E8FCE8",
+      "rgb565": "EFFD",
+      "flushWord": "FDEF",
+      "hue": 120,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l05",
+      "name": "春绿 5%",
+      "group": "春绿",
+      "hex": "03170D",
+      "rgb565": "00A1",
+      "flushWord": "A100",
+      "hue": 150,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l10",
+      "name": "春绿 10%",
+      "group": "春绿",
+      "hex": "062D1A",
+      "rgb565": "0163",
+      "flushWord": "6301",
+      "hue": 150,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l15",
+      "name": "春绿 15%",
+      "group": "春绿",
+      "hex": "084426",
+      "rgb565": "0A24",
+      "flushWord": "240A",
+      "hue": 150,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l20",
+      "name": "春绿 20%",
+      "group": "春绿",
+      "hex": "0B5B33",
+      "rgb565": "0AC6",
+      "flushWord": "C60A",
+      "hue": 150,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l25",
+      "name": "春绿 25%",
+      "group": "春绿",
+      "hex": "0E7140",
+      "rgb565": "0B88",
+      "flushWord": "880B",
+      "hue": 150,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l30",
+      "name": "春绿 30%",
+      "group": "春绿",
+      "hex": "11884D",
+      "rgb565": "1449",
+      "flushWord": "4914",
+      "hue": 150,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l35",
+      "name": "春绿 35%",
+      "group": "春绿",
+      "hex": "149F59",
+      "rgb565": "14EB",
+      "flushWord": "EB14",
+      "hue": 150,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l40",
+      "name": "春绿 40%",
+      "group": "春绿",
+      "hex": "16B666",
+      "rgb565": "15AC",
+      "flushWord": "AC15",
+      "hue": 150,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l45",
+      "name": "春绿 45%",
+      "group": "春绿",
+      "hex": "19CC73",
+      "rgb565": "1E6E",
+      "flushWord": "6E1E",
+      "hue": 150,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l50",
+      "name": "春绿 50%",
+      "group": "春绿",
+      "hex": "1CE380",
+      "rgb565": "1F10",
+      "flushWord": "101F",
+      "hue": 150,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l55",
+      "name": "春绿 55%",
+      "group": "春绿",
+      "hex": "33E68C",
+      "rgb565": "3731",
+      "flushWord": "3137",
+      "hue": 150,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l60",
+      "name": "春绿 60%",
+      "group": "春绿",
+      "hex": "49E999",
+      "rgb565": "4F53",
+      "flushWord": "534F",
+      "hue": 150,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l65",
+      "name": "春绿 65%",
+      "group": "春绿",
+      "hex": "60EBA6",
+      "rgb565": "6754",
+      "flushWord": "5467",
+      "hue": 150,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l70",
+      "name": "春绿 70%",
+      "group": "春绿",
+      "hex": "77EEB3",
+      "rgb565": "7776",
+      "flushWord": "7677",
+      "hue": 150,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l75",
+      "name": "春绿 75%",
+      "group": "春绿",
+      "hex": "8EF1BF",
+      "rgb565": "8F97",
+      "flushWord": "978F",
+      "hue": 150,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l80",
+      "name": "春绿 80%",
+      "group": "春绿",
+      "hex": "A4F4CC",
+      "rgb565": "A7B9",
+      "flushWord": "B9A7",
+      "hue": 150,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l85",
+      "name": "春绿 85%",
+      "group": "春绿",
+      "hex": "BBF7D9",
+      "rgb565": "BFBB",
+      "flushWord": "BBBF",
+      "hue": 150,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l90",
+      "name": "春绿 90%",
+      "group": "春绿",
+      "hex": "D2F9E6",
+      "rgb565": "D7DC",
+      "flushWord": "DCD7",
+      "hue": 150,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h150-l95",
+      "name": "春绿 95%",
+      "group": "春绿",
+      "hex": "E8FCF2",
+      "rgb565": "EFFE",
+      "flushWord": "FEEF",
+      "hue": 150,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l05",
+      "name": "青 5%",
+      "group": "青",
+      "hex": "031717",
+      "rgb565": "00A2",
+      "flushWord": "A200",
+      "hue": 180,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l10",
+      "name": "青 10%",
+      "group": "青",
+      "hex": "062D2D",
+      "rgb565": "0165",
+      "flushWord": "6501",
+      "hue": 180,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l15",
+      "name": "青 15%",
+      "group": "青",
+      "hex": "084444",
+      "rgb565": "0A28",
+      "flushWord": "280A",
+      "hue": 180,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l20",
+      "name": "青 20%",
+      "group": "青",
+      "hex": "0B5B5B",
+      "rgb565": "0ACB",
+      "flushWord": "CB0A",
+      "hue": 180,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l25",
+      "name": "青 25%",
+      "group": "青",
+      "hex": "0E7171",
+      "rgb565": "0B8E",
+      "flushWord": "8E0B",
+      "hue": 180,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l30",
+      "name": "青 30%",
+      "group": "青",
+      "hex": "118888",
+      "rgb565": "1451",
+      "flushWord": "5114",
+      "hue": 180,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l35",
+      "name": "青 35%",
+      "group": "青",
+      "hex": "149F9F",
+      "rgb565": "14F3",
+      "flushWord": "F314",
+      "hue": 180,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l40",
+      "name": "青 40%",
+      "group": "青",
+      "hex": "16B6B6",
+      "rgb565": "15B6",
+      "flushWord": "B615",
+      "hue": 180,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l45",
+      "name": "青 45%",
+      "group": "青",
+      "hex": "19CCCC",
+      "rgb565": "1E79",
+      "flushWord": "791E",
+      "hue": 180,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l50",
+      "name": "青 50%",
+      "group": "青",
+      "hex": "1CE3E3",
+      "rgb565": "1F1C",
+      "flushWord": "1C1F",
+      "hue": 180,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l55",
+      "name": "青 55%",
+      "group": "青",
+      "hex": "33E6E6",
+      "rgb565": "373C",
+      "flushWord": "3C37",
+      "hue": 180,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l60",
+      "name": "青 60%",
+      "group": "青",
+      "hex": "49E9E9",
+      "rgb565": "4F5D",
+      "flushWord": "5D4F",
+      "hue": 180,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l65",
+      "name": "青 65%",
+      "group": "青",
+      "hex": "60EBEB",
+      "rgb565": "675D",
+      "flushWord": "5D67",
+      "hue": 180,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l70",
+      "name": "青 70%",
+      "group": "青",
+      "hex": "77EEEE",
+      "rgb565": "777D",
+      "flushWord": "7D77",
+      "hue": 180,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l75",
+      "name": "青 75%",
+      "group": "青",
+      "hex": "8EF1F1",
+      "rgb565": "8F9E",
+      "flushWord": "9E8F",
+      "hue": 180,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l80",
+      "name": "青 80%",
+      "group": "青",
+      "hex": "A4F4F4",
+      "rgb565": "A7BE",
+      "flushWord": "BEA7",
+      "hue": 180,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l85",
+      "name": "青 85%",
+      "group": "青",
+      "hex": "BBF7F7",
+      "rgb565": "BFBE",
+      "flushWord": "BEBF",
+      "hue": 180,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l90",
+      "name": "青 90%",
+      "group": "青",
+      "hex": "D2F9F9",
+      "rgb565": "D7DF",
+      "flushWord": "DFD7",
+      "hue": 180,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h180-l95",
+      "name": "青 95%",
+      "group": "青",
+      "hex": "E8FCFC",
+      "rgb565": "EFFF",
+      "flushWord": "FFEF",
+      "hue": 180,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l05",
+      "name": "天蓝 5%",
+      "group": "天蓝",
+      "hex": "030D17",
+      "rgb565": "0062",
+      "flushWord": "6200",
+      "hue": 210,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l10",
+      "name": "天蓝 10%",
+      "group": "天蓝",
+      "hex": "06192D",
+      "rgb565": "00C5",
+      "flushWord": "C500",
+      "hue": 210,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l15",
+      "name": "天蓝 15%",
+      "group": "天蓝",
+      "hex": "082644",
+      "rgb565": "0928",
+      "flushWord": "2809",
+      "hue": 210,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l20",
+      "name": "天蓝 20%",
+      "group": "天蓝",
+      "hex": "0B335B",
+      "rgb565": "098B",
+      "flushWord": "8B09",
+      "hue": 210,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l25",
+      "name": "天蓝 25%",
+      "group": "天蓝",
+      "hex": "0E4071",
+      "rgb565": "0A0E",
+      "flushWord": "0E0A",
+      "hue": 210,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l30",
+      "name": "天蓝 30%",
+      "group": "天蓝",
+      "hex": "114C88",
+      "rgb565": "1271",
+      "flushWord": "7112",
+      "hue": 210,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l35",
+      "name": "天蓝 35%",
+      "group": "天蓝",
+      "hex": "14599F",
+      "rgb565": "12D3",
+      "flushWord": "D312",
+      "hue": 210,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l40",
+      "name": "天蓝 40%",
+      "group": "天蓝",
+      "hex": "1666B6",
+      "rgb565": "1336",
+      "flushWord": "3613",
+      "hue": 210,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l45",
+      "name": "天蓝 45%",
+      "group": "天蓝",
+      "hex": "1973CC",
+      "rgb565": "1B99",
+      "flushWord": "991B",
+      "hue": 210,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l50",
+      "name": "天蓝 50%",
+      "group": "天蓝",
+      "hex": "1C7FE3",
+      "rgb565": "1BFC",
+      "flushWord": "FC1B",
+      "hue": 210,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l55",
+      "name": "天蓝 55%",
+      "group": "天蓝",
+      "hex": "338CE6",
+      "rgb565": "347C",
+      "flushWord": "7C34",
+      "hue": 210,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l60",
+      "name": "天蓝 60%",
+      "group": "天蓝",
+      "hex": "4999E9",
+      "rgb565": "4CDD",
+      "flushWord": "DD4C",
+      "hue": 210,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l65",
+      "name": "天蓝 65%",
+      "group": "天蓝",
+      "hex": "60A6EB",
+      "rgb565": "653D",
+      "flushWord": "3D65",
+      "hue": 210,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l70",
+      "name": "天蓝 70%",
+      "group": "天蓝",
+      "hex": "77B2EE",
+      "rgb565": "759D",
+      "flushWord": "9D75",
+      "hue": 210,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l75",
+      "name": "天蓝 75%",
+      "group": "天蓝",
+      "hex": "8EBFF1",
+      "rgb565": "8DFE",
+      "flushWord": "FE8D",
+      "hue": 210,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l80",
+      "name": "天蓝 80%",
+      "group": "天蓝",
+      "hex": "A4CCF4",
+      "rgb565": "A67E",
+      "flushWord": "7EA6",
+      "hue": 210,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l85",
+      "name": "天蓝 85%",
+      "group": "天蓝",
+      "hex": "BBD9F7",
+      "rgb565": "BEDE",
+      "flushWord": "DEBE",
+      "hue": 210,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l90",
+      "name": "天蓝 90%",
+      "group": "天蓝",
+      "hex": "D2E5F9",
+      "rgb565": "D73F",
+      "flushWord": "3FD7",
+      "hue": 210,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h210-l95",
+      "name": "天蓝 95%",
+      "group": "天蓝",
+      "hex": "E8F2FC",
+      "rgb565": "EF9F",
+      "flushWord": "9FEF",
+      "hue": 210,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l05",
+      "name": "蓝 5%",
+      "group": "蓝",
+      "hex": "030317",
+      "rgb565": "0002",
+      "flushWord": "0200",
+      "hue": 240,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l10",
+      "name": "蓝 10%",
+      "group": "蓝",
+      "hex": "06062D",
+      "rgb565": "0025",
+      "flushWord": "2500",
+      "hue": 240,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l15",
+      "name": "蓝 15%",
+      "group": "蓝",
+      "hex": "080844",
+      "rgb565": "0848",
+      "flushWord": "4808",
+      "hue": 240,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l20",
+      "name": "蓝 20%",
+      "group": "蓝",
+      "hex": "0B0B5B",
+      "rgb565": "084B",
+      "flushWord": "4B08",
+      "hue": 240,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l25",
+      "name": "蓝 25%",
+      "group": "蓝",
+      "hex": "0E0E71",
+      "rgb565": "086E",
+      "flushWord": "6E08",
+      "hue": 240,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l30",
+      "name": "蓝 30%",
+      "group": "蓝",
+      "hex": "111188",
+      "rgb565": "1091",
+      "flushWord": "9110",
+      "hue": 240,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l35",
+      "name": "蓝 35%",
+      "group": "蓝",
+      "hex": "14149F",
+      "rgb565": "10B3",
+      "flushWord": "B310",
+      "hue": 240,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l40",
+      "name": "蓝 40%",
+      "group": "蓝",
+      "hex": "1616B6",
+      "rgb565": "10B6",
+      "flushWord": "B610",
+      "hue": 240,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l45",
+      "name": "蓝 45%",
+      "group": "蓝",
+      "hex": "1919CC",
+      "rgb565": "18D9",
+      "flushWord": "D918",
+      "hue": 240,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l50",
+      "name": "蓝 50%",
+      "group": "蓝",
+      "hex": "1C1CE3",
+      "rgb565": "18FC",
+      "flushWord": "FC18",
+      "hue": 240,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l55",
+      "name": "蓝 55%",
+      "group": "蓝",
+      "hex": "3333E6",
+      "rgb565": "319C",
+      "flushWord": "9C31",
+      "hue": 240,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l60",
+      "name": "蓝 60%",
+      "group": "蓝",
+      "hex": "4949E9",
+      "rgb565": "4A5D",
+      "flushWord": "5D4A",
+      "hue": 240,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l65",
+      "name": "蓝 65%",
+      "group": "蓝",
+      "hex": "6060EB",
+      "rgb565": "631D",
+      "flushWord": "1D63",
+      "hue": 240,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l70",
+      "name": "蓝 70%",
+      "group": "蓝",
+      "hex": "7777EE",
+      "rgb565": "73BD",
+      "flushWord": "BD73",
+      "hue": 240,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l75",
+      "name": "蓝 75%",
+      "group": "蓝",
+      "hex": "8E8EF1",
+      "rgb565": "8C7E",
+      "flushWord": "7E8C",
+      "hue": 240,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l80",
+      "name": "蓝 80%",
+      "group": "蓝",
+      "hex": "A4A4F4",
+      "rgb565": "A53E",
+      "flushWord": "3EA5",
+      "hue": 240,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l85",
+      "name": "蓝 85%",
+      "group": "蓝",
+      "hex": "BBBBF7",
+      "rgb565": "BDDE",
+      "flushWord": "DEBD",
+      "hue": 240,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l90",
+      "name": "蓝 90%",
+      "group": "蓝",
+      "hex": "D2D2F9",
+      "rgb565": "D69F",
+      "flushWord": "9FD6",
+      "hue": 240,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h240-l95",
+      "name": "蓝 95%",
+      "group": "蓝",
+      "hex": "E8E8FC",
+      "rgb565": "EF5F",
+      "flushWord": "5FEF",
+      "hue": 240,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l05",
+      "name": "紫 5%",
+      "group": "紫",
+      "hex": "0D0317",
+      "rgb565": "0802",
+      "flushWord": "0208",
+      "hue": 270,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l10",
+      "name": "紫 10%",
+      "group": "紫",
+      "hex": "19062D",
+      "rgb565": "1825",
+      "flushWord": "2518",
+      "hue": 270,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l15",
+      "name": "紫 15%",
+      "group": "紫",
+      "hex": "260844",
+      "rgb565": "2048",
+      "flushWord": "4820",
+      "hue": 270,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l20",
+      "name": "紫 20%",
+      "group": "紫",
+      "hex": "330B5B",
+      "rgb565": "304B",
+      "flushWord": "4B30",
+      "hue": 270,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l25",
+      "name": "紫 25%",
+      "group": "紫",
+      "hex": "400E71",
+      "rgb565": "406E",
+      "flushWord": "6E40",
+      "hue": 270,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l30",
+      "name": "紫 30%",
+      "group": "紫",
+      "hex": "4C1188",
+      "rgb565": "4891",
+      "flushWord": "9148",
+      "hue": 270,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l35",
+      "name": "紫 35%",
+      "group": "紫",
+      "hex": "59149F",
+      "rgb565": "58B3",
+      "flushWord": "B358",
+      "hue": 270,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l40",
+      "name": "紫 40%",
+      "group": "紫",
+      "hex": "6616B6",
+      "rgb565": "60B6",
+      "flushWord": "B660",
+      "hue": 270,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l45",
+      "name": "紫 45%",
+      "group": "紫",
+      "hex": "7319CC",
+      "rgb565": "70D9",
+      "flushWord": "D970",
+      "hue": 270,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l50",
+      "name": "紫 50%",
+      "group": "紫",
+      "hex": "7F1CE3",
+      "rgb565": "78FC",
+      "flushWord": "FC78",
+      "hue": 270,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l55",
+      "name": "紫 55%",
+      "group": "紫",
+      "hex": "8C33E6",
+      "rgb565": "899C",
+      "flushWord": "9C89",
+      "hue": 270,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l60",
+      "name": "紫 60%",
+      "group": "紫",
+      "hex": "9949E9",
+      "rgb565": "9A5D",
+      "flushWord": "5D9A",
+      "hue": 270,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l65",
+      "name": "紫 65%",
+      "group": "紫",
+      "hex": "A660EB",
+      "rgb565": "A31D",
+      "flushWord": "1DA3",
+      "hue": 270,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l70",
+      "name": "紫 70%",
+      "group": "紫",
+      "hex": "B277EE",
+      "rgb565": "B3BD",
+      "flushWord": "BDB3",
+      "hue": 270,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l75",
+      "name": "紫 75%",
+      "group": "紫",
+      "hex": "BF8EF1",
+      "rgb565": "BC7E",
+      "flushWord": "7EBC",
+      "hue": 270,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l80",
+      "name": "紫 80%",
+      "group": "紫",
+      "hex": "CCA4F4",
+      "rgb565": "CD3E",
+      "flushWord": "3ECD",
+      "hue": 270,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l85",
+      "name": "紫 85%",
+      "group": "紫",
+      "hex": "D9BBF7",
+      "rgb565": "DDDE",
+      "flushWord": "DEDD",
+      "hue": 270,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l90",
+      "name": "紫 90%",
+      "group": "紫",
+      "hex": "E5D2F9",
+      "rgb565": "E69F",
+      "flushWord": "9FE6",
+      "hue": 270,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h270-l95",
+      "name": "紫 95%",
+      "group": "紫",
+      "hex": "F2E8FC",
+      "rgb565": "F75F",
+      "flushWord": "5FF7",
+      "hue": 270,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l05",
+      "name": "洋红 5%",
+      "group": "洋红",
+      "hex": "170317",
+      "rgb565": "1002",
+      "flushWord": "0210",
+      "hue": 300,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l10",
+      "name": "洋红 10%",
+      "group": "洋红",
+      "hex": "2D062D",
+      "rgb565": "2825",
+      "flushWord": "2528",
+      "hue": 300,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l15",
+      "name": "洋红 15%",
+      "group": "洋红",
+      "hex": "440844",
+      "rgb565": "4048",
+      "flushWord": "4840",
+      "hue": 300,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l20",
+      "name": "洋红 20%",
+      "group": "洋红",
+      "hex": "5B0B5B",
+      "rgb565": "584B",
+      "flushWord": "4B58",
+      "hue": 300,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l25",
+      "name": "洋红 25%",
+      "group": "洋红",
+      "hex": "710E71",
+      "rgb565": "706E",
+      "flushWord": "6E70",
+      "hue": 300,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l30",
+      "name": "洋红 30%",
+      "group": "洋红",
+      "hex": "881188",
+      "rgb565": "8891",
+      "flushWord": "9188",
+      "hue": 300,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l35",
+      "name": "洋红 35%",
+      "group": "洋红",
+      "hex": "9F149F",
+      "rgb565": "98B3",
+      "flushWord": "B398",
+      "hue": 300,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l40",
+      "name": "洋红 40%",
+      "group": "洋红",
+      "hex": "B616B6",
+      "rgb565": "B0B6",
+      "flushWord": "B6B0",
+      "hue": 300,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l45",
+      "name": "洋红 45%",
+      "group": "洋红",
+      "hex": "CC19CC",
+      "rgb565": "C8D9",
+      "flushWord": "D9C8",
+      "hue": 300,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l50",
+      "name": "洋红 50%",
+      "group": "洋红",
+      "hex": "E31CE3",
+      "rgb565": "E0FC",
+      "flushWord": "FCE0",
+      "hue": 300,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l55",
+      "name": "洋红 55%",
+      "group": "洋红",
+      "hex": "E633E6",
+      "rgb565": "E19C",
+      "flushWord": "9CE1",
+      "hue": 300,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l60",
+      "name": "洋红 60%",
+      "group": "洋红",
+      "hex": "E949E9",
+      "rgb565": "EA5D",
+      "flushWord": "5DEA",
+      "hue": 300,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l65",
+      "name": "洋红 65%",
+      "group": "洋红",
+      "hex": "EB60EB",
+      "rgb565": "EB1D",
+      "flushWord": "1DEB",
+      "hue": 300,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l70",
+      "name": "洋红 70%",
+      "group": "洋红",
+      "hex": "EE77EE",
+      "rgb565": "EBBD",
+      "flushWord": "BDEB",
+      "hue": 300,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l75",
+      "name": "洋红 75%",
+      "group": "洋红",
+      "hex": "F18EF1",
+      "rgb565": "F47E",
+      "flushWord": "7EF4",
+      "hue": 300,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l80",
+      "name": "洋红 80%",
+      "group": "洋红",
+      "hex": "F4A4F4",
+      "rgb565": "F53E",
+      "flushWord": "3EF5",
+      "hue": 300,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l85",
+      "name": "洋红 85%",
+      "group": "洋红",
+      "hex": "F7BBF7",
+      "rgb565": "F5DE",
+      "flushWord": "DEF5",
+      "hue": 300,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l90",
+      "name": "洋红 90%",
+      "group": "洋红",
+      "hex": "F9D2F9",
+      "rgb565": "FE9F",
+      "flushWord": "9FFE",
+      "hue": 300,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h300-l95",
+      "name": "洋红 95%",
+      "group": "洋红",
+      "hex": "FCE8FC",
+      "rgb565": "FF5F",
+      "flushWord": "5FFF",
+      "hue": 300,
+      "lightness": 95,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l05",
+      "name": "玫红 5%",
+      "group": "玫红",
+      "hex": "17030D",
+      "rgb565": "1001",
+      "flushWord": "0110",
+      "hue": 330,
+      "lightness": 5,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l10",
+      "name": "玫红 10%",
+      "group": "玫红",
+      "hex": "2D061A",
+      "rgb565": "2823",
+      "flushWord": "2328",
+      "hue": 330,
+      "lightness": 10,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l15",
+      "name": "玫红 15%",
+      "group": "玫红",
+      "hex": "440826",
+      "rgb565": "4044",
+      "flushWord": "4440",
+      "hue": 330,
+      "lightness": 15,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l20",
+      "name": "玫红 20%",
+      "group": "玫红",
+      "hex": "5B0B33",
+      "rgb565": "5846",
+      "flushWord": "4658",
+      "hue": 330,
+      "lightness": 20,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l25",
+      "name": "玫红 25%",
+      "group": "玫红",
+      "hex": "710E40",
+      "rgb565": "7068",
+      "flushWord": "6870",
+      "hue": 330,
+      "lightness": 25,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l30",
+      "name": "玫红 30%",
+      "group": "玫红",
+      "hex": "88114D",
+      "rgb565": "8889",
+      "flushWord": "8988",
+      "hue": 330,
+      "lightness": 30,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l35",
+      "name": "玫红 35%",
+      "group": "玫红",
+      "hex": "9F1459",
+      "rgb565": "98AB",
+      "flushWord": "AB98",
+      "hue": 330,
+      "lightness": 35,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l40",
+      "name": "玫红 40%",
+      "group": "玫红",
+      "hex": "B61666",
+      "rgb565": "B0AC",
+      "flushWord": "ACB0",
+      "hue": 330,
+      "lightness": 40,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l45",
+      "name": "玫红 45%",
+      "group": "玫红",
+      "hex": "CC1973",
+      "rgb565": "C8CE",
+      "flushWord": "CEC8",
+      "hue": 330,
+      "lightness": 45,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l50",
+      "name": "玫红 50%",
+      "group": "玫红",
+      "hex": "E31C80",
+      "rgb565": "E0F0",
+      "flushWord": "F0E0",
+      "hue": 330,
+      "lightness": 50,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l55",
+      "name": "玫红 55%",
+      "group": "玫红",
+      "hex": "E6338C",
+      "rgb565": "E191",
+      "flushWord": "91E1",
+      "hue": 330,
+      "lightness": 55,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l60",
+      "name": "玫红 60%",
+      "group": "玫红",
+      "hex": "E94999",
+      "rgb565": "EA53",
+      "flushWord": "53EA",
+      "hue": 330,
+      "lightness": 60,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l65",
+      "name": "玫红 65%",
+      "group": "玫红",
+      "hex": "EB60A6",
+      "rgb565": "EB14",
+      "flushWord": "14EB",
+      "hue": 330,
+      "lightness": 65,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l70",
+      "name": "玫红 70%",
+      "group": "玫红",
+      "hex": "EE77B3",
+      "rgb565": "EBB6",
+      "flushWord": "B6EB",
+      "hue": 330,
+      "lightness": 70,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l75",
+      "name": "玫红 75%",
+      "group": "玫红",
+      "hex": "F18EBF",
+      "rgb565": "F477",
+      "flushWord": "77F4",
+      "hue": 330,
+      "lightness": 75,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l80",
+      "name": "玫红 80%",
+      "group": "玫红",
+      "hex": "F4A4CC",
+      "rgb565": "F539",
+      "flushWord": "39F5",
+      "hue": 330,
+      "lightness": 80,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l85",
+      "name": "玫红 85%",
+      "group": "玫红",
+      "hex": "F7BBD9",
+      "rgb565": "F5DB",
+      "flushWord": "DBF5",
+      "hue": 330,
+      "lightness": 85,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l90",
+      "name": "玫红 90%",
+      "group": "玫红",
+      "hex": "F9D2E6",
+      "rgb565": "FE9C",
+      "flushWord": "9CFE",
+      "hue": 330,
+      "lightness": 90,
+      "saturation": 78
+    },
+    {
+      "id": "h330-l95",
+      "name": "玫红 95%",
+      "group": "玫红",
+      "hex": "FCE8F2",
+      "rgb565": "FF5E",
+      "flushWord": "5EFF",
+      "hue": 330,
+      "lightness": 95,
+      "saturation": 78
+    }
+  ],
+  "diagnosticVariants": [
+    {
+      "cell": 1,
+      "channelOrder": "RGB",
+      "byteSwap": false,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 2,
+      "channelOrder": "RBG",
+      "byteSwap": false,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 3,
+      "channelOrder": "GRB",
+      "byteSwap": false,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 4,
+      "channelOrder": "GBR",
+      "byteSwap": false,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 5,
+      "channelOrder": "BRG",
+      "byteSwap": false,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 6,
+      "channelOrder": "BGR",
+      "byteSwap": false,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 7,
+      "channelOrder": "RGB",
+      "byteSwap": true,
+      "softwareInvert": false,
+      "selected": true
+    },
+    {
+      "cell": 8,
+      "channelOrder": "RBG",
+      "byteSwap": true,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 9,
+      "channelOrder": "GRB",
+      "byteSwap": true,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 10,
+      "channelOrder": "GBR",
+      "byteSwap": true,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 11,
+      "channelOrder": "BRG",
+      "byteSwap": true,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 12,
+      "channelOrder": "BGR",
+      "byteSwap": true,
+      "softwareInvert": false,
+      "selected": false
+    },
+    {
+      "cell": 13,
+      "channelOrder": "RGB",
+      "byteSwap": false,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 14,
+      "channelOrder": "RBG",
+      "byteSwap": false,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 15,
+      "channelOrder": "GRB",
+      "byteSwap": false,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 16,
+      "channelOrder": "GBR",
+      "byteSwap": false,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 17,
+      "channelOrder": "BRG",
+      "byteSwap": false,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 18,
+      "channelOrder": "BGR",
+      "byteSwap": false,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 19,
+      "channelOrder": "RGB",
+      "byteSwap": true,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 20,
+      "channelOrder": "RBG",
+      "byteSwap": true,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 21,
+      "channelOrder": "GRB",
+      "byteSwap": true,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 22,
+      "channelOrder": "GBR",
+      "byteSwap": true,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 23,
+      "channelOrder": "BRG",
+      "byteSwap": true,
+      "softwareInvert": true,
+      "selected": false
+    },
+    {
+      "cell": 24,
+      "channelOrder": "BGR",
+      "byteSwap": true,
+      "softwareInvert": true,
+      "selected": false
+    }
+  ],
+  "referenceTheme": {
+    "name": "实机校准·深蓝灰",
+    "colors": {
+      "bg": "060B16",
+      "grad": "0B1730",
+      "card": "304661",
+      "card_edge": "4B6685",
+      "accent": "57C8F5",
+      "text": "F4F8FF",
+      "sub": "C7D5E5"
+    },
+    "brightnessPercent": 62,
+    "cardOpacityPercent": 100,
+    "confirmedByUser": true,
+    "confirmedOn": "2026-10-10"
+  }
+}
