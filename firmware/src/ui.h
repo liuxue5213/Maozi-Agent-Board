@@ -21,3 +21,4 @@ void ui_set_card_opa(uint8_t opa);             // 卡片不透明度 0-255
 void ui_set_page(uint8_t page);                // 上位机请求切页（0 基，带动画）
 void ui_send_snapshot();                       // 抓当前画面经串口回传（阻塞约 10s）
 void ui_notify_page(const char* page);   // 页面切换后回传 TOUCH
+void pet_play_event();                   // 客户端「运动」互动 → 宠物 PLAYING 场景

@@ -318,6 +318,12 @@ class App:
 
     # ---- 实拍（SNAP：设备快照 → 串口回传 → PNG）----
 
+    def pet_scene_event(self, action: str) -> None:
+        """宠物互动转发设备：运动触发屏端 PLAYING 场景 2.5s（固件三层仲裁的场景层）。"""
+        if action == "play" and self.link and \
+                self.link.status.startswith("connected:"):
+            self.link.send("PET=play\n")
+
     def request_snap(self) -> bool:
         """工作台「实拍」按钮：下发 SNAP=1，设备约 10s 内分帧回传。"""
         if not self.link or not self.link.status.startswith("connected:"):

@@ -93,6 +93,7 @@ struct PetParts {
     lv_obj_t *earl=nullptr, *earr=nullptr, *tail=nullptr, *ant=nullptr, *badge=nullptr;
     int last_hash = -1;
     int base_x = 0, base_y = 0;
+    int eye_y = 0;
     int sz = 1;
 };
 static PetParts pet_ai, pet_page;
@@ -520,6 +521,7 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
     lv_obj_set_style_bg_opa(p.glow_r, LV_OPA_50, 0);
     p.eye_l = pet_rect(p.grp, 19*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, COL_TEXT);
     p.eye_r = pet_rect(p.grp, 37*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, COL_TEXT);
+    p.eye_y = (head_y + 8) * sz;
     if (is_chick) p.beak = pet_rect(p.grp, 26*sz, (head_y+17)*sz, 12*sz, 6*sz, 2*sz, 0xFFB84D);
     else p.mouth = pet_rect(p.grp, 24*sz, (head_y+19)*sz, 16*sz, 3*sz, 1*sz, accent);
     int body_y = head_y + 30*sz;
@@ -570,69 +572,177 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
     }
 }
 
-/* 表情与动作：AI 状态 + 宠物状态合流。
-   出错 = 描边/眼睛变红 + 抖动；完成 = 跳两下；等你/宠物低状态 = 徽标。 */
+/* —— 三层宠物状态机（docs/AI_PIXEL_PET_DESIGN.md §3/§6）——
+   活动层：WORKING/THINKING/IDLE（AI 会话状态驱动）
+   时间层：SLEEPY 22:00-01:00 软覆盖（AI 在干活则「陪你熬夜」不犯困，须持续 10s）；
+          SLEEPING 01:00-06:00 硬覆盖
+   场景层：ALERT > CELEBRATE > PLAYING > GREETING 瞬时覆盖，到期回基态 */
+enum PetLayer {
+    PL_IDLE = 0, PL_THINKING, PL_WORKING, PL_SLEEPY, PL_SLEEPING,
+    PL_GREETING, PL_CELEBRATE, PL_PLAYING, PL_ALERT,
+};
+static PetLayer pet_scene = PL_IDLE;      // 场景层当前值（pet_scene_until>0 时有效）
+static uint32_t pet_scene_until = 0;      // 场景层到期时刻（millis）
+static uint32_t pet_calm_since = 0;       // 活动层离开 WORKING 的时刻（SLEEPY 迟滞）
+static bool pet_greeted = false;          // 开机问候只来一次
+
+static void pet_trigger_scene(PetLayer l, uint32_t ms) {
+    pet_scene = l;
+    pet_scene_until = millis() + ms;
+}
+
+
+static int pet_hour() {
+    if (!latest.clock_hms) return -1;         // 无时钟不进时间层（保持活动层）
+    return (int)(latest.clock_hms / 10000) % 24;   // HHMMSS -> HH
+}
+
+static PetLayer pet_arbitrate(const char* st, uint32_t now) {
+    if (pet_scene_until && (int32_t)(now - pet_scene_until) >= 0) pet_scene_until = 0;
+    // 事件驱动场景：出错/完成沿触发瞬时状态（而非全程跟随，6s/4s 后回基态）
+    static char prev_st[12] = "";
+    if (strncmp(prev_st, st, 11) != 0) {
+        strncpy(prev_st, st, 11);
+        prev_st[11] = 0;
+        if (!strcmp(st, "ERROR")) pet_trigger_scene(PL_ALERT, 6000);
+        else if (!strcmp(st, "DONE")) pet_trigger_scene(PL_CELEBRATE, 4000);
+    }
+    // 开机问候（凌晨 1-6 点不问候，保持安静）
+    if (!pet_greeted && have_data) {
+        pet_greeted = true;
+        int gh = pet_hour();
+        if (!(gh >= 1 && gh < 6)) pet_trigger_scene(PL_GREETING, 3000);
+    }
+    if (pet_scene_until) return pet_scene;
+
+    int h = pet_hour();
+    bool working = !strcmp(st, "GENERATING") || !strcmp(st, "TOOL") ||
+                   !strcmp(st, "BUILD");
+    if (h >= 1 && h < 6) return PL_SLEEPING;             // 硬覆盖
+    if (h >= 22 || h < 1) {                              // 软覆盖：陪你熬夜
+        if (!working) {
+            if (!pet_calm_since) pet_calm_since = now;
+            if (now - pet_calm_since >= 10000) return PL_SLEEPY;
+        } else pet_calm_since = 0;
+    } else pet_calm_since = 0;
+
+    // 活动层（场景过期后的 ERROR/DONE 仍以活动层形式兜底显示）
+    if (!strcmp(st, "ERROR")) return PL_ALERT;
+    if (!strcmp(st, "DONE")) return PL_CELEBRATE;
+    if (!strcmp(st, "WAIT_INPUT") || !strcmp(st, "ASK")) return PL_THINKING;
+    if (working) return PL_WORKING;
+    return PL_IDLE;
+}
+
+/* 眼睛统一入口：眨眼动画独占高度（先删后建，避免双动画打架），dy=视线偏移 */
+static void pet_set_eyes(PetParts& p, int h8, bool blink, int dy) {
+    for (lv_obj_t* eye : {p.eye_l, p.eye_r}) {
+        if (!eye) continue;
+        lv_anim_del(eye, (lv_anim_exec_xcb_t)lv_obj_set_height);
+        lv_obj_set_height(eye, p.sz * h8);
+        lv_obj_set_y(eye, p.eye_y + p.sz * dy);
+        if (blink) {
+            lv_anim_t a;
+            lv_anim_init(&a);
+            lv_anim_set_var(&a, eye);
+            lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_height);
+            lv_anim_set_values(&a, p.sz * h8, p.sz * 2);
+            lv_anim_set_time(&a, 130);
+            lv_anim_set_playback_time(&a, 130);
+            lv_anim_set_repeat_delay(&a, 2400);
+            lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+            lv_anim_start(&a);
+        }
+    }
+}
+
+/* 身体摇摆：按状态换节奏（睡觉呼吸最慢最浅） */
+static void pet_set_bob(PetParts& p, int period, int amp) {
+    lv_anim_del(p.grp, (lv_anim_exec_xcb_t)lv_obj_set_y);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, p.grp);
+    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_y);
+    lv_anim_set_values(&a, 0, p.sz * amp);
+    lv_anim_set_time(&a, period);
+    lv_anim_set_playback_time(&a, period);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_start(&a);
+}
+
+/* 表情与动作：三层仲裁出的唯一状态 → 一套视觉参数（眼睛/嘴/徽标/节奏/动作） */
 static void pet_apply_expression(PetParts& p, const char* st,
                                  int hunger, int thirst, int energy) {
     if (!p.body) return;
-    int hash = (int)(st[0]) * 31 + (int)(st[1] ? st[1] : 0) + hunger + thirst + energy;
+    PetLayer L = pet_arbitrate(st, millis());
+
+    int eh = 8, dy = 0, bob_ms = 700, bob_amp = 3, mouth_w = 12;
+    bool blink = true;
+    const char* badge = "";
+    uint32_t badge_col = COL_WARN, edge_col = accent, eye_col = COL_TEXT,
+             mouth_col = accent;
+    switch (L) {
+        case PL_WORKING:                                   break;
+        case PL_THINKING:  eh = 6; dy = -2; badge = "?";   break;
+        case PL_IDLE:      eh = 5; bob_ms = 1100;          break;
+        case PL_SLEEPY:    eh = 3; blink = false; bob_ms = 1600; bob_amp = 2;
+                           badge = "Z";                    break;
+        case PL_SLEEPING:  eh = 2; blink = false; bob_ms = 1800; bob_amp = 2;
+                           badge = "z";                    break;
+        case PL_GREETING:  badge = "嗨"; mouth_w = 16;      break;
+        case PL_CELEBRATE: eh = 3; mouth_w = 18; mouth_col = COL_OK; break;
+        case PL_PLAYING:   eh = 4; mouth_w = 14;           break;
+        case PL_ALERT:     badge = "×"; badge_col = COL_ERR; edge_col = COL_ERR;
+                           eye_col = COL_ERR; mouth_w = 20;
+                           mouth_col = COL_ERR;            break;
+    }
+    // 饿渴累徽标：只在活动层显示（睡觉/场景进行时不多嘴）
+    if (!badge[0] && (L == PL_IDLE || L == PL_THINKING || L == PL_WORKING)) {
+        if (hunger < 20) badge = "饿";
+        else if (thirst < 20) badge = "渴";
+        else if (energy < 20) badge = "累";
+    }
+
+    int hash = (int)L * 31 + hunger + thirst + energy;
     if (hash == p.last_hash) return;
     p.last_hash = hash;
 
-    bool is_err = !strcmp(st, "ERROR");
-    bool is_done = !strcmp(st, "DONE");
-    bool is_wait = !strcmp(st, "WAIT_INPUT") || !strcmp(st, "ASK");
-    bool is_idle = !strcmp(st, "IDLE");
-
-    uint32_t edge = p.base_x ? 0 : 0;  // 占位（边缘色在 draw 时按类型定，动作只换红/正常）
-    (void)edge;
-    lv_obj_set_style_border_color(p.body,
-        lv_color_hex(is_err ? COL_ERR : accent), 0);
-    lv_obj_set_style_bg_color(p.eye_l, lv_color_hex(is_err ? COL_ERR : COL_TEXT), 0);
-    lv_obj_set_style_bg_color(p.eye_r, lv_color_hex(is_err ? COL_ERR : COL_TEXT), 0);
-
-    // 徽标优先级：AI 出错/等你 > 宠物饿渴累
-    const char* badge = "";
-    uint32_t badge_col = COL_WARN;
-    if (is_err) { badge = "×"; badge_col = COL_ERR; }
-    else if (is_wait) badge = "!";
-    else if (hunger < 20) badge = "饿";
-    else if (thirst < 20) badge = "渴";
-    else if (energy < 20) badge = "累";
+    pet_set_eyes(p, eh, blink, dy);
+    pet_set_bob(p, bob_ms, bob_amp);
+    lv_obj_set_style_border_color(p.body, lv_color_hex(edge_col), 0);
+    lv_obj_set_style_bg_color(p.eye_l, lv_color_hex(eye_col), 0);
+    lv_obj_set_style_bg_color(p.eye_r, lv_color_hex(eye_col), 0);
     if (p.badge) {
         set_text(p.badge, badge);
         lv_obj_set_style_text_color(p.badge, lv_color_hex(badge_col), 0);
     }
     if (p.mouth) {
-        // 眯眼笑（完成/空闲）时嘴更宽；出错时嘴压扁
-        lv_obj_set_width(p.mouth, p.sz * (is_err ? 20 : is_done ? 18 : 12));
-        lv_obj_set_style_bg_color(p.mouth,
-            lv_color_hex(is_err ? COL_ERR : is_done ? COL_OK : accent), 0);
+        lv_obj_set_width(p.mouth, p.sz * mouth_w);
+        lv_obj_set_style_bg_color(p.mouth, lv_color_hex(mouth_col), 0);
     }
 
-    // 状态切换的动作：出错抖三下、完成跳两下（摇摆动画在 grp 上，不冲突）
-    lv_anim_del(p.root, (lv_anim_exec_xcb_t)lv_obj_set_x);
-    lv_anim_del(p.root, (lv_anim_exec_xcb_t)lv_obj_set_y);
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, p.root);
-    if (is_err) {
-        lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_x);
-        lv_anim_set_values(&a, p.base_x, p.base_x + 3);
-        lv_anim_set_time(&a, 60);
-        lv_anim_set_playback_time(&a, 60);
-        lv_anim_set_repeat_count(&a, 5);
-    } else if (is_done) {
-        lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_y);
-        lv_anim_set_values(&a, p.base_y, p.base_y - 10);
-        lv_anim_set_time(&a, 200);
-        lv_anim_set_playback_time(&a, 160);
-        lv_anim_set_repeat_count(&a, 2);
-    }
-    lv_anim_start(&a);
-    if (is_err || is_done) {
-        // 结束后回到原位（playback 已保证），再补一次定位兜底
+    // 一次性动作：出错抖动 / 庆祝与问候起跳（摇摆动画在 grp 上，不冲突）
+    if (L == PL_ALERT || L == PL_CELEBRATE || L == PL_GREETING) {
+        lv_anim_del(p.root, (lv_anim_exec_xcb_t)lv_obj_set_x);
+        lv_anim_del(p.root, (lv_anim_exec_xcb_t)lv_obj_set_y);
         lv_obj_set_pos(p.root, p.base_x, p.base_y);
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, p.root);
+        if (L == PL_ALERT) {
+            lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_x);
+            lv_anim_set_values(&a, p.base_x, p.base_x + 3);
+            lv_anim_set_time(&a, 60);
+            lv_anim_set_playback_time(&a, 60);
+            lv_anim_set_repeat_count(&a, 5);
+        } else {
+            lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_y);
+            lv_anim_set_values(&a, p.base_y, p.base_y - 10);
+            lv_anim_set_time(&a, 200);
+            lv_anim_set_playback_time(&a, 160);
+            lv_anim_set_repeat_count(&a, L == PL_GREETING ? 1 : 2);
+        }
+        lv_anim_start(&a);
     }
 }
 
@@ -1943,6 +2053,10 @@ void ui_set_page(uint8_t page) {
 // 屏是写-only SPI（无 MISO）读不了 GRAM，用 LVGL 离屏快照代替：
 // 全分辨率渲染到 PSRAM → 2×2 均值降到 160×240（76KB）→ base64 分帧上行。
 // 115200 波特率下传输约 10s，期间渲染停顿——按需触发可接受。
+void pet_play_event() {                   // 客户端「运动」互动 → PLAYING 场景
+    pet_trigger_scene(PL_PLAYING, 2500);
+}
+
 void ui_send_snapshot() {
     lv_obj_t* scr = lv_scr_act();
     if (!scr) return;

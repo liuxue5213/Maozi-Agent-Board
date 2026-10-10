@@ -330,7 +330,10 @@ def start_settings_server(app, port):
                 data = json.loads(self.rfile.read(length))
                 if path == "/api/pet-do":
                     # 触屏/网页的宠物交互：喂食/喝水/运动
-                    self._json(200, app.pet.interact(str(data.get("action", ""))))
+                    action = str(data.get("action", ""))
+                    result = app.pet.interact(action)
+                    app.pet_scene_event(action)   # 运动 → 设备 PLAYING 场景
+                    self._json(200, result)
                     return
                 if path == "/api/weather-search":
                     # 省市区地理编码（Open-Meteo，中文，含省市标签）。

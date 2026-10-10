@@ -150,6 +150,10 @@ void loop() {
             // 实拍：阻塞约 10s（串口回传），期间主循环停顿属预期
             ui_send_snapshot();
         }
+        if (proto.t.pet_play_changed) {
+            proto.t.pet_play_changed = false;
+            pet_play_event();
+        }
         if (proto.t.bright >= 0) {
             bright_manual_val = proto.t.bright;
             display_brightness(proto.t.bright);

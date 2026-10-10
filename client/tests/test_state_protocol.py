@@ -53,6 +53,27 @@ class StateProtocolTests(unittest.TestCase):
     def test_fan_value_encoded(self):
         self.assertIn("FAN=5301", encode_telemetry({"fan": 5301}))
 
+    def test_pet_play_event_forwards_to_device(self):
+        # 「运动」互动 → PET=play 下行（固件 PLAYING 场景）；其他动作不触发
+        class RecLink:
+            status = "connected:test"
+            def __init__(self):
+                self.sent = []
+            def send(self, line):
+                self.sent.append(line)
+
+        app = App.__new__(App)
+        app.link = RecLink()
+        app.pet_scene_event("play")
+        self.assertEqual(app.link.sent, ["PET=play\n"])
+        app.pet_scene_event("feed")
+        self.assertEqual(len(app.link.sent), 1)
+
+    def test_pet_play_event_silent_without_link(self):
+        app = App.__new__(App)
+        app.link = None
+        app.pet_scene_event("play")  # 不抛异常即通过
+
     def test_sensor_failure_invalidates_last_value(self):
         self.assertEqual(parse_uplink("TEMP=NA"), {"temp": None})
         self.assertEqual(parse_uplink("HUM=NA"), {"hum": None})

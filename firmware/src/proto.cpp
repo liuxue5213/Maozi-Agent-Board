@@ -237,6 +237,11 @@ void Proto::handle(const char* line) {
         }
         return;
     }
+    if (!strcmp(key, "PET")) {
+        t.pet_play_changed = true;
+        dirty = true;
+        return;
+    }
     if (key[0] == 'W' && key[1] >= '0' && key[1] <= '2' && key[2] == 0) {
         handle_w(key[1] - '0', v);
         return;

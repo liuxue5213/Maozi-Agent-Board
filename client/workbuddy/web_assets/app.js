@@ -923,6 +923,25 @@ function petColors(type, ctx, st){
   return c;
 }
 function devPet(card, type, st, bx, by, sz){
+  // 三层仲裁（镜像固件 pet_arbitrate）：场景 > 时间层 > 活动层
+  const hh = parseInt((((live.telemetry||{}).time)||'').slice(0,2),10);
+  let L;
+  if(st==='ERROR') L='ALERT';
+  else if(st==='DONE') L='CELEBRATE';
+  else if(hh>=1 && hh<6) L='SLEEPING';
+  else{
+    const working=['GENERATING','TOOL','BUILD'].includes(st);
+    if((hh>=22 || hh<1) && !working) L='SLEEPY';
+    else if(['WAIT_INPUT','ASK'].includes(st)) L='THINKING';
+    else if(working) L='WORKING';
+    else L='IDLE';
+  }
+  // 状态视觉表（与固件 pet_apply_expression 同参数：眼高/视线偏移/嘴宽/徽标）
+  const V = {WORKING:{eh:8,dy:0,mw:12}, THINKING:{eh:6,dy:-2,mw:12,badge:'?'},
+             IDLE:{eh:5,dy:0,mw:12},
+             SLEEPY:{eh:3,dy:0,mw:12,badge:'Z'}, SLEEPING:{eh:2,dy:0,mw:12,badge:'z'},
+             GREETING:{eh:8,dy:0,mw:16,badge:'嗨'}, CELEBRATE:{eh:3,dy:0,mw:18},
+             PLAYING:{eh:4,dy:0,mw:14}, ALERT:{eh:8,dy:0,mw:20,badge:'×'}}[L];
   const ctx = { accent: panelHex(draft.theme.accent),
                 text: panelHex(draft.theme.text),
                 sub: panelHex(draft.theme.sub),
@@ -947,24 +966,27 @@ function devPet(card, type, st, bx, by, sz){
   const hy = type==='cat'?7:5;
   R(10,hy,44,28,8,col.body,1,col.edge);
   R(16,hy+5,14,14,7,ctx.accent,0.5); R(34,hy+5,14,14,7,ctx.accent,0.5);
-  R(19,hy+8,8,8,4,col.eye); R(37,hy+8,8,8,4,col.eye);
+  R(19,hy+8+V.dy,8,V.eh,4,col.eye); R(37,hy+8+V.dy,8,V.eh,4,col.eye);
   if(type==='chick') R(26,hy+17,12,6,2,'#FFB84D');
-  else R(24,hy+19,16,3,1, isErr?devSemantic('status.err'):isDone?devSemantic('status.ok'):ctx.accent);
+  else R(24,hy+19,V.mw,3,1, L==='ALERT'?devSemantic('status.err'):L==='CELEBRATE'?devSemantic('status.ok'):ctx.accent);
   const by2 = hy+30;
   R(8,by2,48,26,8,col.body,1,col.edge);
   R(28,by2+8,8,5,2, type==='robot'?ctx.accent:col.edge);
   R(0,by2+3,7,16,3,col.limb); R(57,by2+3,7,16,3,col.limb);
   if(type==='cat') R(58,by2-12,6,22,3,col.limb);
   R(16,by2+28,16,7,3,col.limb); R(34,by2+28,16,7,3,col.limb);
-  // 徽标：AI 出错/等你 > 宠物饿渴累
+  // 徽标：场景层自带（?/Z/z/嗨/×）> 饿渴累（仅活动层显示，睡觉/场景时不多嘴）
   const ps=(live.telemetry||{}).ps||'';
   const [h,t,e]=ps?ps.split(',').map(Number):[100,100,100];
-  let badge='', bcol=devSemantic('status.warn');
-  if(isErr){badge='×';bcol=devSemantic('status.err');}
-  else if(isWait)badge='!';
-  else if(h<20){badge='饿';}
-  else if(t<20){badge='渴';}
-  else if(e<20){badge='累';}
+  let badge=V.badge||'', bcol=devSemantic('status.warn');
+  if(L==='ALERT')bcol=devSemantic('status.err');
+  else if(badge==='?')bcol=ctx.text;
+  else if(badge==='Z'||badge==='z')bcol=ctx.sub;
+  if(!badge && (L==='IDLE'||L==='THINKING'||L==='WORKING')){
+    if(h<20){badge='饿';}
+    else if(t<20){badge='渴';}
+    else if(e<20){badge='累';}
+  }
   if(badge){ const n=devAbs(el('div','dev-label'),U(bx+44),U(by),U(20),devLineH(24));
     n.style.fontSize=devFont(24)+'px'; n.style.color=bcol; n.textContent=badge; card.append(n); }
 }
@@ -1891,6 +1913,66 @@ function openFocus(task){
   $('focus-stage').hidden=false;
 }
 function closeFocus(){$('focus-stage').hidden=true}
+
+/* 关键渲染优化：用 keyed DOM reconciliation 替代 replaceChildren 整块重建。
+   root.replaceChildren() 会每次 2.5s 轮询时销毁并重建整片 DOM，触发重排/重绘，
+   表现为整屏闪烁、滚动跳动。改成按稳定 key（tool / 会话 id）复用节点、仅更新文本
+   与状态类、重排用 insertBefore，节点不再被销毁，闪烁与跳动一并消除。 */
+function reconcile(parent, items, keyOf, makeEl, updateEl){
+  const existing=new Map();
+  for(const c of Array.from(parent.children)){
+    if(c.__key!==undefined) existing.set(c.__key, c);
+  }
+  let anchor=parent.firstChild;
+  for(const item of items){
+    const k=keyOf(item);
+    let node=existing.get(k);
+    if(node){ existing.delete(k); } else { node=makeEl(item); node.__key=k; }
+    updateEl(node, item);
+    if(node!==anchor) parent.insertBefore(node, anchor);
+    anchor = node.nextSibling;
+  }
+  for(const n of existing.values()) n.remove();
+}
+
+const OV_STATE_CLS={THINKING:'run',GENERATING:'run',TOOL:'run',BUILD:'run',DONE:'done',ERROR:'alert',WAIT_INPUT:'wait',ASK:'wait'};
+
+function buildTaskItem(task){
+  const item=el('div','task-item');
+  const symbol=el('span','task-symbol',task.tool?.slice(0,1).toUpperCase());
+  const main=el('div','task-item-main');
+  const title=el('strong','');
+  const sub=el('small','');
+  main.append(title, sub);
+  const state=el('span','task-state');
+  item.append(symbol, main, state);
+  item.__refs={symbol,title,sub,state};
+  bindTaskItem(item, task);
+  return item;
+}
+function bindTaskItem(item, task){
+  // #2 抽屉（单击）/ #7 聚焦（双击）/ #9 Pin（右键）。
+  // 单击延迟 260ms 开抽屉；若紧接着第二击（双击）到来，先取消抽屉，否则
+  // scrim 盖在卡片上，dblclick 永远派发不到目标。
+  item.onclick=e=>{if(e.detail!==1)return; clearTimeout(drawerTimer); drawerTimer=setTimeout(()=>openTaskDrawer(task),260)};
+  item.ondblclick=e=>{e.preventDefault(); clearTimeout(drawerTimer); closeTaskDrawer(); openFocus(task)};
+  item.oncontextmenu=e=>{e.preventDefault();
+    const wasPinned=pinnedIds().includes(task.id);
+    togglePin(task.id);
+    notice(wasPinned?'已取消置顶':'已置顶，永远排在最前');
+    renderOverview();};
+}
+function updateTaskItem(item, task){
+  const {symbol,title,sub,state}=item.__refs;
+  const pins=pinnedIds();
+  symbol.textContent=task.tool?.slice(0,1).toUpperCase();
+  title.textContent=(pins.includes(task.id)?'📌 ':'')+(task.project||'未命名项目');
+  sub.textContent=`会话 #${task.id} · 已运行 ${fmtElapsed(task.elapsed)} · ${task.age} 秒前更新`;
+  state.className=`task-state ${OV_STATE_CLS[task.state]||'run'}`;
+  state.textContent=stateNames[task.state]||task.state;
+  bindTaskItem(item, task);
+}
+
 function renderOverview(){
   const t=live.telemetry||{};
   renderDone();
@@ -1912,48 +1994,41 @@ function renderOverview(){
   let shown=tasks;
   if(ovFilter==='alert')shown=tasks.filter(x=>ALERT_STATES.includes(x.state));
   else if(ovFilter!=='all')shown=tasks.filter(x=>(x.tool||'其他')===ovFilter);
-  const root=$('ov-task-list');root.replaceChildren();
+  const root=$('ov-task-list');
   if(!tasks.length){
-    root.append(el('div','empty',(live.done||[]).length
+    root.replaceChildren(el('div','empty',(live.done||[]).length
       ? '当前没有进行中的会话；刚完成的在上一行的「刚完成」里。'
       : '暂无活跃会话。连接 Claude Code、Codex、ZCode 或 WorkBuddy 后将在这里显示。'));
+    return;
   }
-  else if(!shown.length){root.append(el('div','empty','当前筛选下没有会话。'))}
-  else{
-    // 优化#1：按来源（claude/codex/zcode/workbuddy）分窗格的多窗格监控，
-    // 一眼分清每个 agent 在干什么，不用在混合列表里找。
-    const STATE_CLS={THINKING:'run',GENERATING:'run',TOOL:'run',BUILD:'run',DONE:'done',ERROR:'alert',WAIT_INPUT:'wait',ASK:'wait'};
-    const grid=el('div','agent-grid');
-    const groups=new Map();
-    shown.forEach(task=>{const k=task.tool||'其他';if(!groups.has(k))groups.set(k,[]);groups.get(k).push(task)});
-    const pins=pinnedIds();
-    groups.forEach((list,tool)=>{
-      const pane=el('div','agent-pane');
-      const head=el('div','agent-pane-head');
-      head.append(el('strong','',tool),el('span','agent-pane-count',`${list.length} 项`));
-      pane.append(head);
-      list.forEach(task=>{
-        const item=el('div','task-item');
-        const symbol=el('span','task-symbol',task.tool?.slice(0,1).toUpperCase());
-        const main=el('div','task-item-main');
-        main.append(el('strong','',(pins.includes(task.id)?'📌 ':'')+(task.project||'未命名项目')),
-          el('small','',`会话 #${task.id} · 已运行 ${fmtElapsed(task.elapsed)} · ${task.age} 秒前更新`));
-        item.append(symbol,main,
-          el('span',`task-state ${STATE_CLS[task.state]||'run'}`,stateNames[task.state]||task.state));
-        // #2 抽屉（单击）/ #7 聚焦（双击）/ #9 Pin（右键）。
-        // 单击延迟 260ms 开抽屉：若紧接着的第二击到来（双击），先取消抽屉，
-        // 否则 scrim 盖在卡片上，dblclick 永远派发不到目标。
-        item.onclick=e=>{if(e.detail!==1)return;
-          clearTimeout(drawerTimer);drawerTimer=setTimeout(()=>openTaskDrawer(task),260)};
-        item.ondblclick=e=>{e.preventDefault();clearTimeout(drawerTimer);closeTaskDrawer();openFocus(task)};
-        item.oncontextmenu=e=>{e.preventDefault();togglePin(task.id);
-          notice(pins.includes(task.id)?'已取消置顶':'已置顶，永远排在最前');renderOverview()};
-        pane.append(item);
-      });
-      grid.append(pane);
+  if(!shown.length){
+    root.replaceChildren(el('div','empty','当前筛选下没有会话。'));
+    return;
+  }
+  // 优化#1：按来源（claude/codex/zcode/workbuddy）分窗格的多窗格监控，
+  // 一眼分清每个 agent 在干什么，不用在混合列表里找。
+  // 复用持久 grid + keyed reconcile，避免每轮 replaceChildren 整屏闪烁。
+  let grid=root.querySelector('.agent-grid');
+  if(!grid){ root.replaceChildren(); grid=el('div','agent-grid'); root.append(grid); }
+  const groups=new Map();
+  shown.forEach(task=>{const k=task.tool||'其他';if(!groups.has(k))groups.set(k,[]);groups.get(k).push(task)});
+  reconcile(grid, [...groups.keys()],
+    tool=>'pane:'+tool,
+    tool=>{ const pane=el('div','agent-pane');
+            const head=el('div','agent-pane-head');
+            head.append(el('strong','',tool),el('span','agent-pane-count',''));
+            const items=el('div','agent-pane-items');
+            pane.append(head, items);
+            pane.__head=head; pane.__items=items;
+            return pane; },
+    (pane,tool)=>{
+      const list=groups.get(tool)||[];
+      pane.__head.querySelector('.agent-pane-count').textContent=`${list.length} 项`;
+      reconcile(pane.__items, list,
+        task=>'t:'+task.id,
+        task=>buildTaskItem(task),
+        (item,task)=>updateTaskItem(item, task));
     });
-    root.append(grid);
-  }
   $('ov-cpu').textContent=t.cpu===undefined?'—':`${t.cpu}%`;
   $('ov-mem').textContent=t.mem===undefined?'—':`${t.mem}%`;
   $('ov-mem-sub').textContent=t.memtotal?`${t.memused} / ${t.memtotal} GB`:'数据不可用';
@@ -1982,26 +2057,34 @@ function renderTools(){
   const root=$('ov-tool-chips'); if(!root) return;
   const note=$('ov-tools-note');
   const info=live.tools||{};
-  root.replaceChildren();
   if(info.ok===false){
     note.textContent='进程扫描不可用';
-    root.append(el('div','empty',
+    root.replaceChildren(el('div','empty',
       `无法枚举进程：${info.error||'未知原因'}；当前仍按日志推断显示会话。`));
     return;
   }
   const tools=info.tools||[];
   if(!tools.length){
     note.textContent='未检测到';
-    root.append(el('div','empty','没有检测到 AI 工具进程。'));
+    root.replaceChildren(el('div','empty','没有检测到 AI 工具进程。'));
     return;
   }
   note.textContent=`${tools.filter(t=>t.running).length}/${tools.length} 在运行`;
-  tools.forEach(t=>{
-    const chip=el('span','tool-chip'+(t.running?' on':''));
-    chip.append(el('i','tool-dot'),el('span','',t.label),
-                el('small','',t.running?'运行中':(t.gates?'未运行 · 会话已忽略':'未运行')));
-    root.append(chip);
-  });
+  // keyed reconcile：工具进程每轮只在 running 状态变化时改样式，不重建整片 chips。
+  reconcile(root, tools,
+    t=>'chip:'+(t.label||t.name||''),
+    t=>{ const chip=el('span','tool-chip');
+         const dot=el('i','tool-dot');
+         const lab=el('span','',t.label);
+         const sub=el('small','');
+         chip.append(dot, lab, sub);
+         chip.__label=lab; chip.__sub=sub;
+         return chip; },
+    (chip,t)=>{
+      chip.className='tool-chip'+(t.running?' on':'');
+      chip.__label.textContent=t.label;
+      chip.__sub.textContent=t.running?'运行中':(t.gates?'未运行 · 会话已忽略':'未运行');
+    });
 }
 /* 优化#14：今日 token 每小时用量折线（canvas 本地绘制，无外部库、CSP 安全）。
    数据点来自 /api/status 的 usage.today_k，按小时分桶存 localStorage（保留 24 桶）。 */
@@ -2090,15 +2173,22 @@ function renderDone(){
     pill.className = unread ? 'count-pill' : 'count-pill muted';
   }
   const root=$('ov-done-items'); if(!root) return;
-  root.replaceChildren();
-  items.slice(0,4).forEach(d=>{
-    const row=el('div','done-item'+((d.at||0)>seen?' unread':''));
-    row.append(el('b','',d.project||'未命名项目'));
-    row.append(el('span','',d.tool||''));
-    row.append(el('small','',`完成 ${fmtElapsed(d.age)} 前`));
-    row.title=`${d.tool||''} · ${d.project||'未命名项目'} · #${d.id||''}`;
-    root.append(row);
-  });
+  // keyed reconcile：新完成的会话滑入时复用既有节点，只更新文本/未读类，不整片重建。
+  reconcile(root, items.slice(0,4),
+    d=>'done:'+(d.id||d.at||''),
+    d=>{ const row=el('div','done-item');
+         const b=el('b',''); const sp=el('span',''); const sm=el('small','');
+         row.append(b, sp, sm);
+         row.__b=b; row.__sp=sp; row.__sm=sm;
+         return row; },
+    (row,d)=>{
+      const unreadFlag=(d.at||0)>seen;
+      row.className='done-item'+(unreadFlag?' unread':'');
+      row.__b.textContent=d.project||'未命名项目';
+      row.__sp.textContent=d.tool||'';
+      row.__sm.textContent=`完成 ${fmtElapsed(d.age)} 前`;
+      row.title=`${d.tool||''} · ${d.project||'未命名项目'} · #${d.id||''}`;
+    });
   const clear=$('btn-done-clear');
   if(clear) clear.disabled=!unread;
 }
