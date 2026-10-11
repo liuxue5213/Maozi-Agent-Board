@@ -509,15 +509,20 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
 
     p.root = lv_obj_create(parent);
     lv_obj_set_pos(p.root, x, y);
-    lv_obj_set_size(p.root, 64 * sz, 80 * sz);
+    // lv_obj_create() 会继承主题的默认内边距。这里是纯绘图坐标容器，若不清零，
+    // root + grp 两层 padding 会把整只宠物向右下推两次，并在容器边缘裁掉身体。
+    // 右侧额外 4px 给“嗨/饿/渴/累”等徽标留安全区；宠物本体仍是 64×80。
+    lv_obj_set_size(p.root, 68 * sz, 80 * sz);
     lv_obj_set_style_bg_opa(p.root, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(p.root, 0, 0);
+    lv_obj_set_style_pad_all(p.root, 0, 0);
     lv_obj_clear_flag(p.root, LV_OBJ_FLAG_SCROLLABLE);
     p.grp = lv_obj_create(p.root);
     lv_obj_set_pos(p.grp, 0, 0);
-    lv_obj_set_size(p.grp, 64 * sz, 80 * sz);
+    lv_obj_set_size(p.grp, 68 * sz, 80 * sz);
     lv_obj_set_style_bg_opa(p.grp, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(p.grp, 0, 0);
+    lv_obj_set_style_pad_all(p.grp, 0, 0);
     lv_obj_clear_flag(p.grp, LV_OBJ_FLAG_SCROLLABLE);
 
     if (is_robot) p.ant = pet_rect(p.grp, 29*sz, 0, 6*sz, 6*sz, 3*sz, COL_OK);
