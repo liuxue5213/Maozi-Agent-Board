@@ -719,6 +719,15 @@
       </div>
       <div class="tabpane" id="spane-system" role="tabpanel" hidden>
         <div class="settings-pane-grid">
+        <section class="panel settings-card" aria-labelledby="selfcheck-heading">
+          <div class="panel-head">
+            <div><h2 id="selfcheck-heading">运行自检</h2><p class="panel-kicker">一屏看清采集链路与配置健康</p></div>
+            <button type="button" class="linklike" id="btn-selfcheck-refresh">重新检查</button>
+          </div>
+          <div class="selfcheck-list" id="selfcheck-list"></div>
+          <p class="hint">天气城市和手机推送在客户端配置里维护：城市在「设置 → 音乐/天气」搜索添加，
+            推送在 ~/.workbuddy/config.json 填 push_url（Bark/ntfy）。</p>
+        </section>
         <section class="panel settings-card" aria-labelledby="client-heading">
           <div class="panel-head"><div><h2 id="client-heading">客户端与配置</h2><p class="panel-kicker">启动、备份、诊断与升级</p></div></div>
           <label class="field toggle">

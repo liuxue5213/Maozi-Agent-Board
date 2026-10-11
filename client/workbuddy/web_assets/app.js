@@ -2513,8 +2513,51 @@ function renderTaskView(){
 /* ================= 轮询与保存 ================= */
 function render(){
   renderOverview();
-  if(currentView==='settings')renderMusicNow();
+  if(currentView==='settings'){renderMusicNow();renderSelfcheck()}
   if(currentView==='tasks')renderTaskView();if(currentView==='saver')renderSaverView();if(currentView==='extras')renderExtras()}
+
+/* ================= 运行自检（设置 → 系统） =================
+   排查问题最常问的几件事一屏答完：设备连没连、握手没有、同步到哪了、
+   数据新不新鲜、进程识别/hooks/天气/推送是否就绪、配置有没有损坏回退过。
+   数据全部来自已有的 /api/status 与 hooks 缓存，不做额外探测。 */
+let hooksInfoCache = null;
+function renderSelfcheck(){
+  const root=$('selfcheck-list'); if(!root||!live)return;
+  root.replaceChildren();
+  const connected=isConnected();
+  const rows=[];
+  rows.push({ok:connected, label:'设备连接',
+    value: connected?String(live.device).replace('connected:','串口 '):'未连接（等待设备插入）'});
+  const caps=live.fw_caps;
+  rows.push({ok:!!caps, label:'固件握手',
+    value: caps?(String(caps.raw||'').split(',').slice(0,2).join(' · ')||'已握手'):'等待设备上报能力'});
+  const synced=live.applied_version!=null&&saved&&live.applied_version===saved.version;
+  rows.push({ok:synced&&live.profile_status!=='同步失败', warn:live.profile_status==='同步失败',
+    label:'配置同步',
+    value:`${live.profile_status||'—'}${live.profile_error?'：'+live.profile_error:''}`});
+  rows.push({ok: typeof live.telemetry_age==='number'&&live.telemetry_age<8, label:'遥测新鲜度',
+    value: typeof live.telemetry_age==='number'?`${Math.round(live.telemetry_age)} 秒前更新`:'暂无数据'});
+  const tools=live.tools||{};
+  rows.push({ok:tools.ok!==false, label:'进程识别',
+    value: tools.ok===false?`不可用：${tools.error||'未知原因'}`:'可用'});
+  rows.push({ok:!!(hooksInfoCache&&hooksInfoCache.wired), warn:!!(hooksInfoCache&&!hooksInfoCache.settings_found),
+    label:'Hook 快通道',
+    value: hooksInfoCache?(hooksInfoCache.wired?'已接入':'未接入（秒级亮屏依赖它）'):'检测中'});
+  const cities=((draft.weather||{}).cities||[]);
+  rows.push({ok:cities.length>0, label:'天气城市',
+    value: cities.length?cities.map(c=>c.name).join('、'):'未配置（音乐/天气页签搜索添加）'});
+  rows.push({ok:!!live.push_enabled, label:'手机推送',
+    value: live.push_enabled?'已配置（出错/等你时推送）':'未配置（config.json 填 push_url）'});
+  rows.push({ok:!live.config_warning, warn:!!live.config_warning, label:'配置健康',
+    value: live.config_warning||'正常'});
+  rows.forEach(r=>{
+    const row=el('div','selfcheck-row'+(r.ok?' ok':r.warn?' warn':' bad'));
+    row.append(el('i','selfcheck-dot'),
+               el('span','selfcheck-label',r.label),
+               el('span','selfcheck-value',r.value));
+    root.append(row);
+  });
+}
 // 趋势视图：每 60s 重画（新桶会推进曲线）；范围切换立即重画
 setInterval(()=>{if(currentView==='history')drawTrendChart()},60000);
 async function poll(){
@@ -3098,6 +3141,7 @@ function bind(){
     const elState=$('hooks-state');
     try{
       const s=await request('/api/hooks-status');
+      hooksInfoCache=s;   // 自检面板复用，不再额外探测
       if(!s.settings_found){elState.textContent='未找到 Claude Code（~/.claude）';return}
       elState.textContent=s.wired?'已接入':'未接入';
       if(s.error)elState.textContent=s.error;
@@ -3124,6 +3168,11 @@ function bind(){
     }catch(e){notice(e.message,true)}
   });
   refreshHooks();
+  const selfcheckBtn=$('btn-selfcheck-refresh');
+  if(selfcheckBtn) selfcheckBtn.onclick=async()=>{
+    hooksInfoCache=null; await refreshHooks();
+    renderSelfcheck(); notice('已重新检查');
+  };
 
   // ---- 历史记录 ----
   // 「系统趋势」默认收起：收起时 canvas 的 clientWidth 为 0，画不出来，

@@ -1763,3 +1763,14 @@ svg { display:block; }
   font-size:13px; align-items:baseline; }
 .alert-time { color:var(--text-tertiary); white-space:nowrap; font-size:12px; }
 .alert-msg { word-break:break-all; }
+
+/* ===== 运行自检（设置 → 系统） ===== */
+.selfcheck-list { display:flex; flex-direction:column; gap:6px; }
+.selfcheck-row { display:flex; align-items:baseline; gap:10px; font-size:13px; }
+.selfcheck-dot { width:8px; height:8px; border-radius:50%; background:var(--text-tertiary);
+  flex:none; align-self:center; }
+.selfcheck-row.ok .selfcheck-dot { background:var(--ok); }
+.selfcheck-row.warn .selfcheck-dot { background:var(--warn); }
+.selfcheck-row.bad .selfcheck-dot { background:var(--err); }
+.selfcheck-label { color:var(--text-tertiary); flex:none; width:72px; }
+.selfcheck-value { word-break:break-all; }

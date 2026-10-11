@@ -572,6 +572,8 @@ class App:
                     "usage_error": self.usage_scanner.last_error if self.usage_scanner else "off",
                     # 配置/档案损坏被隔离回退的提示（Web 自检面板用）
                     "config_warning": getattr(self, "config_warning", ""),
+                    # 自检面板用：手机推送是否已配置
+                    "push_enabled": bool(str(getattr(self.cfg, "push_url", "") or "").strip()),
                     "device": self.link.status if self.link else "串口关闭",
                     "tasks": self._tasks_with_trace(), "telemetry": self.last,
                     "telemetry_age": (round(time.time() - last_tick, 1)
