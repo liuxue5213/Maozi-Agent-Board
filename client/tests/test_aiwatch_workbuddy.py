@@ -133,6 +133,35 @@ class WorkBuddySourceTests(unittest.TestCase):
         after = self.source.poll_all(time.time(), {})
         self.assertLess(time.time() - after[0].ts, 5)
 
+    def test_completed_without_heartbeat_is_dropped(self):
+        """已结束(completed)但进程已死的会话，不应再显示「等你回复」。
+
+        根因：_STATUS_MAP 把 completed 映射成 WAIT_INPUT，再叠加 30 分钟新鲜度
+        窗口，让已经结束/被关掉的会话长期滞留屏幕上。修复后，completed 仅当
+        进程还活着（有实时心跳）才保留，否则直接丢弃。
+        """
+        now_ms = int(time.time() * 1000)
+        _make_db(self.root, [
+            ("done-1", "/Users/x/proj", "u", "已结束", "completed",
+             now_ms, now_ms, now_ms, None, None)])
+        # 不写心跳文件 → 视为已结束，应被丢弃
+        acts = self.source.poll_all(time.time(), {})
+        self.assertEqual(acts, [])
+
+    def test_completed_with_heartbeat_is_kept(self):
+        """进程还活着(completed + 心跳)的会话，确实在等你回复，应保留。"""
+        now_ms = int(time.time() * 1000)
+        _make_db(self.root, [
+            ("done-2", "/Users/x/proj", "u", "待回复", "completed",
+             now_ms, now_ms, now_ms, None, None)])
+        (self.root / "sessions").mkdir(exist_ok=True)
+        (self.root / "sessions" / "9998.json").write_text(
+            '{"sessionId":"done-2","lastHeartbeat":%d}' % int(time.time() * 1000),
+            encoding="utf-8")
+        acts = self.source.poll_all(time.time(), {})
+        self.assertEqual(len(acts), 1)
+        self.assertEqual(acts[0].state, "WAIT_INPUT")
+
     def test_tool_name_fits_device_field(self):
         """设备端 char tool[12]，workbuddy(9)+NUL 必须放得下。"""
         self.assertLess(len("workbuddy") + 1, 12)

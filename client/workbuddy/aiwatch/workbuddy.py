@@ -104,15 +104,20 @@ class WorkBuddySource:
 
         for r in rows:
             try:
+                sid = str(r["id"] or "").strip()
+                if not sid:
+                    continue
                 status = str(r["status"] or "").lower()
                 state = _STATUS_MAP.get(status)
                 if state is None or state == IDLE:
                     continue
+                # completed 会话只有「进程还活着（有实时心跳）」才视为在等你回复；
+                # 否则它已经结束 / 被关掉，再挂着「等你回复」会误导（最长滞留 30 分钟）。
+                # 有心跳 = 会话窗口还开着，确实在等你的下一条消息；没心跳 = 已结束，丢弃。
+                if state == WAIT_INPUT and not beats.get(sid):
+                    continue
                 # 后台自动化（定时任务）不是用户正在盯的交互会话，排除
                 if r["is_background_automation"]:
-                    continue
-                sid = str(r["id"] or "")
-                if not sid:
                     continue
                 # 活动时间 = max(db 更新时间, 进程心跳)，让长回合也保持点亮
                 ts = max(_ms_to_s(r["updated_at"]),
