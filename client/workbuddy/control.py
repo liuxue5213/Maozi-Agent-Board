@@ -12,10 +12,6 @@ import subprocess
 import sys
 import time
 
-# AppleScript 仅作为 MediaRemote 不可用时的兜底，且只对确实支持字典的软件有效。
-_MAC_PLAYERS = ("Music", "Spotify")
-
-
 def _run(args, timeout=2.0):
     try:
         return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
@@ -105,31 +101,31 @@ class ControlApp:
             _win_key(0xAD)
         self._cache_at = 0.0
 
-    def media(self, action: str):
-        """action: play / pause / toggle / next / prev（作用于当前在放歌的软件）。"""
+    def media(self, action: str) -> bool:
+        """向当前系统媒体会话发送命令；绝不为了兜底而启动播放器。
+
+        返回值只表示系统是否接收了命令。macOS 的 MediaRemote 在没有活动会话时
+        也可能返回 True，因此是否需要启动默认播放器由上层检查播放器进程。
+        """
         if sys.platform == "darwin":
             from . import music
-            # 首选：MediaRemote 下发到系统「正在播放」客户端，与具体播放器无关
-            if music.send(action):
-                return
-            # 兜底：只有 Music/Spotify 有 AppleScript 字典
-            commands = {"play": "play", "pause": "pause", "toggle": "playpause",
-                        "next": "next track", "prev": "previous track"}
-            verb = commands.get(action)
-            if not verb:
-                return
-            for player in _MAC_PLAYERS:
-                result = _osascript(f'tell application "{player}" to {verb}')
-                if result and result.returncode == 0:
-                    return
+            # AppleScript 的 `tell application` 会启动 Music/Spotify。这里必须只走
+            # 系统媒体中枢，避免一次触摸弹出多个播放器。
+            return music.send(action)
         elif sys.platform.startswith("linux"):
-            commands = {"play": "play-pause", "next": "next", "prev": "previous"}
+            commands = {"play": "play", "pause": "pause", "toggle": "play-pause",
+                        "next": "next", "prev": "previous"}
             if action in commands:
-                _run(["playerctl", commands[action]])
+                result = _run(["playerctl", commands[action]])
+                return bool(result and result.returncode == 0)
         else:
-            codes = {"play": 0xB3, "next": 0xB0, "prev": 0xB1}
+            # Windows 的播放键本身就是播放/暂停切换；没有独立 play/pause 键。
+            codes = {"play": 0xB3, "pause": 0xB3, "toggle": 0xB3,
+                     "next": 0xB0, "prev": 0xB1}
             if action in codes:
                 _win_key(codes[action])
+                return True
+        return False
 
     def launch(self, command: str):
         try:

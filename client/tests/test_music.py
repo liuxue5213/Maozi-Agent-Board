@@ -11,7 +11,6 @@ Music.app。
 
 这里把 ctypes/子进程边界全部挡在测试外，只锁「选谁、发什么命令、按什么顺序」。
 """
-import ctypes
 import plistlib
 import sys
 import tempfile
@@ -37,17 +36,16 @@ class _FakeLib:
 
 class MusicModuleTests(unittest.TestCase):
     def setUp(self):
-        self._saved = (music._lib, music._queue)
-        music._consts.clear()
+        self._saved = music._lib
 
     def tearDown(self):
-        music._lib, music._queue = self._saved
+        music._lib = self._saved
 
     # ---- 命令映射 ----
 
     def test_actions_map_to_mediaremote_commands(self):
         fake = _FakeLib()
-        music._lib, music._queue = fake, object()
+        music._lib = fake
         for action, expected in (("play", 0), ("pause", 1), ("toggle", 2),
                                  ("stop", 3), ("next", 4), ("prev", 5)):
             self.assertTrue(music.send(action), action)
@@ -55,21 +53,21 @@ class MusicModuleTests(unittest.TestCase):
 
     def test_unknown_action_is_not_sent(self):
         fake = _FakeLib()
-        music._lib, music._queue = fake, object()
+        music._lib = fake
         self.assertFalse(music.send("rewind"))
         self.assertEqual(fake.calls, [])
 
     def test_send_reports_failure_when_not_delivered(self):
-        music._lib, music._queue = _FakeLib(delivered=False), object()
+        music._lib = _FakeLib(delivered=False)
         self.assertFalse(music.send("play"))
 
     def test_send_is_false_without_the_framework(self):
         """非 macOS / 加载失败时返回 False，让调用方走兜底，而不是假装成功。"""
-        music._lib, music._queue = False, None
+        music._lib = False
         self.assertFalse(music.send("play"))
 
     def test_now_playing_is_none_when_unsupported(self):
-        music._lib, music._queue = False, None
+        music._lib = False
         self.assertIsNone(music.now_playing())
 
     # ---- 应用发现 ----
@@ -219,7 +217,7 @@ class LaunchRoutingTests(unittest.TestCase):
 
 
 class ControlFallbackTests(unittest.TestCase):
-    """control.media 要先走 MediaRemote；只有它不可用时才退回 AppleScript。"""
+    """control.media 只走 MediaRemote，失败时也不能启动别的播放器。"""
 
     def test_media_prefers_mediaremote(self):
         from workbuddy.control import ControlApp
@@ -229,17 +227,52 @@ class ControlFallbackTests(unittest.TestCase):
         saved_send = music.send
         music.send = lambda action: calls.append(action) or True
         try:
-            ControlApp().media("next")
+            accepted = ControlApp().media("next")
         finally:
             music.send = saved_send
         self.assertEqual(calls, ["next"])
+        self.assertTrue(accepted)
 
-    def test_mediaremote_commands_need_no_applescript_dictionary(self):
-        """网易云/QQ音乐没有 AppleScript 字典，因此候选列表里不该出现它们——
-        真正生效的是 MediaRemote 这条与具体软件无关的通道。"""
+    def test_media_control_has_no_player_launch_fallback(self):
+        """不能保留会触发 `tell application` 并启动软件的候选播放器循环。"""
         from workbuddy import control
-        self.assertNotIn("NeteaseMusic", control._MAC_PLAYERS)
-        self.assertNotIn("QQMusic", control._MAC_PLAYERS)
+        self.assertFalse(hasattr(control, "_MAC_PLAYERS"))
+
+
+class TouchMediaRoutingTests(unittest.TestCase):
+    """触屏中间键应切换当前会话；冷启动只开配置的一个播放器。"""
+
+    def _app(self):
+        from workbuddy.app import App
+        app = App.__new__(App)
+        app.cfg = type("C", (), {"music_app": "com.netease.163music"})()
+        calls = []
+        app.control = type("C", (), {
+            "media": lambda self, action: calls.append(("media", action)) or True,
+        })()
+        return app, calls
+
+    def test_play_key_toggles_existing_session(self):
+        app, calls = self._app()
+        saved_running, saved_play = music.has_running_player, music.play_default
+        music.has_running_player = lambda cfg: True
+        music.play_default = lambda cfg: calls.append(("launch", cfg.music_app))
+        try:
+            app._handle_key("PLAY")
+        finally:
+            music.has_running_player, music.play_default = saved_running, saved_play
+        self.assertEqual(calls, [("media", "toggle")])
+
+    def test_play_key_starts_only_configured_default_without_session(self):
+        app, calls = self._app()
+        saved_running, saved_play = music.has_running_player, music.play_default
+        music.has_running_player = lambda cfg: False
+        music.play_default = lambda cfg: calls.append(("launch", cfg.music_app))
+        try:
+            app._handle_key("PLAY")
+        finally:
+            music.has_running_player, music.play_default = saved_running, saved_play
+        self.assertEqual(calls, [("launch", "com.netease.163music")])
 
 
 if __name__ == "__main__":

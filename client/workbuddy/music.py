@@ -1,4 +1,4 @@
-"""默认音乐软件：启动 / 播放 / 上一首下一首 / 读取正在播放（macOS）。
+"""默认音乐软件：启动 / 播放 / 上一首下一首（macOS）。
 
 **为什么不能用 AppleScript**：macOS 上只有 Apple Music 与 Spotify 提供 AppleScript
 字典。网易云音乐（com.netease.163music）、QQ音乐等没有——`tell application
@@ -6,10 +6,9 @@
 于是**必然落到唯一支持 AppleScript 的 Music.app**，用户看到的就是「不管点什么都
 打开苹果音乐」。
 
-macOS 的正解是 **MediaRemote**（系统的「正在播放」中枢）：任何向
-MPNowPlayingInfoCenter 注册过的播放器都能被统一下发命令、统一读到曲目信息，
-与具体软件无关。它是私有框架，所以这里用 ctypes 直接调用，读不到时明确返回
-`None`/`{}`，不猜、不伪造。
+macOS 的控制走 **MediaRemote**（系统的「正在播放」中枢）：任何向
+MPNowPlayingInfoCenter 注册过的播放器都能接收统一命令，与具体软件无关。
+同步发送接口通过 ctypes 调用；异步曲目信息接口不在 Python 中手工桥接。
 
 Windows / Linux 各自沿用原有实现（虚拟媒体键 / playerctl），本模块只在 macOS 生效。
 """
@@ -52,13 +51,11 @@ MUSIC_COMMAND = "@music"
 
 _lock = threading.Lock()
 _lib = None            # CDLL 或 False（不可用）
-_queue = None
-_consts: dict = {}
 
 
 def _load():
     """惰性加载 MediaRemote；不可用返回 False（非阻塞、不抛异常）。"""
-    global _lib, _queue
+    global _lib
     if _lib is not None:
         return _lib
     with _lock:
@@ -71,31 +68,10 @@ def _load():
             lib = ctypes.CDLL(_FW)
             lib.MRMediaRemoteSendCommand.restype = ctypes.c_bool
             lib.MRMediaRemoteSendCommand.argtypes = [ctypes.c_int, ctypes.c_void_p]
-            lib.MRMediaRemoteGetNowPlayingInfo.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-            libc = ctypes.CDLL(None)
-            libc.dispatch_queue_create.restype = ctypes.c_void_p
-            libc.dispatch_queue_create.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
-            _queue = libc.dispatch_queue_create(b"workbuddy.nowplaying", None)
             _lib = lib
         except (OSError, AttributeError):
             _lib = False
     return _lib
-
-
-def _sym(name: str):
-    """取 MediaRemote 导出的 CFString 常量（如 kMRMediaRemoteNowPlayingInfoTitle）。"""
-    if name in _consts:
-        return _consts[name]
-    value = None
-    try:
-        libc = ctypes.CDLL(None)
-        libc.dlsym.restype = ctypes.c_void_p
-        libc.dlsym.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-        value = libc.dlsym(ctypes.c_void_p(-2), name.encode()) or None
-    except (OSError, AttributeError):
-        value = None
-    _consts[name] = value
-    return value
 
 
 # ---------------------------------------------------------------- 控制
@@ -116,105 +92,15 @@ def send(action: str) -> bool:
         return False
 
 
-# ---------------------------------------------------------------- 读取
-
-class _Desc(ctypes.Structure):
-    _fields_ = [("reserved", ctypes.c_ulong), ("size", ctypes.c_ulong)]
-
-
-_INVOKE = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
-
-
-class _Block(ctypes.Structure):
-    _fields_ = [("isa", ctypes.c_void_p), ("flags", ctypes.c_int),
-                ("reserved", ctypes.c_int), ("invoke", _INVOKE),
-                ("descriptor", ctypes.POINTER(_Desc))]
-
-
-def _cfstring(ptr) -> str | None:
-    try:
-        buf = ctypes.create_string_buffer(1024)
-        libc = ctypes.CDLL(None)
-        if libc.CFStringGetCString(ctypes.c_void_p(ptr), buf, 1024, 0x08000100):
-            return buf.value.decode("utf-8", "ignore")
-    except Exception:
-        pass
-    return None
-
-
-def _cfnumber(ptr):
-    try:
-        libc = ctypes.CDLL(None)
-        out = ctypes.c_double()
-        if libc.CFNumberGetValue(ctypes.c_void_p(ptr), 13, ctypes.byref(out)):  # Double
-            return out.value
-    except Exception:
-        pass
-    return None
-
-
 def now_playing(timeout: float = 1.0):
-    """当前的曲目信息。
+    """当前版本不读取私有框架的异步曲目信息。
 
-    返回 None = 本平台/本机读不到（不假装支持）；
-         {} = 读得到，但当前没有任何软件在放（系统里没有「正在播放」客户端）；
-         字典 = {"title","artist","album","position","duration","playing"}。
+    MediaRemote 的发送接口是同步的，可以稳定用于播放控制；读取接口要求一个
+    Objective-C Block。用 ctypes 手工构造的 Block 在播放器真正返回数据后可能被
+    系统异步持有，Python 回调释放后会令上位机退出。稳定性优先，明确返回 None，
+    Web 端会显示“不支持读取”，控制按钮仍然完整可用。
     """
-    lib = _load()
-    if not lib or not _queue:
-        return None
-    isa = _sym("_NSConcreteStackBlock")
-    if not isa:
-        return None
-
-    result = {}
-    done = threading.Event()
-
-    def _cb(_blk, info):
-        try:
-            if not info:
-                result["empty"] = True
-                return
-            libc = ctypes.CDLL(None)
-            for key in ("Title", "Artist", "Album"):
-                const = _sym("kMRMediaRemoteNowPlayingInfo" + key)
-                if not const:
-                    continue
-                value = libc.CFDictionaryGetValue(ctypes.c_void_p(info),
-                                                 ctypes.c_void_p(const))
-                if value:
-                    text = _cfstring(value)
-                    if text:
-                        result[key.lower()] = text
-            for key, name in (("Duration", "duration"), ("ElapsedTime", "position"),
-                              ("PlaybackRate", "rate")):
-                const = _sym("kMRMediaRemoteNowPlayingInfo" + key)
-                if not const:
-                    continue
-                value = libc.CFDictionaryGetValue(ctypes.c_void_p(info),
-                                                 ctypes.c_void_p(const))
-                if value:
-                    number = _cfnumber(value)
-                    if number is not None:
-                        result[name] = round(number, 1)
-        except Exception:
-            pass
-        finally:
-            done.set()
-
-    desc = _Desc(0, ctypes.sizeof(_Block))
-    block = _Block(ctypes.c_void_p(isa), 0, 0, _INVOKE(_cb), ctypes.pointer(desc))
-    try:
-        lib.MRMediaRemoteGetNowPlayingInfo(ctypes.c_void_p(_queue), ctypes.byref(block))
-    except Exception:
-        return None
-    done.wait(timeout)
-    if not result:
-        return {}                      # 回调超时：当作没有正在播放
-    if result.pop("empty", False):
-        return {}
-    result["playing"] = bool(result.get("rate"))
-    return result
+    return None
 
 
 # ---------------------------------------------------------------- 应用发现 / 启动
@@ -288,6 +174,16 @@ def is_running(app: dict | None) -> bool:
         return False
 
 
+def has_running_player(cfg) -> bool:
+    """默认播放器或其他已发现播放器是否已运行（不启动任何软件）。"""
+    preferred = default_app(cfg)
+    if preferred and is_running(preferred):
+        return True
+    preferred_id = (preferred or {}).get("id", "")
+    return any(app.get("id") != preferred_id and is_running(app)
+               for app in installed_apps())
+
+
 def open_app(app: dict | None) -> bool:
     """启动（或切到前台）该应用；已在运行时不重复启动。"""
     if not app:
@@ -313,5 +209,10 @@ def play_default(cfg, settle: float = 1.2) -> dict:
         if launched:
             time.sleep(settle)          # 等它把「正在播放」客户端注册到系统
     delivered = send("play")
-    return {"ok": bool(delivered or launched), "app": app["name"],
-            "launched": launched, "command": "play"}
+    result = {"ok": bool(delivered), "app": app["name"],
+              "launched": launched, "command": "play",
+              "delivered": bool(delivered)}
+    if not delivered:
+        result["reason"] = ("播放器已启动，但系统暂时没有可控制的播放队列"
+                            if launched else "系统没有可控制的播放会话")
+    return result

@@ -434,7 +434,13 @@ class App:
         elif action == "MUTE":
             self.control.toggle_mute()
         elif action == "PLAY":
-            self.control.media("play")
+            # 中间键是「播放/暂停」而不是单向播放。存在系统媒体会话时只切换
+            # 当前播放器；没有会话时才启动用户在 Web 中选定的那一个软件。
+            # 这样既能从冷启动开始听歌，也不会再依次弹出 Music/Spotify。
+            if music.has_running_player(self.cfg):
+                self.control.media("toggle")
+            else:
+                music.play_default(self.cfg)
         elif action == "NEXT":
             self.control.media("next")
         elif action == "PREV":
