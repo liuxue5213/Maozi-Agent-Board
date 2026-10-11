@@ -3,6 +3,7 @@ import json
 import re
 import time
 import threading
+from copy import deepcopy
 from pathlib import Path
 
 from .collect import create
@@ -117,6 +118,9 @@ class App:
         self.profile_status = "待同步"
         self.profile_error = ""
         self.applied_version = None
+        # 设备最近一次成功应用的内容快照：「回到设备版本」的数据源。
+        # 新版本应用失败时用户可以把客户端配置退回去，而不是卡在失败态。
+        self.applied_profile = None
         self.sync_requested = False
         self.sync_sent_at = 0.0
         self._caps_sent_at = 0.0
@@ -193,6 +197,9 @@ class App:
                     self.profile_error = "" if reply["ok"] else reply["reason"]
                     if reply["ok"]:
                         self.applied_version = self.profile["version"]
+                        # 快照要在锁内、且在 version 匹配的前提下取——
+                        # 晚一拍 profile 可能已经是下一个待同步版本
+                        self.applied_profile = deepcopy(self.profile)
             self.health.event("sync_ack" if reply["ok"] else "sync_nak",
                               version=reply["version"], reason=reply["reason"])
         self.env.update(d)
@@ -553,6 +560,27 @@ class App:
         with self.profile_lock:
             self.sync_requested = True
             self.profile_status = "待同步"
+
+    def restore_applied_profile(self) -> dict:
+        """把客户端配置回退到设备当前已应用的版本。
+
+        新保存的版本应用失败（NAK/超时）时，失败态会一直卡在顶栏；这个
+        回退让用户一键回到「设备真实在显示的内容」，而不是对着一个上不了
+        屏的配置干瞪眼。落盘保留原版本号：设备已经应用这一版，重新走
+        save+sync 只是无效抖动。
+        """
+        with self.profile_lock:
+            snap = self.applied_profile
+            if not snap:
+                raise ValueError("设备还没有成功应用过任何版本")
+            restored = deepcopy(snap)
+            self.profile = save_profile(restored)
+            self.profile_status = "设备已应用"
+            self.profile_error = ""
+            self.applied_version = self.profile["version"]
+            self.sync_requested = False
+            self.health.event("restore_applied", version=self.profile["version"])
+            return self.profile
 
     def status_snapshot(self):
         """Web 轮询的数据源。

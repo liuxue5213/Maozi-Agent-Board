@@ -2308,6 +2308,7 @@ function renderSyncState(){
   if($('ov-sync-state'))$('ov-sync-state').textContent=status;
   const global=$('global-config-state'), bar=$('apply-bar'), dot=$('apply-dot'), button=$('global-apply-btn');
   if(!global||!bar||!dot||!button)return;
+  const restoreBtn=$('global-restore-btn');
   const connected=isConnected();
   let text='', tone='idle';
   if(dirty){text='草稿已保存在本机，尚未应用到设备';tone='draft'}
@@ -2323,6 +2324,8 @@ function renderSyncState(){
   bar.dataset.tone=tone;
   button.disabled=!connected||live.profile_status==='传输中';
   button.textContent=live.profile_status==='传输中'?'正在应用…':'应用到设备';
+  // 失败态的退路：一键回到设备真实在显示的版本（「应用到设备」本身就是重试）
+  if(restoreBtn) restoreBtn.hidden = tone!=='error';
 }
 function renderConnState(){
   const connected=isConnected();
@@ -2737,6 +2740,18 @@ function bind(){
     try{return await fn(...args)}finally{delete btn.dataset.loading}
   };
   $('global-apply-btn').onclick=pending($('global-apply-btn'),applyToDevice);
+  // 失败态退路：把客户端配置退回设备当前版本（点「应用到设备」本身就是重试）
+  $('global-restore-btn').onclick=pending($('global-restore-btn'),async()=>{
+    if(!confirm(`把配置回退到设备已应用的版本 v${live.applied_version||'?'}？当前失败的配置会被覆盖。`))return;
+    try{
+      const r=await request('/api/restore-applied',{});
+      saved=r.profile;draft=structuredClone(r.profile);dirty=false;
+      localStorage.removeItem('workbuddy-draft');
+      logHist('save',`已回退到设备版本 v${r.profile.version}`);
+      notice(`已回退到设备版本 v${r.profile.version}（内容一致，无需重新同步）`);
+      poll();
+    }catch(e){notice(e.message,true)}
+  });
 
   // ---- 概览 ----
   $('ov-save-btn').onclick=pending($('ov-save-btn'),async()=>{try{await save()}catch(e){notice(e.message,true)}});

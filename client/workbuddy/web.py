@@ -402,6 +402,13 @@ def start_settings_server(app, port):
                     # 非法配置会被 validate_profile 拒绝（400），与 /api/save 一致。
                     self._json(200, {"profile": app.save_profile(data),
                                      "status": "已导入，待同步"})
+                elif path == "/api/restore-applied":
+                    # 回到设备当前已应用的版本（新版本应用失败时的退路）
+                    try:
+                        self._json(200, {"profile": app.restore_applied_profile(),
+                                         "status": "已回退到设备版本"})
+                    except ValueError as exc:
+                        self._json(400, {"error": str(exc)})
                 elif path == "/api/launch":
                     # 一键启动（优化#15）：只接受 profile 里已登记的应用 id，
                     # 不接受任意命令——该端点等价于小屏 LAUNCH 上行，不是 shell。

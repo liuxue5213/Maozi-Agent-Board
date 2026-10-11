@@ -67,15 +67,18 @@ void loop() {
         ever_linked = false;         // 链路断开：复位握手，下个客户端接入时重发
         fw_pending = true;
     }
+    bool rebuilt_this_pass = false;
     if (proto.profile_changed) {
         proto.profile_changed = false;
         ui_rebuild();
         display_brightness(g_profile.bright);
+        rebuilt_this_pass = true;
     }
     if (proto.bg_changed) {
         proto.bg_changed = false;
         Serial.printf("[BG] bg_changed -> rebuild\n");
         ui_rebuild();
+        rebuilt_this_pass = true;
     }
     if (proto.dirty) {
         proto.dirty = false;
@@ -148,9 +151,13 @@ void loop() {
             // PAGE 为 1 基；ui_set_page 自带越界保护
             if (proto.t.page_req > 0) ui_set_page((uint8_t)(proto.t.page_req - 1));
         }
-        if (proto.t.snap_req_changed) {
+        if (proto.t.snap_req_changed && !rebuilt_this_pass) {
+            // 实拍：阻塞约 10s（串口回传），期间主循环停顿属预期。
+            // ⚠️ 重建当拍必须推迟：ui_rebuild 删建控件后同一拍立即
+            // lv_snapshot 曾触发 Core1 LoadProhibited panic（真机复现，
+            // 表现为「配置应用后立刻实拍→设备静默重启」）。保留标志位，
+            // 下一拍再拍。
             proto.t.snap_req_changed = false;
-            // 实拍：阻塞约 10s（串口回传），期间主循环停顿属预期
             ui_send_snapshot();
         }
         if (proto.t.pet_play_changed) {

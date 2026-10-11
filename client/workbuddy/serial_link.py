@@ -1,7 +1,11 @@
 """串口链路：自动扫描 ESP32（VID 0x303A）、断线自动重连、上行解析回调。"""
+import os
 import queue
 import threading
 import time
+
+# WB_SERIAL_DEBUG=1 时打印非遥测的收发行（排除 AI/DN 刷屏），排查协议层问题用
+_SERIAL_DEBUG = os.environ.get("WB_SERIAL_DEBUG") == "1"
 
 try:
     import serial
@@ -99,7 +103,12 @@ class SerialLink:
 
             try:
                 while True:
-                    self._port.write(self._q.get_nowait())
+                    data = self._q.get_nowait()
+                    self._port.write(data)
+                    if _SERIAL_DEBUG and not data.startswith(b"AI") \
+                            and not data.startswith(b"DN"):
+                        print(f"[tx {time.strftime('%H:%M:%S')}] "
+                              f"{data[:80]!r}", flush=True)
             except queue.Empty:
                 pass
             except Exception:
@@ -116,6 +125,9 @@ class SerialLink:
                     self._last_rx_at = time.monotonic()
                     self._status = f"connected:{self._port.port}"
                     self._rxbuf += raw
+                    if _SERIAL_DEBUG:
+                        print(f"[rx {time.strftime('%H:%M:%S')}] "
+                              f"{raw[:120]!r}", flush=True)
                     while True:
                         nl = self._rxbuf.find(b"\n")
                         if nl < 0:
