@@ -241,29 +241,20 @@ bool bgimg_receive_cfg(const char* value) {
             if (!ok) { reject("NAME"); return false; }
             snprintf(target, sizeof(target), "/%s", nm);   // 必须带前导斜杠：无斜杠是相对路径，rename/直写全部失败（.tmp 残留实锤）
         }
-        char tmp[32];
-        snprintf(tmp, sizeof(tmp), "/%s.tmp", target);
-        File file = LittleFS.open(tmp, "w");
-        if (!file || file.write((const uint8_t*)staging.c_str(), staging.length()) != staging.length()) {
-            if (file) file.close();
+        // 直接写目标文件：tmp+rename 在此工程会失败（vfs 对目标创建被拒，
+        // 且 remove 先删旧文件会让失败演变成「图片永久丢失」）。
+        // 写入中断的最坏情况 = 坏图，显示前解码校验会拒绝并回落像素宠物。
+        File file = LittleFS.open(target, "w");
+        if (!file) {
+            Serial.printf("NAK=IMG,OPEN %s\n", target);
             reject("STORAGE"); return false;
         }
+        size_t written = file.write((const uint8_t*)staging.c_str(), staging.length());
         file.close();
-        LittleFS.remove(target);
-        // LittleFS.rename 在此工程曾稳定失败（profile.cpp 因此带 reject 分支）：
-        // rename 失败时直写目标兜底——坏图由显示前解码校验拒绝，不会上屏
-        if (!LittleFS.rename(tmp, target)) {
-            File direct = LittleFS.open(target, "w");
-            if (!direct ||
-                direct.write((const uint8_t*)staging.c_str(), staging.length()) !=
-                    staging.length()) {
-                if (direct) direct.close();
-                LittleFS.remove(tmp);
-                reject("STORAGE"); return false;
-            }
-            direct.close();
+        if (written != staging.length()) {
+            LittleFS.remove(target);
+            reject("STORAGE"); return false;
         }
-        LittleFS.remove(tmp);
         staging = ""; stage_active = false;
         if (!strcmp(target, "bg.jpg")) {
             if (!bgimg_decode()) { reject("DECODE"); return false; }
