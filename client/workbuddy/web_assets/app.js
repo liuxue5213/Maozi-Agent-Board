@@ -3176,6 +3176,20 @@ function bind(){
       notice('背景图已发送，等待设备应用');
     }catch(err){notice('背景图失败：'+err.message,true)}
   };
+  // ---- ICS 日程导入：读文件文本 → /api/calendar-ics 合并去重落盘 ----
+  $('ics-file').onchange=async e=>{
+    const file=e.target.files[0];e.target.value='';
+    if(!file)return;
+    notice('正在解析日历文件…');
+    try{
+      const text=await file.text();
+      const r=await request('/api/calendar-ics',{text});
+      logHist('import',`ICS 导入：新增 ${r.added} 条`);
+      notice(r.status||`已导入 ${r.added} 条`, !r.added && !/已导入/.test(r.status||''));
+      if(r.added)poll();
+      if(currentView==='extras')renderExtras();
+    }catch(err){notice('ICS 导入失败：'+err.message,true);logHist('import','ICS 导入失败',false)}
+  };
   $('bgimg-clear').onclick=async()=>{
     try{const r=await fetch('/api/bgimg-clear',{method:'POST'});const d=await r.json();
     if(!r.ok)throw new Error(d.error||'失败');logHist('bg','背景图已清除');notice(d.status)}

@@ -403,9 +403,13 @@
           </div>
           <div class="entry-list" id="calendar-list"></div>
           <div class="schedule-card-actions">
+            <label class="button ghost" for="ics-file">导入 ICS</label>
+            <input type="file" id="ics-file" accept=".ics,text/calendar" class="visually-hidden">
             <button type="button" class="button ghost" data-generate-widget="today_calendar">放到小屏</button>
             <button type="button" class="button" data-add="calendar">新增日程</button>
           </div>
+          <p class="hint">支持本地日历导出的 .ics（未来 14 天内的事件，周重复自动展开）；
+            重复导入只补新增，不会产生重复条目。</p>
         </section>
 
         <section class="panel schedule-panel" aria-labelledby="alarms-heading">

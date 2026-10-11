@@ -389,6 +389,42 @@ def start_settings_server(app, port):
                     return
                 if path == "/api/validate":
                     self._json(200, {"profile": validate_profile(data)})
+                elif path == "/api/calendar-ics":
+                    # ICS 日程导入：解析 → 与现有 calendar 按 id 合并 → 走标准
+                    # save（校验 + 版本自增）。同 id = 同一来源事件，重复导入幂等。
+                    from . import ics as ics_mod
+                    text = str(data.get("text", "") or "")
+                    if not text.strip():
+                        self._json(400, {"error": "ICS 内容为空"})
+                        return
+                    imported = ics_mod.parse_ics(text)
+                    if not imported:
+                        self._json(200, {"added": 0, "skipped": 0,
+                                         "status": "没有解析到窗口内（未来 14 天）的日程"})
+                        return
+                    candidate = dict(app.profile)
+                    existing = {c["id"]: c for c in candidate.get("calendar", [])}
+                    added = skipped = 0
+                    for e in imported:
+                        if e["id"] in existing:
+                            skipped += 1
+                            continue
+                        if len(existing) >= 50:
+                            skipped += 1
+                            continue
+                        existing[e["id"]] = e
+                        added += 1
+                    candidate["calendar"] = sorted(
+                        existing.values(), key=lambda c: (c["date"], c["time"]))
+                    if not added:
+                        # 零新增不落盘不 bump 版本：重复导入不该白让设备重同步
+                        self._json(200, {"added": 0, "skipped": skipped,
+                                         "status": f"没有新日程（跳过重复 {skipped} 条）"})
+                        return
+                    result = app.save_profile(candidate)
+                    self._json(200, {"added": added, "skipped": skipped,
+                                     "version": result["version"],
+                                     "status": f"已导入 {added} 条（跳过重复 {skipped} 条），保存并待同步"})
                 elif path == "/api/push-config":
                     # 手机推送配置（设置→系统）：URL + 安静时段，落 config.json。
                     # 安静时段格式校验在这里做一次，坏值直接 400 不落盘。
