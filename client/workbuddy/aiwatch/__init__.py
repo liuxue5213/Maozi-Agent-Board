@@ -106,12 +106,15 @@ def tail_json_lines(path: Path, nbytes: int = 16384, limit: int = 12):
 
 
 class Activity:
-    __slots__ = ("tool", "state", "ts", "sid", "project", "detail", "task", "err")
+    __slots__ = ("tool", "state", "ts", "sid", "project", "detail", "task", "err",
+                 "path")
 
-    def __init__(self, tool, state, ts, sid="", project="", detail="", task="", err=""):
+    def __init__(self, tool, state, ts, sid="", project="", detail="", task="", err="",
+                 path=""):
         self.tool, self.state, self.ts = tool, state, ts
         self.sid, self.project = sid, project
         self.detail, self.task, self.err = detail, task, err
+        self.path = path            # 项目目录绝对路径（收件箱「打开」用，可为空）
 
 
 class AIWatcher:
@@ -212,6 +215,7 @@ class AIWatcher:
                 "age": max(0, int(now - a.ts)),
                 "project": sanitize_project(a.project),
                 "err": a.err or "",
+                "path": getattr(a, "path", "") or "",
             })
         # 清理过期的 burst / trace 记录（_last_state 随会话消失自然失活）
         for k in [k for k, v in self._bursts.items() if now - v > 3600]:

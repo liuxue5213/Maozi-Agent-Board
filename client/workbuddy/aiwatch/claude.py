@@ -44,7 +44,10 @@ class ClaudeSource:
         return acts
 
     def _parse_session(self, f: Path, mtime: float, project: str):
+        cwd = ""
         for line in tail_json_lines(f):
+            if not cwd:
+                cwd = str(line.get("cwd") or "")   # 事件自带工作目录（收件箱「打开」用）
             typ = line.get("type")
             if typ == "assistant":
                 msg = line.get("message") or {}
@@ -56,18 +59,18 @@ class ClaudeSource:
                         if name in ("AskUserQuestion", "ExitPlanMode"):
                             # AI 在等用户确认/回答
                             return Activity("claude", ASK, mtime, sid=f.stem,
-                                            project=project, detail=name)
+                                            project=project, detail=name, path=cwd)
                         return Activity("claude", TOOL, mtime, sid=f.stem,
-                                        project=project, detail=name,
+                                        project=project, detail=name, path=cwd,
                                         task=tool_to_task(name))
-                return Activity("claude", GENERATING, mtime, sid=f.stem, project=project)
+                return Activity("claude", GENERATING, mtime, sid=f.stem, project=project, path=cwd)
             if typ == "user":
-                return Activity("claude", THINKING, mtime, sid=f.stem, project=project)
+                return Activity("claude", THINKING, mtime, sid=f.stem, project=project, path=cwd)
             if typ == "result":
                 sub = line.get("subtype", "")
                 if sub and sub != "success":
                     return Activity("claude", ERROR, mtime, sid=f.stem, project=project,
                                     err=str(line.get("result") or sub))
                 # 回复完成，等用户下一句话
-                return Activity("claude", WAIT_INPUT, mtime, sid=f.stem, project=project)
-        return Activity("claude", IDLE, mtime, sid=f.stem, project=project)
+                return Activity("claude", WAIT_INPUT, mtime, sid=f.stem, project=project, path=cwd)
+        return Activity("claude", IDLE, mtime, sid=f.stem, project=project, path=cwd)

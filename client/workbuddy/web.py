@@ -415,6 +415,13 @@ def start_settings_server(app, port):
                 elif path == "/api/inbox":
                     self._json(200, {"items": app.inbox_items(),
                                      "count": app.inbox_count()})
+                elif path == "/api/open-project":
+                    # 收件箱「打开项目」：在 Finder 显示会话工作目录
+                    result = app.open_task_project(str(data.get("id", "")))
+                    if result.get("ok"):
+                        self._json(200, result)
+                    else:
+                        self._json(400, result)
                 elif path == "/api/inbox-dismiss":
                     ids = data.get("ids") or []
                     if not isinstance(ids, list) or not ids:

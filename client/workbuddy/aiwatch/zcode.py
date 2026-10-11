@@ -30,7 +30,9 @@ _PROJ_MISS_TTL = 90.0
 _CONTAINERS = {"Desktop", "Documents", "Downloads", "Projects", "projects",
                "code", "dev", "work", "src", "repos", "www", "go", "git"}
 _NON_PROJECT = {".zcode", ".claude", ".codex", "usr", "opt", "private",
-                "tmp", "var", "etc", "Applications", "Library", "System"}
+                "tmp", "var", "etc", "Applications", "Library", "System",
+                "Users"}
+_FULLPATH_RE = re.compile(r"/Users/[^/\s\"\\,。()]*(?:/[^/\s\"\\,。()]+)+")
 _PATH_RE = re.compile(r"/Users/[^/\"\\,\s。()]+(?:/([^/\"\\,\s。()]+))?(?:/([^/\"\\,\s。()]+))?(?:/([^/\"\\,\s。()]+))?(?:/([^/\"\\,\s。()]+))?")
 # 组件名合法性：转录里会出现 regex 源码等非路径文本，肉眼可辨的目录名
 # 只会是「字母数字开头、不含括号引号」的短名——过滤掉解析噪音
@@ -156,33 +158,35 @@ class ZCodeSource:
         # 5) 项目名：日志源不给 project，逐会话从 agent 元数据/转录推导
         for a in per_sid.values():
             if not a.project:
-                a.project = self._sid_project(a.sid, cache)
+                a.project, a.path = self._sid_project(a.sid, cache)
 
         return list(per_sid.values())
 
     # ---- 项目名推导（带缓存，结果进共享 cache 字典） ----
 
-    def _sid_project(self, sid: str, cache) -> str:
+    def _sid_project(self, sid: str, cache) -> tuple[str, str]:
+        """返回 (项目名, 项目绝对路径)。路径用于收件箱「打开项目」。"""
         key = f"zc-proj-{sid}"
         now = time.time()
         hit = cache.get(key)
         if hit and now - hit[0] < (_PROJ_HIT_TTL if hit[1] else _PROJ_MISS_TTL):
-            return hit[1]
-        name = self._project_from_agents(sid)
+            return hit[1], hit[2]
+        name = path = ""
+        name, path = self._project_from_agents(sid)
         if not name:
-            name = self._project_from_rollout(sid)
-        cache[key] = (now, name)
-        return name
+            name, path = self._project_from_rollout(sid)
+        cache[key] = (now, name, path)
+        return name, path
 
-    def _project_from_agents(self, sid: str) -> str:
-        """从 agent 元数据拿工作区名。子代理会话走 childSessionId 反查。"""
+    def _project_from_agents(self, sid: str) -> tuple[str, str]:
+        """从 agent 元数据拿工作区名与绝对路径。子代理会话走 childSessionId 反查。"""
         agents_root = self.root / "agents"
         paths = []
         if sid.startswith("sess_subagent_"):
             paths = sorted(agents_root.glob("*/agent_*/metadata.json"))
         else:
             paths = sorted(agents_root.glob(f"{sid}/agent_*/metadata.json"))
-        newest, found = (None, 0.0), ""
+        newest, found = (None, 0.0), ("", "")
         for path in paths:
             try:
                 mtime = path.stat().st_mtime
@@ -200,35 +204,49 @@ class ZCodeSource:
                 # 子代理优先用任务描述当标签（比目录名更可读），
                 # 但描述可能是长句，只取前 16 字
                 desc = str(data.get("description") or "").strip()
-                found = (desc[:16] if desc and sid.startswith("sess_subagent_")
-                         else Path(workspace).name)
+                name = (desc[:16] if desc and sid.startswith("sess_subagent_")
+                        else Path(workspace).name)
+                found = (name, workspace.rstrip("/"))
         return found
 
     @staticmethod
-    def _project_from_blob(blob: str) -> str:
+    def _project_from_blob(blob: str) -> tuple[str, str]:
+        """路径频次按**项目根**归一（深层文件路径归到其项目目录），否则
+        反复操作的单个深层文件（如 apk 产物）会以最高频胜出。"""
         counts = Counter()
-        for parts in _PATH_RE.findall(blob):
-            for comp in parts:
-                if not comp or not _COMP_RE.fullmatch(comp):
+        for full in _FULLPATH_RE.findall(blob):
+            comps = [c for c in full.split("/") if c]
+            root_idx = None
+            for i, c in enumerate(comps):
+                if i <= 1:
+                    continue                   # comps[0]='Users'，comps[1]=用户名
+                if c in _NON_PROJECT or c in _CONTAINERS:
                     continue
-                if comp in _NON_PROJECT or comp in _CONTAINERS:
-                    continue
-                counts[comp] += 1
+                if not _COMP_RE.fullmatch(c):
+                    break                      # 非法组件 = 转录噪音，整条丢弃
+                root_idx = i
                 break
-        return counts.most_common(1)[0][0] if counts else ""
+            if root_idx is None:
+                continue
+            root = "/" + "/".join(comps[:root_idx + 1])
+            counts[root] += 1
+        if not counts:
+            return "", ""
+        best = counts.most_common(1)[0][0]
+        return best.rstrip("/").split("/")[-1], best.rstrip("/")
 
-    def _project_from_rollout(self, sid: str) -> str:
-        """转录里路径频次兜底：最常见二级目录 = 工作区名。"""
+    def _project_from_rollout(self, sid: str) -> tuple[str, str]:
+        """转录里路径频次兜底：最常见的工作区路径 = (项目名, 绝对路径)。"""
         path = self.root / "rollout" / f"model-io-{sid}.jsonl"
         try:
             if time.time() - path.stat().st_mtime > 86400 * 3:
-                return ""                      # 3 天内的会话才值得找
+                return "", ""                  # 3 天内的会话才值得找
             with open(path, "rb") as f:
                 size = path.stat().st_size
                 f.seek(max(0, size - 262144))
                 blob = f.read().decode("utf-8", "ignore")
         except OSError:
-            return ""
+            return "", ""
         return self._project_from_blob(blob)
 
     def _detect_ask(self, now, cache):

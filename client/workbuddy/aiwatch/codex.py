@@ -12,19 +12,34 @@ from . import (Activity, ERROR, GENERATING, THINKING, TOOL, IDLE,
 
 # JSON 序列化器可以在冒号两侧插入空格；不能依赖 Codex 当前恰好输出紧凑 JSON。
 _CWD_RE = re.compile(rb'"cwd"\s*:\s*"([^"]+)"')
+_HEAD_CACHE = {}          # (path, mtime) -> (project_name, cwd)
 
 
-def _project_from_head(path: Path) -> str:
+def _head_meta(path: Path, mtime: float) -> tuple[str, str]:
+    """rollout 头部的 cwd → (项目名, 绝对路径)。带 mtime 缓存（每秒轮询）。"""
+    key = (str(path), mtime)
+    hit = _HEAD_CACHE.get(key)
+    if hit:
+        return hit
+    name = cwd = ""
     try:
         with open(path, "rb") as f:
             head = f.read(4096)
         m = _CWD_RE.search(head)
         if m:
-            cwd = m.group(1).decode("utf-8", "ignore").replace("\\\\", "\\")
-            return cwd.replace("\\", "/").rstrip("/").split("/")[-1]
+            cwd = (m.group(1).decode("utf-8", "ignore")
+                   .replace("\\\\", "\\").replace("\\", "/").rstrip("/"))
+            name = cwd.split("/")[-1]
     except Exception:
         pass
-    return ""
+    _HEAD_CACHE[key] = (name, cwd)
+    if len(_HEAD_CACHE) > 256:
+        _HEAD_CACHE.pop(next(iter(_HEAD_CACHE)))
+    return name, cwd
+
+
+def _project_from_head(path: Path) -> str:
+    return _head_meta(path, path.stat().st_mtime)[0]
 
 
 class CodexSource:
@@ -66,6 +81,7 @@ class CodexSource:
         return acts
 
     def _parse(self, f: Path, mtime: float):
+        proj, pcwd = _head_meta(f, mtime)   # 项目名 + 绝对路径（收件箱「打开」用）
         for line in tail_json_lines(f):
             payload = line.get("payload") or {}
             ptype = payload.get("type", "")
@@ -73,31 +89,31 @@ class CodexSource:
                 name = payload.get("name", "")
                 if name.lower() in ("shell", "exec", "local_shell", "bash"):
                     return Activity("codex", TOOL, mtime, sid=f.stem,
-                                    project=_project_from_head(f),
+                                    project=proj, path=pcwd,
                                     detail="Bash", task="RUN")
                 return Activity("codex", TOOL, mtime, sid=f.stem,
-                                project=_project_from_head(f),
+                                project=proj, path=pcwd,
                                 detail=name, task=tool_to_task(name))
             if ptype in ("function_call_output", "custom_tool_call_output"):
                 return Activity("codex", THINKING, mtime, sid=f.stem,
-                                project=_project_from_head(f))
+                                project=proj, path=pcwd)
             if ptype == "task_complete":
                 # 回复完成，等用户下一句话
                 return Activity("codex", WAIT_INPUT, mtime, sid=f.stem,
-                                project=_project_from_head(f))
+                                project=proj, path=pcwd)
             if ptype in ("task_started", "turn_context", "task_note", "reasoning"):
                 return Activity("codex", GENERATING, mtime, sid=f.stem,
-                                project=_project_from_head(f))
+                                project=proj, path=pcwd)
             if ptype in ("error", "stream_error"):
                 return Activity("codex", ERROR, mtime, sid=f.stem,
-                                project=_project_from_head(f),
+                                project=proj, path=pcwd,
                                 err=str(payload.get("message") or ptype))
             if ptype in ("response_item", "message"):
                 inner = payload.get("payload") or payload
                 if inner.get("role") == "assistant":
                     return Activity("codex", GENERATING, mtime, sid=f.stem,
-                                    project=_project_from_head(f))
+                                    project=proj, path=pcwd)
                 if inner.get("role") == "user":
                     return Activity("codex", THINKING, mtime, sid=f.stem,
-                                    project=_project_from_head(f))
+                                    project=proj, path=pcwd)
         return None

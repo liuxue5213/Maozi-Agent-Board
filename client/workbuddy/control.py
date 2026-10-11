@@ -11,6 +11,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 def _run(args, timeout=2.0):
     try:
@@ -164,6 +165,23 @@ class ControlApp:
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
             pass
+
+
+def open_in_finder(path: str) -> dict:
+    """在 Finder 里显示目录（收件箱「打开项目」）。数组调用不走 shell，无注入面。"""
+    target = Path(path)
+    if not target.is_dir():
+        return {"ok": False, "error": "目录不存在"}
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(target)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["explorer", str(target)])
+        else:
+            subprocess.Popen(["xdg-open", str(target)])
+        return {"ok": True}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:64]}
 
 
 def _win_key(code: int, count: int = 1):

@@ -2373,6 +2373,17 @@ function renderInbox(){
     if(item.kind==='calendar')title.onclick=()=>switchView('extras');
     if(item.kind==='task'||item.kind==='calendar')title.title='点击查看';
     row.append(title, el('span','',item.detail));
+    if(item.kind==='task'&&item.path){
+      const open=el('button','linklike','打开');
+      open.type='button'; open.title='在 Finder 中打开项目目录';
+      open.onclick=async()=>{
+        try{
+          await request('/api/open-project',{id:item.id});
+          logHist('launch',`已打开项目目录（${item.title}）`);
+        }catch(e){notice(e.message,true)}
+      };
+      row.append(open);
+    }
     const snooze=el('button','linklike','稍后');
     snooze.type='button'; snooze.title='30 分钟后重新提醒';
     snooze.onclick=async()=>{

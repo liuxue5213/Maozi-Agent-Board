@@ -4,8 +4,16 @@ Windows 专属 API 在 macOS 开发机上不存在，全部通过 mock 隔离在
 测试的是**我们的分支逻辑与降级路径**，不是 winsdk/pycaw 本身。
 """
 import sys
+import threading
 from pathlib import Path
 from unittest import mock
+
+from workbuddy.app import App
+
+
+class _Health:
+    def event(self, *a, **k):
+        pass
 
 from workbuddy import control
 from workbuddy.control import ControlApp
@@ -145,7 +153,8 @@ def test_project_from_paths_container_skip():
             '"/Users/liuxue/Desktop/www/maozi-diy/docs" '
             '"/Users/liuxue/.zcode/cli/memories" '
             '"/Users/liuxue/work/molu/backend"')
-    assert src._project_from_blob(blob) == "maozi-diy"  # 频次最高胜出
+    name, path = src._project_from_blob(blob)   # 频次最高的项目根胜出
+    assert name == "maozi-diy" and path == "/Users/liuxue/Desktop/www/maozi-diy"
 
 
 def test_project_from_paths_regex_noise_filtered():
@@ -153,7 +162,7 @@ def test_project_from_paths_regex_noise_filtered():
     src = ZCodeSource.__new__(ZCodeSource)
     # 转录里嵌着 regex 源码文本，括号组件不许进统计
     blob = r'/Users/[^/"\,。]+/([^/"\,。]+)(?:/([^/]))(a)( /Users/liuxue/Desktop/www/maozi-diy)'
-    assert src._project_from_blob(blob) == "maozi-diy"
+    assert src._project_from_blob(blob) == ("maozi-diy", "/Users/liuxue/Desktop/www/maozi-diy")
 
 
 def test_project_from_agents_metadata():
@@ -166,7 +175,7 @@ def test_project_from_agents_metadata():
         (meta / "metadata.json").write_text(json.dumps(
             {"cwd": "/Users/liuxue/Desktop/www/maozi-diy", "description": "修 bug"}))
         src = ZCodeSource(root)
-        assert src._project_from_agents("sess_main") == "maozi-diy"
+        assert src._project_from_agents("sess_main") == ("maozi-diy", "/Users/liuxue/Desktop/www/maozi-diy")
 
 
 def test_project_subagent_by_child_session_id():
@@ -181,4 +190,59 @@ def test_project_subagent_by_child_session_id():
              "childSessionId": "sess_subagent_agent_abc",
              "description": "调查距离NaN问题"}))
         src = ZCodeSource(root)
-        assert src._project_from_agents("sess_subagent_agent_abc") == "调查距离NaN问题"
+        assert src._project_from_agents("sess_subagent_agent_abc") == ("调查距离NaN问题", "/Users/liuxue/Desktop/www/maozi-diy")
+
+
+# ---- 收件箱「打开项目」 ----
+
+def test_inbox_task_items_carry_path():
+    import time as t_mod
+    from workbuddy import app as app_mod
+    app = App.__new__(App)
+    app.tasks = [{"tool": "zcode", "id": "a1", "state": "WAIT_INPUT",
+                  "project": "maozi-diy", "age": 10,
+                  "path": "/Users/liuxue/Desktop/www/maozi-diy"}]
+    app.profile = {"calendar": []}
+    app.profile_lock = threading.Lock()
+    app.last = {}
+    app.health = _Health()
+    app_mod.INBOX_STATE_PATH = tmp_dir_factory() / "inbox.json"
+    app._inbox_seen_cache = None
+    items = app.inbox_items()
+    assert items[0]["path"] == "/Users/liuxue/Desktop/www/maozi-diy"
+
+
+def tmp_dir_factory():
+    from workbuddy import app as app_mod
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    app_mod.INBOX_STATE_PATH = d / "inbox.json"
+    return d
+
+
+def test_open_task_project_validates(monkeypatch, tmp_path):
+    opened = []
+
+    class _Ctl:
+        @staticmethod
+        def launch(*a):
+            pass
+
+    from workbuddy import control as control_mod
+    monkeypatch.setattr(control_mod, "open_in_finder",
+                        lambda p: opened.append(p) or {"ok": True})
+    from workbuddy import app as app_mod
+    app = App.__new__(App)
+    app.tasks = [{"tool": "zcode", "id": "a1", "state": "WAIT_INPUT",
+                  "project": "demo", "age": 1, "path": "/tmp/demo-proj"}]
+    app.health = _Health()
+    res = app.open_task_project("t:zcode:a1")
+    assert res["ok"] is True and opened == ["/tmp/demo-proj"]
+    res2 = app.open_task_project("t:zcode:missing")
+    assert res2["ok"] is False
+
+
+def test_open_in_finder_rejects_missing_dir():
+    from workbuddy.control import open_in_finder
+    res = open_in_finder("/nonexistent-dir-xyz")
+    assert res["ok"] is False and "不存在" in res["error"]

@@ -527,6 +527,22 @@ class App:
             cache = self._inbox_seen_cache = (mtime, data)
         return cache[1]
 
+    def open_task_project(self, inbox_id: str) -> dict:
+        """收件箱「打开项目」：按条目 id 找到会话的工作目录，在 Finder 打开。
+
+        安全边界：只接受 open 命令 + 必须是存在且解析过的目录，绝不拼 shell。
+        """
+        for t in self.tasks:
+            if f"t:{t['tool']}:{t['id']}" != inbox_id:
+                continue
+            path = t.get("path") or ""
+            if not path:
+                return {"ok": False, "error": "该会话没有可用的项目路径"}
+            from . import control as _control
+            result = _control.open_in_finder(path)
+            return result
+        return {"ok": False, "error": "会话不在当前列表里"}
+
     def inbox_dismiss(self, ids: list, snooze_minutes: float = 0):
         """静音条目：snooze_minutes>0 = 到期重现；否则永久（条目消失自动清）。"""
         seen = self._inbox_seen()
@@ -566,7 +582,8 @@ class App:
             items.append({"id": f"t:{t['tool']}:{t['id']}", "kind": "task",
                           "sev": sev,
                           "title": f"{t['tool']} · {t.get('project') or '未命名'}",
-                          "detail": f"{label} · 已等 {_fmt_mmss(t.get('age', 0))}"})
+                          "detail": f"{label} · 已等 {_fmt_mmss(t.get('age', 0))}",
+                          "path": t.get("path") or ""})
         calendar = list((self.profile.get("calendar") or []))
         for c in calendar:
             if c.get("enabled") is False:
