@@ -23,11 +23,11 @@ class Collector:
                 disk_path = data_vol
         du = psutil.disk_usage(disk_path)
         t = {
-            "cpu": int(psutil.cpu_percent(interval=None)),
-            "mem": int(vm.percent),
+            "cpu": int(round(psutil.cpu_percent(interval=None))),
+            "mem": int(round(vm.percent)),
             "memused": round(vm.used / 1024**3, 1),
             "memtotal": round(vm.total / 1024**3, 1),
-            "disk": int(du.percent),
+            "disk": int(round(du.percent)),
             "diskfree": round(du.free / 1024**3, 1),
             "disktotal": round(du.total / 1024**3, 1),
             "uptime": int(now - psutil.boot_time()),

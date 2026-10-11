@@ -19,7 +19,54 @@ class MacCollector(Collector):
         self._last_smc = 0.0
         self._extra = {}
         self._gpu_name = ""
+        self._net_iface = ""
+        self._net_iface_at = 0.0
         threading.Thread(target=self._detect_gpu, daemon=True).start()
+
+    @staticmethod
+    def _default_route_interface() -> str:
+        """返回 macOS 默认路由的物理接口，例如 en0；查询失败返回空。"""
+        try:
+            text = subprocess.run(
+                ["/sbin/route", "-n", "get", "default"],
+                capture_output=True, text=True, timeout=2,
+            ).stdout
+            for line in text.splitlines():
+                key, sep, value = line.strip().partition(":")
+                if sep and key == "interface":
+                    return value.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return ""
+
+    def _net_rates(self, now: float):
+        """只统计默认出口，避免 en0 与 utun VPN 流量重复相加。"""
+        import psutil
+
+        if not self._net_iface or now - self._net_iface_at >= 30.0:
+            iface = self._default_route_interface()
+            self._net_iface_at = now
+            if iface != self._net_iface:
+                self._net_iface = iface
+                self._last_net = None
+        if not self._net_iface:
+            return super()._net_rates(now)
+        try:
+            counter = psutil.net_io_counters(pernic=True).get(self._net_iface)
+        except Exception:
+            return None, None
+        if counter is None:
+            self._last_net = None
+            return None, None
+        current = (counter.bytes_recv, counter.bytes_sent, now)
+        last = self._last_net
+        self._last_net = current
+        if not last or now <= last[2]:
+            return None, None
+        dt = now - last[2]
+        rx = max(0, current[0] - last[0]) * 8 / 1e6 / dt
+        tx = max(0, current[1] - last[1]) * 8 / 1e6 / dt
+        return round(rx, 1), round(tx, 1)
 
     def _detect_gpu(self):
         try:
