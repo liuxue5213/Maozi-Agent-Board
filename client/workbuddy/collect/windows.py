@@ -47,6 +47,9 @@ class WindowsCollector(Collector):
         except Exception:
             self._nvml = None
         self._thermal_cache = ({}, 0.0)   # ({cputemp, fan}, monotonic_at)
+        # 温度实际来源：lhm=LHM 实测 / zone=系统热区 / ""=还没有读数。
+        # 随 /api/status 暴露，Web 自检面板据此给「装 LHM」的引导。
+        self.thermal_hint = ""
 
     # ---- WMI 查询（全部可被单测 monkeypatch _run_ps） ----
 
@@ -86,6 +89,7 @@ class WindowsCollector(Collector):
         if now - at < _THROTTLE:
             return dict(values)
         out = {}
+        hint = ""
         # ⚠️ 两个来源单位不同：LHM 的 Value 就是 ℃；热区是开尔文×10。
         # 不能统一走换算——那会把 57℃ 算成 -267℃ 而永远丢弃。
         raw = self._query_lhm_cpu_temp()
@@ -94,15 +98,17 @@ class WindowsCollector(Collector):
                 celsius = float(raw)
                 if -10 < celsius < 150:     # 合理 CPU 温度区间
                     out["cputemp"] = round(celsius, 1)
+                    hint = "lhm"
             except (TypeError, ValueError):
                 pass
-        else:
+        if "cputemp" not in out:
             raw = self._query_thermal_zone()
             try:
                 celsius = float(raw) / 10.0 - 273.15
                 # 热区偶尔返回死值（未就绪 273.15K=0℃），>0℃ 才可信
                 if celsius > 0:
                     out["cputemp"] = round(celsius, 1)
+                    hint = "zone"
             except (TypeError, ValueError):
                 pass
         raw = self._query_lhm_fan() or self._query_win32_fan()
@@ -113,6 +119,7 @@ class WindowsCollector(Collector):
         except (TypeError, ValueError):
             pass
         self._thermal_cache = (out, now)
+        self.thermal_hint = hint
         return dict(out)
 
     def extra(self, now: float) -> dict:

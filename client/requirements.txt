@@ -9,3 +9,8 @@ Pillow>=10.0
 pywebview>=5.0 ; sys_platform != "linux"
 # Windows 可选：GPU 数据（N 卡）
 # pynvml ; sys_platform == "win32"
+# Windows：音量读写走 Core Audio 端点（缺失回退虚拟键：能调但屏上显示 --）
+pycaw>=20230407 ; sys_platform == "win32"
+comtypes>=1.2 ; sys_platform == "win32"
+# Windows：当前曲目/媒体会话走 SMTC（缺失时设置页显示「不支持读取」）
+winsdk>=1.0.0b10 ; sys_platform == "win32"

@@ -1,6 +1,6 @@
-"""默认音乐软件：启动 / 播放 / 上一首下一首（macOS）。
+"""默认音乐软件：启动 / 播放 / 上一首下一首 + 系统媒体会话读写。
 
-**为什么不能用 AppleScript**：macOS 上只有 Apple Music 与 Spotify 提供 AppleScript
+**macOS 为什么不能用 AppleScript**：只有 Apple Music 与 Spotify 提供 AppleScript
 字典。网易云音乐（com.netease.163music）、QQ音乐等没有——`tell application
 "NeteaseMusic" to playpause` 直接报错。旧实现在候选列表里逐个试、失败就往下走，
 于是**必然落到唯一支持 AppleScript 的 Music.app**，用户看到的就是「不管点什么都
@@ -8,9 +8,15 @@
 
 macOS 的控制走 **MediaRemote**（系统的「正在播放」中枢）：任何向
 MPNowPlayingInfoCenter 注册过的播放器都能接收统一命令，与具体软件无关。
-同步发送接口通过 ctypes 调用；异步曲目信息接口不在 Python 中手工桥接。
+同步发送接口通过 ctypes 调用；异步曲目信息接口不在 Python 中手工桥接（now_playing
+恒 None，稳定性优先）。
 
-Windows / Linux 各自沿用原有实现（虚拟媒体键 / playerctl），本模块只在 macOS 生效。
+Windows 走 **SMTC**（GlobalSystemMediaTransportControlsSessionManager，winsdk 包）：
+与 MediaRemote 同级的中枢，读写当前媒体会话。曲目信息用常驻事件循环线程承接
+winsdk 的异步接口——asyncio.run 每次新建 loop 与 winsdk 的互操作桥不兼容，实测会
+随机挂起，常驻 loop 是稳妥解。
+
+Linux 沿用 playerctl，本模块不参与（control.py 直接调命令行）。
 """
 from __future__ import annotations
 
@@ -77,11 +83,13 @@ def _load():
 # ---------------------------------------------------------------- 控制
 
 def send(action: str) -> bool:
-    """下发媒体命令（play/pause/toggle/stop/next/prev）。
+    """下发媒体命令（play/pause/toggle/next/prev）。
 
     命令走系统「正在播放」中枢，因此作用于**当前真正在放歌的那个软件**——
-    这也是「切换歌曲只对苹果音乐生效」的修法。
+    这也是「切换歌曲只对苹果音乐生效」的修法。Windows 走 SMTC 会话命令。
     """
+    if sys.platform == "win32":
+        return _smtc_send(action)
     lib = _load()
     code = _COMMANDS.get(action)
     if not lib or code is None:
@@ -93,14 +101,117 @@ def send(action: str) -> bool:
 
 
 def now_playing(timeout: float = 1.0):
-    """当前版本不读取私有框架的异步曲目信息。
+    """当前媒体会话的曲目信息。
 
-    MediaRemote 的发送接口是同步的，可以稳定用于播放控制；读取接口要求一个
-    Objective-C Block。用 ctypes 手工构造的 Block 在播放器真正返回数据后可能被
-    系统异步持有，Python 回调释放后会令上位机退出。稳定性优先，明确返回 None，
-    Web 端会显示“不支持读取”，控制按钮仍然完整可用。
+    Windows：SMTC 读取（歌名/歌手/播放状态/进度），供 Web「正在播放」块与
+    设备 NP 线级字段使用。
+    macOS：MediaRemote 的读取接口要求 Objective-C Block。用 ctypes 手工构造的
+    Block 在播放器真正返回数据后可能被系统异步持有，Python 回调释放后会令
+    上位机退出。稳定性优先，明确返回 None，Web 端显示「不支持读取」，
+    控制按钮仍然完整可用。
     """
+    if sys.platform == "win32":
+        return _smtc_now_playing(timeout)
     return None
+
+
+# ---------------------------------------------------------------- Windows SMTC
+
+# SMTC 会话命令 → 方法名。toggle 在拿到会话后按播放状态二选一。
+_SMTC_METHODS = {
+    "play": "try_play_async",
+    "pause": "try_pause_async",
+    "next": "try_skip_next_async",
+    "prev": "try_skip_previous_async",
+}
+
+_smtc_state = {"loop": None}
+
+
+def _smtc_loop():
+    """SMTC 专用事件循环线程：winsdk 的异步桥要求稳定的 loop。"""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _smtc_state["loop"] = loop
+    loop.run_forever()
+
+
+def _smtc_run(coro, timeout: float):
+    """把 winsdk 协程投递到常驻 loop 并限时取结果；任何失败归 None/False。"""
+    import asyncio
+    if _smtc_state["loop"] is None:
+        threading.Thread(target=_smtc_loop, daemon=True,
+                         name="workbuddy-smtc").start()
+        for _ in range(100):
+            if _smtc_state["loop"] is not None:
+                break
+            time.sleep(0.02)
+    loop = _smtc_state["loop"]
+    if loop is None:
+        return None
+    try:
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result(timeout)
+    except Exception:
+        return None
+
+
+def _smtc_now_playing(timeout: float = 1.0):
+    """读 SMTC 当前会话：{title, artist, album, playing, position, duration}。"""
+    import asyncio
+
+    async def _read():
+        from winsdk.windows.media.control import (
+            GlobalSystemMediaTransportControlsSessionManager as SMTC,
+            GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
+        )
+        manager = await SMTC.request_async()
+        session = manager.get_current_session()
+        if session is None:
+            return None
+        props = await session.try_get_media_properties_async()
+        playback = session.get_playback_info()
+        timeline = session.get_timeline_properties()
+        position = getattr(timeline.position, "total_seconds", lambda: None)()
+        duration = getattr(timeline.end_time, "total_seconds", lambda: None)()
+        return {
+            "title": props.title or "",
+            "artist": props.artist or "",
+            "album": props.album_title or "",
+            "playing": playback.playback_status == Status.PLAYING,
+            "position": position if isinstance(position, (int, float)) else None,
+            "duration": duration if isinstance(duration, (int, float)) else None,
+        }
+
+    return _smtc_run(_read(), timeout)
+
+
+def _smtc_send(action: str) -> bool:
+    """向 SMTC 当前会话发命令；没有会话或 winsdk 缺失返回 False（上层回退按键）。"""
+    import asyncio
+
+    async def _send():
+        from winsdk.windows.media.control import (
+            GlobalSystemMediaTransportControlsSessionManager as SMTC,
+            GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
+        )
+        manager = await SMTC.request_async()
+        session = manager.get_current_session()
+        if session is None:
+            return False
+        if action == "toggle":
+            method = ("try_pause_async"
+                      if session.get_playback_info().playback_status == Status.PLAYING
+                      else "try_play_async")
+        else:
+            method = _SMTC_METHODS.get(action)
+        if not method:
+            return False
+        await getattr(session, method)()
+        return True
+
+    return bool(_smtc_run(_send(), 1.5))
 
 
 # ---------------------------------------------------------------- 应用发现 / 启动

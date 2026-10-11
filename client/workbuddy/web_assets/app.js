@@ -2546,6 +2546,14 @@ function renderSelfcheck(){
   const cities=((draft.weather||{}).cities||[]);
   rows.push({ok:cities.length>0, label:'天气城市',
     value: cities.length?cities.map(c=>c.name).join('、'):'未配置（音乐/天气页签搜索添加）'});
+  // 温度来源与引导：Windows 没装 LHM 时热区常常拿不到数，要告诉用户怎么办
+  const lcaps=live.local_caps||{};
+  const srcNames={lhm:'LibreHardwareMonitor（实测）', zone:'系统热区（可能不准）'};
+  const tempOk=!!lcaps.cpu_temp;
+
+  rows.push({ok:tempOk, warn:!tempOk, label:'温度数据',
+    value: tempOk ? (srcNames[live.thermal_hint]||'可用')
+      : '未获取——Windows 装 LibreHardwareMonitor 并以管理员运行一次即可；macOS 需授权 smcpriv 采样器'});
   rows.push({ok:!!live.push_enabled, label:'手机推送',
     value: live.push_enabled?'已配置（出错/等你时推送）':'未配置（config.json 填 push_url）'});
   rows.push({ok:!live.config_warning, warn:!!live.config_warning, label:'配置健康',

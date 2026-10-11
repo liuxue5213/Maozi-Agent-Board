@@ -574,6 +574,11 @@ class App:
                     "config_warning": getattr(self, "config_warning", ""),
                     # 自检面板用：手机推送是否已配置
                     "push_enabled": bool(str(getattr(self.cfg, "push_url", "") or "").strip()),
+                    # 本机采集能力与温度来源（Windows 上用于「装 LHM」引导）
+                    "local_caps": dict(getattr(self.collector, "caps", {})
+                                       if getattr(self, "collector", None) else {}),
+                    "thermal_hint": getattr(getattr(self, "collector", None),
+                                            "thermal_hint", ""),
                     "device": self.link.status if self.link else "串口关闭",
                     "tasks": self._tasks_with_trace(), "telemetry": self.last,
                     "telemetry_age": (round(time.time() - last_tick, 1)

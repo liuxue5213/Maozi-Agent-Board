@@ -76,7 +76,9 @@ class ControlApp:
             if muted and muted.returncode == 0:
                 out["mut"] = 1 if "yes" in muted.stdout.lower() else 0
             return out
-        return {}  # Windows 音量读取需要额外 API，控制中心显示 --
+        if sys.platform == "win32":
+            return _win_volume_read()
+        return {}
 
     # ---- 动作 ----
 
@@ -88,6 +90,19 @@ class ControlApp:
         elif sys.platform.startswith("linux"):
             _run(["pactl", "set-sink-volume", "@DEFAULT_SINK@",
                   f"{delta:+d}%".replace("+", "+")])
+        elif sys.platform == "win32":
+            # pycaw 可用时直接写端点音量：精确到步长，不依赖按键换算，
+            # 也避免 VK_MEDIA 键只动「默认设备」以外的歧义
+            ep = _win_endpoint()
+            if ep is not None:
+                try:
+                    current = ep.GetMasterVolumeLevelScalar()
+                    target = max(0.0, min(1.0, current + delta / 100.0))
+                    ep.SetMasterVolumeLevelScalar(target, None)
+                except Exception:
+                    _win_key(0xAF if delta > 0 else 0xAE, count=abs(delta) // 2 or 1)
+            else:
+                _win_key(0xAF if delta > 0 else 0xAE, count=abs(delta) // 2 or 1)
         else:
             _win_key(0xAF if delta > 0 else 0xAE, count=abs(delta) // 5 or 1)
         self._cache_at = 0.0  # 立即刷新缓存
@@ -97,6 +112,15 @@ class ControlApp:
             _osascript("set volume output muted (not (output muted of (get volume settings)))")
         elif sys.platform.startswith("linux"):
             _run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
+        elif sys.platform == "win32":
+            ep = _win_endpoint()
+            if ep is not None:
+                try:
+                    ep.SetMute(not ep.GetMute(), None)
+                except Exception:
+                    _win_key(0xAD)
+            else:
+                _win_key(0xAD)
         else:
             _win_key(0xAD)
         self._cache_at = 0.0
@@ -119,7 +143,11 @@ class ControlApp:
                 result = _run(["playerctl", commands[action]])
                 return bool(result and result.returncode == 0)
         else:
-            # Windows 的播放键本身就是播放/暂停切换；没有独立 play/pause 键。
+            # 首选 SMTC 会话命令（作用于真实媒体会话，见 music.py）；
+            # 无 winsdk 或当前没有媒体会话时回退虚拟键——播放键本身就是切换键
+            from . import music
+            if music.send(action):
+                return True
             codes = {"play": 0xB3, "pause": 0xB3, "toggle": 0xB3,
                      "next": 0xB0, "prev": 0xB1}
             if action in codes:
@@ -148,3 +176,40 @@ def _win_key(code: int, count: int = 1):
             ctypes.windll.user32.keybd_event(code, 0, 2, 0)  # KEYEVENTF_KEYUP
     except Exception:
         pass
+
+
+def _win_endpoint():
+    """默认输出设备的 IAudioEndpointVolume（pycaw）。不可用返回 None。
+
+    调用可能来自 Web 线程：COM 单元按线程初始化，每次进来都 CoInitialize
+    （幂等、开销可忽略）。pycaw 缺失或设备枚举失败都归 None，调用方回退
+    虚拟键——音量「能调」不依赖 pycaw，「看得见」才依赖。
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        from ctypes import POINTER, cast
+        import comtypes
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+        try:
+            comtypes.CoInitialize()
+        except Exception:
+            pass
+        device = AudioUtilities.GetSpeakers()
+        interface = device.Activate(IAudioEndpointVolume._iid_,
+                                    comtypes.CLSCTX_ALL, None)
+        return cast(interface, POINTER(IAudioEndpointVolume))
+    except Exception:
+        return None
+
+
+def _win_volume_read():
+    """pycaw 读默认输出音量/静音。拿不到就空字典（屏上显示 --，诚实降级）。"""
+    ep = _win_endpoint()
+    if ep is None:
+        return {}
+    try:
+        return {"vol": int(round(ep.GetMasterVolumeLevelScalar() * 100)),
+                "mut": 1 if ep.GetMute() else 0}
+    except Exception:
+        return {}
