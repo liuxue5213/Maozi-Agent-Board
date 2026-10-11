@@ -415,7 +415,7 @@ function reorder(list, from, to) {
 /* ================= 命令面板（优化#6）与键盘快捷键（优化#5） ================= */
 function commandDefs(){
   const views=[['overview','概览'],['tasks','屏幕编辑'],['saver','息屏显示'],
-               ['extras','其他视图'],['history','历史记录'],['settings','设置']];
+               ['extras','日程与控制'],['history','历史记录'],['settings','设置']];
   const cmds=views.map(([id,name],i)=>({label:`打开：${name}`,key:String(i+1),run:()=>switchView(id)}));
   cmds.push(
     {label:'保存草稿',key:'S',run:()=>save().catch(err=>notice(err.message,true))},
@@ -423,7 +423,7 @@ function commandDefs(){
     {label:'刷新数据',key:'R',run:()=>{poll();notice('已刷新')}},
     {label:'导出诊断包',run:()=>downloadFile('/api/diagnose','workbuddy-diagnose.zip').then(()=>{logHist('diag','诊断包已导出');notice('诊断包已开始下载')}).catch(e=>notice(e.message,true))},
     {label:'切换深浅外观',run:()=>$('color-mode-btn').click()},
-    {label:'上传背景图（其他视图）',run:()=>{switchView('extras');$('bgimg-file').click()}},
+    {label:'上传设备背景图',run:()=>{switchView('extras');$('bgimg-file').click()}},
     {label:'导出配置 JSON',run:()=>$('btn-export').click()},
     {label:'撤销上一步配置（Cmd/Ctrl+Z）',run:()=>undoChange()},
     {label:'屏幕编辑：多窗格预览',run:()=>{switchView('tasks');switchTaskTab('multi')}},
@@ -978,8 +978,9 @@ function devPet(card, type, st, bx, by, sz){
     n.style.opacity=opa==null?1:opa;
     if(border){n.style.border=Math.max(1,Math.round(sz))+'px solid '+border;}
     card.append(n); return n; };
-  const root=devAbs(el('div','dev-el'),U(bx),U(by),U(64),U(80)); root.style.opacity=1; card.append(root);
-  const grp=devAbs(el('div','dev-el'),0,0,U(64),U(80)); root.append(grp);
+  // 固件绘图容器右侧多留 4px，避免状态徽标贴边；本体坐标仍按 64×80。
+  const root=devAbs(el('div','dev-el'),U(bx),U(by),U(68),U(80)); root.style.opacity=1; card.append(root);
+  const grp=devAbs(el('div','dev-el'),0,0,U(68),U(80)); root.append(grp);
   const R=(x,y,w,h,r,color,opa,border)=>{const n=devAbs(el('div','dev-el'),U(x),U(y),U(w),U(h));
     n.style.borderRadius=U(r)+'px'; if(color){n.style.background=color;}
     n.style.opacity=opa==null?1:opa;
@@ -1863,9 +1864,16 @@ function renderSettings(){
 }
 function renderEntries(key){
   const root=$(key+'-list');root.replaceChildren();
-  const items=draft[key];if(!items.length){root.append(el('div','empty',key==='calendar'?'暂无日程':key==='apps'?'尚未添加应用':key==='countdowns'?'尚未添加倒计时':'尚未添加'));return}
+  const items=draft[key];
+  const count=$(key+'-count');
+  if(count)count.textContent=`${items.filter(x=>x.enabled!==false).length}/${items.length} 启用`;
+  if(!items.length){
+    const names={reminders:'提醒',calendar:'日程',alarms:'闹钟',countdowns:'倒计时',apps:'快捷应用'};
+    root.append(el('div','empty',`还没有${names[key]||'内容'}，从下方新增。`));
+    return
+  }
   items.forEach((item,i)=>{
-    const row=el('div',`entry${key==='calendar'?' calendar':''}${key==='apps'?' app':key==='countdowns'?' countdowns':''}`);
+    const row=el('div',key==='apps'?'entry app':`schedule-entry${item.enabled===false?' disabled':''}`);
     function input(type,value,field,placeholder){const n=el('input');n.type=type;n.value=value;n.placeholder=placeholder||'';n.onchange=()=>{item[field]=n.value;markDirty()};return n}
     if(key==='apps'){
       row.append(input('text',item.name,'name','应用名'),input('text',item.command,'command','启动命令，如 open -a Safari'));
@@ -1880,17 +1888,36 @@ function renderEntries(key){
       };
       row.append(launch);
     }else{
-      if(key==='calendar'||key==='countdowns')row.append(input('date',item.date,'date'));
-      row.append(input('time',item.time,'time'),input('text',item[key==='calendar'||key==='countdowns'?'title':key==='alarms'?'label':'text'],key==='calendar'||key==='countdowns'?'title':key==='alarms'?'label':'text'));
-    }
-    const del=el('button','', '×');del.title='删除';del.onclick=()=>{items.splice(i,1);markDirty()};row.append(del);
-    if(key!=='calendar'&&key!=='apps'&&key!=='countdowns'){
-      const repeat=el('label','repeat','重复');const sel=el('select');
-      for(const [name,days] of [['每天',[1,2,3,4,5,6,7]],['工作日',[1,2,3,4,5]],['周末',[6,7]]]){
-        const opt=el('option','',name);opt.value=days.join(',');sel.append(opt)
+      const head=el('div','schedule-entry-head');
+      const toggle=el('label','schedule-enable');
+      const enabled=input('checkbox','', 'enabled');
+      enabled.checked=item.enabled!==false;
+      enabled.onchange=()=>{item.enabled=enabled.checked;markDirty();renderEntries(key)};
+      toggle.append(enabled,el('span','',enabled.checked?'已启用':'已暂停'));
+      head.append(toggle);
+      const del=el('button','entry-delete','×');del.type='button';del.title='删除';del.setAttribute('aria-label','删除此条目');
+      del.onclick=()=>{items.splice(i,1);markDirty();renderEntries(key)};
+      head.append(del);row.append(head);
+      const fields=el('div','schedule-entry-fields');
+      if(key==='calendar'||key==='countdowns')fields.append(input('date',item.date,'date'));
+      fields.append(input('time',item.time,'time'));
+      const textField=key==='calendar'||key==='countdowns'?'title':key==='alarms'?'label':'text';
+      fields.append(input('text',item[textField],textField,{calendar:'日程内容',countdowns:'目标名称',alarms:'闹钟名称',reminders:'提醒内容'}[key]));
+      row.append(fields);
+      if(key==='reminders'||key==='alarms'){
+        const repeat=el('label','repeat','重复');const sel=el('select');
+        const choices=[['每天',[1,2,3,4,5,6,7]],['工作日',[1,2,3,4,5]],['周末',[6,7]]];
+        choices.forEach(([name,days])=>{const opt=el('option','',name);opt.value=days.join(',');sel.append(opt)});
+        const value=(item.weekdays||[]).join(',');
+        if(!choices.some(([,days])=>days.join(',')===value)){
+          const opt=el('option','','自定义星期');opt.value=value;sel.append(opt);
+        }
+        sel.value=value;sel.onchange=()=>{item.weekdays=sel.value.split(',').map(Number);markDirty()};
+        repeat.append(sel);row.append(repeat);
       }
-      sel.value=item.weekdays.join(',');sel.onchange=()=>{item.weekdays=sel.value.split(',').map(Number);markDirty()};
-      repeat.append(sel);row.append(repeat);
+    }
+    if(key==='apps'){
+      const del=el('button','', '×');del.title='删除';del.onclick=()=>{items.splice(i,1);markDirty();renderEntries(key)};row.append(del);
     }
     root.append(row);
   });
@@ -1943,7 +1970,7 @@ function openTaskDrawer(task){
   const drawer=$('task-drawer'),scrim=$('drawer-scrim');
   const fields=[['智能体',task.tool],['项目',task.project||'未命名'],['会话',`#${task.id}`],
     ['状态',stateNames[task.state]||task.state],['本轮用时',fmtElapsed(task.elapsed)],
-    ['最近活动',`${task.age} 秒前`],['进度',task.prog>=0?`${task.prog}%`:'估算中'],
+    ['最近活动',`${task.age} 秒前`],['完成度',task.prog>=0?`${task.prog}%`:'工具未提供'],
     ['模型',(live.telemetry?.aiu||'').split(',')[1]||'—']];
   if(task.err)fields.push(['错误',String(task.err).slice(0,80)]);
   const root=$('drawer-fields');root.replaceChildren();
@@ -1991,7 +2018,7 @@ function openFocus(task){
     el('h3','focus-hero-title',task.project||'未命名项目'),
     el('p','focus-hero-sub',`${task.tool} · 会话 #${task.id} · ${fmtElapsed(task.elapsed)}`),
     el('span',`task-state ${cls}`,stateNames[task.state]||task.state),
-    el('p','focus-hero-prog',task.prog>=0?`进度 ${task.prog}%`:'进度估算中'));
+    el('p','focus-hero-prog',task.prog>=0?`完成度 ${task.prog}%`:'完成度：工具未提供'));
   $('focus-stage').hidden=false;
 }
 function closeFocus(){$('focus-stage').hidden=true}
@@ -2129,7 +2156,7 @@ function renderOverview(){
   renderSyncState();
   renderConnState();
 }
-/* 概览「AI 工具」：进程识别的结果。
+/* 概览「AI 工具」：进程识别结果 + 采集能力说明。
    日志推断有天然盲区——工具关掉后日志不再变化，最后状态会被新鲜度窗口
    兜住（Codex 的「等你回复」可挂 30 分钟）。进程表能直接回答「它还开着吗」，
    未运行的工具有会话也一律被忽略（见 aiwatch._gate_inactive）。 */
@@ -2164,7 +2191,13 @@ function renderTools(){
     (chip,t)=>{
       chip.className='tool-chip'+(t.running?' on':'');
       chip.__label.textContent=t.label;
-      chip.__sub.textContent=t.running?'运行中':(t.gates?'未运行 · 会话已忽略':'未运行');
+      const sessionCap=t.capability==='session'||t.gates;
+      chip.__sub.textContent=t.running
+        ?(sessionCap?'已开启 · 可读取会话':'已开启 · 仅检测进程')
+        :(sessionCap?'未开启 · 支持会话':'未开启 · 仅检测进程');
+      chip.title=sessionCap
+        ?'可读取该工具的本地会话日志，显示阶段、项目和最近活动；进行中的完成百分比通常未知。'
+        :'目前只能判断软件是否正在运行，不能读取它内部的任务或执行阶段。';
     });
 }
 /* 优化#14：今日 token 每小时用量折线（canvas 本地绘制，无外部库、CSP 安全）。
@@ -2392,6 +2425,12 @@ function openSettings(tab){
 /* ================= 视图路由 ================= */
 function renderExtras(){
   ['reminders','calendar','alarms','countdowns','apps'].forEach(key=>{if(draft&&draft[key])renderEntries(key)});
+  document.querySelectorAll('[data-generate-widget]').forEach(button=>{
+    const kind=button.dataset.generateWidget;
+    const exists=(draft.pages||[]).some(page=>(page.widgets||[]).includes(kind));
+    button.disabled=exists;
+    button.textContent=exists?'已在小屏':'放到小屏';
+  });
   // 城市输入框要回填当前值：已配置「天津」时打开本视图若显示空框，
   // 用户会以为之前没配过，随手一改就覆盖了旧值。焦点在框上时不动它。
   const city=$('weather-city');
@@ -2846,14 +2885,28 @@ function bind(){
     notice(`已保存「${name}」，可在屏幕编辑 → 主题库 → 自定义主题中应用`);
   };
 
-  // ---- 其他视图 ----
+  // ---- 日程与控制 ----
   document.querySelectorAll('[data-add]').forEach(button=>button.onclick=()=>{
     const key=button.dataset.add, today=new Date().toLocaleDateString('en-CA');
     draft[key].push(key==='calendar'?{id:uniqueId('e'),date:today,time:'09:00',title:'新日程',enabled:true}:
       key==='alarms'?{id:uniqueId('a'),time:'09:00',label:'新闹钟',weekdays:[1,2,3,4,5,6,7],enabled:true}:
       key==='apps'?{id:uniqueId('app'),name:'新应用',command:'open -a Finder'}:
       key==='countdowns'?{id:uniqueId('c'),date:today,time:'20:00',title:'新目标',enabled:true}:
-        {id:uniqueId('r'),time:'09:00',text:'新提醒',weekdays:[1,2,3,4,5,6,7],enabled:true});markDirty()
+        {id:uniqueId('r'),time:'09:00',text:'新提醒',weekdays:[1,2,3,4,5,6,7],enabled:true});
+    markDirty();renderEntries(key)
+  });
+  const schedulePages={
+    reminder_list:['提醒','remind'],today_calendar:['今日日程','today'],
+    alarm:['闹钟','alarm'],countdown:['倒计时','countdown'],
+  };
+  document.querySelectorAll('[data-generate-widget]').forEach(button=>button.onclick=()=>{
+    const kind=button.dataset.generateWidget;
+    if((draft.pages||[]).some(page=>(page.widgets||[]).includes(kind))){notice('这个组件已经在小屏页面中');return}
+    if((draft.pages||[]).length>=6){notice('小屏最多 6 页，请先在“屏幕编辑”删除或合并一页',true);return}
+    const [title,prefix]=schedulePages[kind];
+    draft.pages.push({id:uniqueId(prefix),title,layout:'grid_2x2',widgets:[kind]});
+    previewPage=draft.pages.length-1;selected=previewPage;markDirty();renderExtras();
+    notice(`已生成「${title}」页面，应用到设备后即可查看`);
   });
   $('weather-city').onchange=e=>{if(!draft.weather)draft.weather={};draft.weather.city=e.target.value.trim();markDirty()};
   $('bgimg-file').onchange=async e=>{
@@ -3028,7 +3081,7 @@ function bind(){
   };
   $('trend-range').onchange=()=>drawTrendChart();
 
-  // ---- 其他视图与设置各页签的保存/同步入口 ----
+  // ---- 日程与控制及设置各页签的保存/同步入口 ----
   // 保存按钮原来只在「概览」和「页面编排」有：用户在其他视图/主题/音乐/天气
   // 里改完，本视图内没有任何可保存的地方（用户反馈「有的地方没有保存按钮」）。
   const bindSavePair=(saveId,syncId)=>{

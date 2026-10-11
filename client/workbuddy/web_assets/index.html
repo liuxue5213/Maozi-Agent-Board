@@ -32,7 +32,7 @@
         <span class="nav-icon" aria-hidden="true">☾</span>息屏显示
       </button>
       <button type="button" class="nav-item" data-view="extras">
-        <span class="nav-icon" aria-hidden="true">▦</span>其他视图
+        <span class="nav-icon" aria-hidden="true">▦</span>日程与控制
       </button>
       <button type="button" class="nav-item" data-view="history">
         <span class="nav-icon" aria-hidden="true">◷</span>历史记录
@@ -129,8 +129,9 @@
             <span class="count-pill muted" id="ov-tools-note">—</span>
           </div>
           <div class="tool-chips" id="ov-tool-chips"></div>
-          <p class="hint">按<strong>进程</strong>识别，不是猜：已关闭的工具即使日志里还留着状态，也不会再算作活跃会话。
-            进程扫描不可用时自动退回纯日志推断。</p>
+          <p class="hint"><strong>Claude Code、Codex、OpenCode、ZCode、WorkBuddy</strong>可读取本机会话状态；
+            Cursor、Windsurf、Trae、VS Code、Zed、Gemini CLI 目前只检测软件是否开启。
+            在 Terminal、iTerm2 或 Warp 中运行不影响 CLI 会话采集。</p>
         </section>
 
         <section class="panel ov-quick" aria-label="快捷操作">
@@ -362,48 +363,69 @@
       </div>
     </section>
 
-    <!-- ========== 其他视图 ========== -->
+    <!-- ========== 日程与控制 ========== -->
     <section class="view" id="view-extras" aria-labelledby="extras-heading">
-      <h1 id="extras-heading">其他视图</h1>
-      <p class="view-sub">提醒、日程、闹钟、倒计时与快捷应用，会出现在小屏对应组件里。</p>
-      <div class="btn-row">
-        <button type="button" class="button" id="extras-save-btn">保存草稿</button>
-        <button type="button" class="button primary" id="extras-sync-btn">应用到设备</button>
-        <span class="hint-inline">本页的增删改先写入草稿，保存后才落到配置并同步小屏。</span>
+      <h1 id="extras-heading">日程与控制</h1>
+      <p class="view-sub">管理提醒、日程、闹钟和倒计时，并决定哪些内容显示在小屏上。</p>
+      <div class="panel schedule-actionbar">
+        <span class="hint-inline">编辑内容会先进入草稿；应用成功后，小屏才开始按新计划执行。</span>
+        <div class="btn-row">
+          <button type="button" class="button" id="extras-save-btn">保存草稿</button>
+          <button type="button" class="button primary" id="extras-sync-btn">应用到设备</button>
+        </div>
       </div>
-      <div class="schedule-grid">
+      <div class="schedule-grid schedule-primary">
         <section class="panel schedule-panel" aria-labelledby="reminders-heading">
           <div class="panel-head">
-            <h2 id="reminders-heading">提醒</h2>
-            <button type="button" class="icon-button" data-add="reminders" title="新增提醒" aria-label="新增提醒"><span aria-hidden="true">＋</span></button>
+            <div><h2 id="reminders-heading">提醒</h2><p class="panel-kicker">按星期重复的轻量提示</p></div>
+            <span class="count-pill muted" id="reminders-count">0</span>
           </div>
           <div class="entry-list" id="reminders-list"></div>
+          <div class="schedule-card-actions">
+            <button type="button" class="button ghost" data-generate-widget="reminder_list">放到小屏</button>
+            <button type="button" class="button" data-add="reminders">新增提醒</button>
+          </div>
         </section>
 
         <section class="panel schedule-panel" aria-labelledby="calendar-heading">
           <div class="panel-head">
-            <h2 id="calendar-heading">日历</h2>
-            <button type="button" class="icon-button" data-add="calendar" title="新增日程" aria-label="新增日程"><span aria-hidden="true">＋</span></button>
+            <div><h2 id="calendar-heading">日程</h2><p class="panel-kicker">指定日期和时间的一次性事项</p></div>
+            <span class="count-pill muted" id="calendar-count">0</span>
           </div>
           <div class="entry-list" id="calendar-list"></div>
+          <div class="schedule-card-actions">
+            <button type="button" class="button ghost" data-generate-widget="today_calendar">放到小屏</button>
+            <button type="button" class="button" data-add="calendar">新增日程</button>
+          </div>
         </section>
 
         <section class="panel schedule-panel" aria-labelledby="alarms-heading">
           <div class="panel-head">
-            <h2 id="alarms-heading">闹钟</h2>
-            <button type="button" class="icon-button" data-add="alarms" title="新增闹钟" aria-label="新增闹钟"><span aria-hidden="true">＋</span></button>
+            <div><h2 id="alarms-heading">闹钟</h2><p class="panel-kicker">到点闪屏并呼吸背光</p></div>
+            <span class="count-pill muted" id="alarms-count">0</span>
           </div>
           <div class="entry-list" id="alarms-list"></div>
+          <div class="schedule-card-actions">
+            <button type="button" class="button ghost" data-generate-widget="alarm">放到小屏</button>
+            <button type="button" class="button" data-add="alarms">新增闹钟</button>
+          </div>
         </section>
 
         <section class="panel schedule-panel" aria-labelledby="countdowns-heading">
           <div class="panel-head">
-            <h2 id="countdowns-heading">倒计时</h2>
-            <button type="button" class="icon-button" data-add="countdowns" title="新增倒计时" aria-label="新增倒计时"><span aria-hidden="true">＋</span></button>
+            <div><h2 id="countdowns-heading">倒计时</h2><p class="panel-kicker">显示目标时间与剩余时长</p></div>
+            <span class="count-pill muted" id="countdowns-count">0</span>
           </div>
           <div class="entry-list" id="countdowns-list"></div>
+          <div class="schedule-card-actions">
+            <button type="button" class="button ghost" data-generate-widget="countdown">放到小屏</button>
+            <button type="button" class="button" data-add="countdowns">新增倒计时</button>
+          </div>
         </section>
+      </div>
 
+      <div class="section-heading"><h2>快捷控制</h2><span>应用启动与设备背景</span></div>
+      <div class="schedule-grid schedule-secondary">
         <section class="panel schedule-panel" aria-labelledby="apps-heading">
           <div class="panel-head">
             <h2 id="apps-heading">快捷应用</h2>
@@ -419,7 +441,7 @@
 
         <section class="panel schedule-panel" aria-labelledby="bgimg-heading">
           <div class="panel-head">
-            <h2 id="bgimg-heading">背景图与天气</h2>
+            <h2 id="bgimg-heading">设备背景</h2>
           </div>
           <p class="hint">背景图自动裁剪为 320×480 并压缩后推送到设备；需设备在线。</p>
           <div class="btn-row">
@@ -427,11 +449,8 @@
             <input type="file" id="bgimg-file" accept="image/*" class="visually-hidden">
             <button type="button" class="button danger" id="bgimg-clear">恢复纯色</button>
           </div>
-          <label class="field">
-            <span>天气城市（顶栏与天气组件）</span>
-            <input type="text" id="weather-city" placeholder="如 上海" maxlength="8" autocomplete="off">
-          </label>
-          <p class="hint">留空则小屏不显示天气。</p>
+          <input type="hidden" id="weather-city">
+          <p class="hint">天气城市已集中到“设置 → 天气”管理。</p>
         </section>
       </div>
     </section>
@@ -470,11 +489,8 @@
     <!-- ========== 设置 ========== -->
     <section class="view" id="view-settings" aria-labelledby="settings-heading">
       <h1 id="settings-heading">设置</h1>
+      <p class="view-sub">管理小屏使用的本机能力、数据来源和客户端维护选项。</p>
       <div class="tabbar settings-tabbar" role="tablist" aria-label="设置分区">
-        <button type="button" class="tab" id="stab-pages" role="tab" hidden
-                aria-selected="false" aria-controls="spane-pages">页面编排</button>
-        <button type="button" class="tab" id="stab-look" role="tab" hidden
-                aria-selected="false" aria-controls="spane-look">主题与显示</button>
         <button type="button" class="tab active" id="stab-music" role="tab"
                 aria-selected="true" aria-controls="spane-music">音乐</button>
         <button type="button" class="tab" id="stab-weather" role="tab"
@@ -599,9 +615,10 @@
         </section>
       </div>
       <div class="tabpane active" id="spane-music" role="tabpanel">
-        <section class="panel" aria-labelledby="music-heading">
+        <div class="settings-pane-grid">
+        <section class="panel settings-card" aria-labelledby="music-heading">
           <div class="panel-head">
-            <h2 id="music-heading">音乐</h2>
+            <div><h2 id="music-heading">播放应用</h2><p class="panel-kicker">选择触屏音乐按钮要控制的软件</p></div>
             <span class="count-pill muted" id="music-state">—</span>
           </div>
           <label class="field">
@@ -613,52 +630,61 @@
             <button type="button" class="button primary" id="music-test-btn">打开并发送播放</button>
             <button type="button" class="button" id="music-add-app">加一个小屏快捷入口</button>
           </div>
-          <div class="btn-row">
-            <button type="button" class="button" id="music-save-btn">保存草稿</button>
-            <button type="button" class="button primary" id="music-sync-btn">应用到设备</button>
-          </div>
-          <div class="section-rule" role="separator"></div>
-          <div class="panel-head compact"><h3>正在播放</h3></div>
+        </section>
+        <section class="panel settings-card" aria-labelledby="music-now-heading">
+          <div class="panel-head"><div><h2 id="music-now-heading">正在播放</h2><p class="panel-kicker">系统当前媒体会话</p></div></div>
           <p class="now-playing" id="music-now">—</p>
           <p class="hint">播放暂停 / 上一首 / 下一首只控制系统当前媒体会话；没有会话时，
             播放暂停只会打开上面选定的一个软件。首次使用请先在播放器里选一首歌。</p>
         </section>
+        <div class="panel settings-actionbar settings-span-all">
+          <span class="hint-inline">修改默认播放器后，保存草稿并应用到设备。</span>
+          <div class="btn-row">
+            <button type="button" class="button" id="music-save-btn">保存草稿</button>
+            <button type="button" class="button primary" id="music-sync-btn">应用到设备</button>
+          </div>
+        </div>
+        </div>
       </div>
       <div class="tabpane" id="spane-weather" role="tabpanel" hidden>
-        <section class="panel" aria-labelledby="weather-cities-heading">
+        <div class="settings-pane-grid">
+        <section class="panel settings-card" aria-labelledby="weather-cities-heading">
           <div class="panel-head">
-            <h2 id="weather-cities-heading">天气城市</h2>
+            <div><h2 id="weather-cities-heading">已选城市</h2><p class="panel-kicker">最多 3 个，每个城市可生成一页</p></div>
             <span class="count-pill muted" id="weather-city-count">0/3</span>
           </div>
-          <p class="hint">省市区精确搜索（Open-Meteo 地理编码），每个城市一个独立的小屏页面，
-            含当前实况和未来 5 天预报。最多 3 个城市。</p>
           <div class="entry-list" id="weather-city-list"></div>
-          <div class="section-rule" role="separator"></div>
-          <div class="panel-head compact"><h3>添加城市</h3></div>
+          <div class="settings-card-foot">
+            <button type="button" class="button wide" id="weather-gen-pages">为已选城市生成小屏页面</button>
+          </div>
+        </section>
+        <section class="panel settings-card" aria-labelledby="weather-add-heading">
+          <div class="panel-head"><div><h2 id="weather-add-heading">添加城市</h2><p class="panel-kicker">省市区精确搜索</p></div></div>
           <div class="btn-row">
             <input type="text" id="weather-q" class="text-input grow" maxlength="20"
                    placeholder="城市名，如 杭州 / 朝阳区" autocomplete="off">
             <button type="button" class="button" id="weather-search-btn">搜索</button>
           </div>
           <div class="entry-list" id="weather-search-results"></div>
-          <div class="btn-row">
-            <button type="button" class="button" id="weather-gen-pages">为每个城市生成小屏页面</button>
-          </div>
+          <p class="hint">天气数据包含当前实况和未来 5 天预报；搜索只用于选城市，不会立即修改设备。</p>
+        </section>
+        <div class="panel settings-actionbar settings-span-all">
+          <span class="hint-inline">城市与生成的页面会一起写入配置。</span>
           <div class="btn-row">
             <button type="button" class="button" id="weather-save-btn">保存草稿</button>
             <button type="button" class="button primary" id="weather-sync-btn">应用到设备</button>
           </div>
-        </section>
+        </div>
+        </div>
       </div>
       <div class="tabpane" id="spane-pet" role="tabpanel" hidden>
-        <section class="panel" aria-labelledby="pet-heading">
+        <div class="settings-pane-grid">
+        <section class="panel settings-card" aria-labelledby="pet-heading">
           <div class="panel-head">
-            <h2 id="pet-heading">桌面宠物</h2>
+            <div><h2 id="pet-heading">形象与行为</h2><p class="panel-kicker">桌面宠物的基本设置</p></div>
             <span class="count-pill" id="pet-mood">—</span>
           </div>
-          <p class="hint">宠物住在大屏 AI 卡右侧和独立的「宠物」页上；表情和动作会跟着 AI 会话状态变，
-            饿了渴了累了也会自己表现在脸上。状态保存在本机。</p>
-          <div class="field-heading" style="margin-top:16px"><span>形象</span></div>
+          <div class="field-heading"><span>形象</span></div>
           <div class="pet-types" id="pet-types"></div>
           <label class="field">
             <span>名字</span>
@@ -676,8 +702,9 @@
             <button type="button" class="button primary" id="pet-save">保存形象</button>
             <button type="button" class="button" id="pet-page-gen">生成「宠物」小屏页面</button>
           </div>
-          <div class="section-rule" role="separator"></div>
-          <div class="panel-head compact"><h3>状态</h3></div>
+        </section>
+        <section class="panel settings-card" aria-labelledby="pet-status-heading">
+          <div class="panel-head"><div><h2 id="pet-status-heading">状态与互动</h2><p class="panel-kicker">状态保存在本机并同步显示到小屏</p></div></div>
           <div class="pet-stats" id="pet-stats"></div>
           <div class="btn-row">
             <button type="button" class="button" id="pet-feed">喂食</button>
@@ -687,10 +714,12 @@
           <p class="hint">喂食恢复饱食、喝水恢复水分、运动消耗活力（也更饿更快渴）——和真实的小生命一样。
             设备的「宠物」页上也有同样的三个按钮。</p>
         </section>
+        </div>
       </div>
       <div class="tabpane" id="spane-system" role="tabpanel" hidden>
-        <section class="panel" aria-labelledby="client-heading">
-          <div class="panel-head"><h2 id="client-heading">客户端与维护</h2></div>
+        <div class="settings-pane-grid">
+        <section class="panel settings-card" aria-labelledby="client-heading">
+          <div class="panel-head"><div><h2 id="client-heading">客户端与配置</h2><p class="panel-kicker">启动、备份、诊断与升级</p></div></div>
           <label class="field toggle">
             <input type="checkbox" id="autostart-toggle">
             <span>开机自动启动客户端</span>
@@ -704,8 +733,12 @@
             <button type="button" class="button" id="diag-btn">导出诊断包</button>
           </div>
           <div class="section-rule" role="separator"></div>
-          <div class="panel-head compact">
-            <h3>Hook 快通道</h3>
+          <div class="panel-head compact"><div><h3>Web 外观</h3><p class="panel-kicker">只影响上位机，不改变小屏主题</p></div></div>
+          <button type="button" class="button wide" id="color-mode-btn">外观：跟随系统（点击切换）</button>
+        </section>
+        <section class="panel settings-card" aria-labelledby="hooks-heading">
+          <div class="panel-head">
+            <div><h2 id="hooks-heading">Hook 快通道</h2><p class="panel-kicker">让 Agent 状态秒级到达小屏</p></div>
             <span class="hint-inline" id="hooks-state">检测中…</span>
           </div>
           <p class="hint">把「Agent 开始/结束」直接推给小屏（秒级亮屏，告别轮询盲区）。只往 Claude Code 的
@@ -714,9 +747,10 @@
             <button type="button" class="button primary" id="btn-hooks-install">一键接入</button>
             <button type="button" class="button danger" id="btn-hooks-uninstall">移除</button>
           </div>
-          <div class="section-rule" role="separator"></div>
-          <div class="panel-head compact">
-            <h3>温度与风扇</h3>
+        </section>
+        <section class="panel settings-card settings-span-all" aria-labelledby="smc-heading">
+          <div class="panel-head">
+            <div><h2 id="smc-heading">温度与风扇</h2><p class="panel-kicker">可选的只读硬件采样组件</p></div>
             <span class="hint-inline" id="smc-state">检测中…</span>
           </div>
           <p class="hint">Mac 的温度/风扇受系统保护：点「启用」会弹出系统管理员密码框，安装一个只读采样组件
@@ -741,11 +775,8 @@
             <button type="button" class="button" id="btn-smc-interval">应用采样间隔</button>
           </div>
           <p class="hint">修改间隔会对已启用的采样器重跑一次安装（弹一次管理员密码框）；未启用时先保存，下次启用即生效。屏上温度/风扇的更新节奏 ≈ 该间隔 + 至多 6 秒下发延迟。</p>
-          <div class="section-rule" role="separator"></div>
-          <div class="panel-head compact"><h3>外观</h3></div>
-          <button type="button" class="button wide" id="color-mode-btn">外观：跟随系统（点击切换）</button>
-          <p class="hint">预设与画廊会自动校验文字对比度与卡片边界，不合格的组合无法保存。</p>
         </section>
+        </div>
       </div>    </section>
   </main>
 </div>
