@@ -32,7 +32,7 @@ const themePresets = {
 // 画廊主题的 card 填充必须对 bg 保持 ≥1.5:1（profile.validate_profile 的
 // 硬门槛，按 RGB565 上屏值核算）。这些值就是照该门槛解出来的：低于它们
 // 「精选主题」会保存失败——曾经 7 套全都不达标，等于整个主题画廊是坏的。
-// 主题库（任务视图 → 主题库）的卡片清单在 galleryThemes 定义之后初始化
+// 主题库（屏幕编辑 → 主题库）的卡片清单在 galleryThemes 定义之后初始化
 // （见 themeLibrary），避免 const 初始化前读取的 TDZ 崩溃。
 let draft = null, saved = null, live = {tasks:[],telemetry:{},device:'等待设备'};
 let selected = 0, dirty = false, dragPage = -1, dragWidget = -1, toastTimer = null;
@@ -287,7 +287,7 @@ const galleryThemes = {
 function galleryColors(key){
   return galleryThemes[key] ? galleryThemes[key].colors : themePresets['深蓝科技'];
 }
-// 主题库（任务视图 → 主题库）：预设 + 精选画廊的合一清单。
+// 主题库（屏幕编辑 → 主题库）：预设 + 精选画廊的合一清单。
 // 必须在 galleryThemes 之后初始化（galleryColors 会读它）。
 const themeLibrary = [
   {key:'preset-实机校准', name:'实机校准·深蓝灰', colors:themePresets['实机校准·深蓝灰'], opa:100, bright:62},
@@ -399,7 +399,12 @@ function markDirty() {
   dirty = true;
   localStorage.setItem('workbuddy-draft', JSON.stringify({base:saved?.version,draft}));
   renderSyncState();
-  if(currentView==='settings')renderPages();
+  if(currentView==='tasks'&&taskTab==='pages'){
+    renderPages();renderPalette();renderInspector();
+    renderPageSelect();renderTaskPages();renderTaskPreview();
+  }else if(currentView==='tasks'&&taskTab==='look'){
+    updateQuantNote();renderTaskPreview();
+  }
 }
 function current() { return draft.pages[selected] || draft.pages[0]; }
 function uniqueId(prefix) { return `${prefix}${Date.now().toString(36).slice(-6)}${Math.random().toString(36).slice(2,5)}`.slice(0,16); }
@@ -409,26 +414,26 @@ function reorder(list, from, to) {
 }
 /* ================= 命令面板（优化#6）与键盘快捷键（优化#5） ================= */
 function commandDefs(){
-  const views=[['overview','概览'],['tasks','任务视图'],['saver','息屏显示'],
+  const views=[['overview','概览'],['tasks','屏幕编辑'],['saver','息屏显示'],
                ['extras','其他视图'],['history','历史记录'],['settings','设置']];
   const cmds=views.map(([id,name],i)=>({label:`打开：${name}`,key:String(i+1),run:()=>switchView(id)}));
   cmds.push(
-    {label:'保存配置',key:'S',run:()=>save().catch(err=>notice(err.message,true))},
-    {label:'同步到设备',run:async()=>{try{if(dirty)await save();await request('/api/sync',{});logHist('sync','已请求同步到设备');notice('已请求同步，等待设备应用回执');poll()}catch(e){notice(e.message,true)}}},
+    {label:'保存草稿',key:'S',run:()=>save().catch(err=>notice(err.message,true))},
+    {label:'应用到设备',run:()=>applyToDevice()},
     {label:'刷新数据',key:'R',run:()=>{poll();notice('已刷新')}},
     {label:'导出诊断包',run:()=>downloadFile('/api/diagnose','workbuddy-diagnose.zip').then(()=>{logHist('diag','诊断包已导出');notice('诊断包已开始下载')}).catch(e=>notice(e.message,true))},
     {label:'切换深浅外观',run:()=>$('color-mode-btn').click()},
     {label:'上传背景图（其他视图）',run:()=>{switchView('extras');$('bgimg-file').click()}},
     {label:'导出配置 JSON',run:()=>$('btn-export').click()},
     {label:'撤销上一步配置（Cmd/Ctrl+Z）',run:()=>undoChange()},
-    {label:'任务视图：多窗格预览',run:()=>{switchView('tasks');switchTaskTab('multi')}},
+    {label:'屏幕编辑：多窗格预览',run:()=>{switchView('tasks');switchTaskTab('multi')}},
     {label:'查看键盘快捷键',key:'?',run:()=>toggleKbd(true)}
   );
   // 优化#17：索引当前配置——页面/提醒/应用都能搜到并直达（或直接执行）
   if(draft){
     (draft.pages||[]).forEach((page,i)=>{
       cmds.push({label:`编辑页面：${i+1} ${page.title}`,run:()=>{
-        openSettings('pages');selected=i;renderSettings()}});
+        selected=i;previewPage=i;openSettings('pages');renderTaskView()}});
     });
     (draft.reminders||[]).slice(0,8).forEach(r=>{
       if(!r.enabled)return;
@@ -694,16 +699,16 @@ function manualOrder(){
     notice('已切换为手动排序（自动按工具分页已关闭），保存后生效');
   }
 }
-/* 任务视图「当前页面组合」的拖拽排序 */
+/* 屏幕编辑「当前页面组合」的拖拽排序 */
 let dragTaskPage = -1;
 
-/* ================= 任务视图：布局预设 =================
+/* ================= 屏幕编辑：布局预设 =================
    这里的「四种布局」= 四套真实的页面组合（LAYOUT_PRESETS），点选即写入
    draft.pages，和设备上看到的一页一页完全对应。
 
    原来这里存着一整套 tv.* 参数（任务补充 / 任务数值 / 其他任务 / 空闲时显示 /
    场景 / 氛围开关 / 显示内容 / 内容组合 / 显示指标…）。它们只喂浏览器里的
-   效果图，从不进 profile、也从不经 CFG 下发——用户在「任务视图」调半天，
+   效果图，从不进 profile、也从不经 CFG 下发——用户在「屏幕编辑」调半天，
    小屏一点变化都没有。整块已移除：能改小屏的控件才留在界面上。 */
 const TV_KEY = 'workbuddy-taskview';
 const tvDefaults = { layout:'focus' };
@@ -1177,7 +1182,9 @@ function devHwPage(screen, ctx){
     devLabel(card, 12, 18, C.w-24, title, 20, 'dev-dim');
     let value = '--', note = '数据不可用', pct = 0, color = ctx.accent;
     if(ok){
-      if(i===0){ value = `${t.cpu===undefined?'--':t.cpu}%`; note = '即时负载'; pct = Number(t.cpu)||0; }
+      if(i===0){ value = `${t.cpu===undefined?'--':t.cpu}%`;
+                 note = t.cpufreq ? `基频 ${(Number(t.cpufreq)/1000).toFixed(1)}G` : '即时负载';
+                 pct = Number(t.cpu)||0; }
       if(i===1){ value = `${t.mem===undefined?'--':t.mem}%`;
                  note = t.memtotal ? `${t.memused}/${t.memtotal} GB` : '即时负载'; pct = Number(t.mem)||0; }
       if(i===2){ value = `${t.disk===undefined?'--':t.disk}%`;
@@ -1203,7 +1210,7 @@ function devHwPage(screen, ctx){
   const hwCols = [
     ['CPU', clean(t.cputemp) ? Math.round(Number(t.cputemp))+'℃' : '--'],
     ['GPU', clean(t.gputemp) ? Math.round(Number(t.gputemp))+'℃' : '--'],
-    ['风扇', clean(t.fan) ? String(Math.round(Number(t.fan))) : '--'],
+    ['风扇', clean(t.fan) ? Math.round(Number(t.fan))+'rpm' : '--'],
   ];
   hwCols.forEach((c,i)=>{
     devLabel(tc, 16+i*100, 12, 88, ok?c[0]:'', 20, 'dev-dim');
@@ -1380,7 +1387,7 @@ function renderPageSelect(){
   if(previewPage >= pages.length) previewPage = 0;
   sel.value = String(previewPage);
 }
-/* 任务视图右栏：列出真实页面组合，让用户看见具体下发什么。 */
+/* 屏幕编辑右栏：列出真实页面组合，让用户看见具体下发什么。 */
 function renderTaskPages(){
   const root = $('task-pages');
   if(!root) return;
@@ -1506,15 +1513,18 @@ const dialDefs = [
   {v:3, name:'诗词短句', desc:'名句伴眠·可轮换'},
   {v:4, name:'相册轮播', desc:'图片轮换'}
 ];
-let sv = {mode:'theme', dial:0, hideLock:false};
+let sv = {mode:'theme', dial:0, hideLock:false, changed:false};
+let saverInitialized = false;
 function loadSV(){
   try{ sv = {...sv, ...JSON.parse(localStorage.getItem('workbuddy-saver')||'{}')}; }catch(e){}
 }
 function saveSVLocal(){ localStorage.setItem('workbuddy-saver', JSON.stringify(sv)); }
 function renderDials(){
   const root=$('saver-cards'); root.replaceChildren();
+  const savedDial=Number(saved?.theme?.saver??draft.theme.saver??0);
+  const applied=live.applied_version!=null&&Number(live.applied_version)===Number(saved?.version);
   dialDefs.forEach(d=>{
-    const cell=el('button','dial-card'+(sv.dial===d.v?' active':''));
+    const cell=el('button','dial-card'+(sv.dial===d.v?' active':'')+(savedDial===d.v?' saved':''));
     cell.type='button';
     const prev=el('div','dial-prev');
     prev.append(el('span','dial-time',clock()));
@@ -1529,7 +1539,8 @@ function renderDials(){
     if(d.v===3)prev.append(el('span','dial-poem',
       (draft.theme.savermsg||'').trim().slice(0,6)||'（未设置）'));
     cell.append(prev, el('span','dial-name',d.name), el('small','dial-desc',d.desc));
-    cell.onclick=()=>{sv.dial=d.v;sv.mode='theme';saveSVLocal();renderSaverView()};
+    if(savedDial===d.v)cell.append(el('span','dial-badge',applied?'设备当前':'已保存'));
+    cell.onclick=()=>{sv.dial=d.v;sv.mode='theme';sv.changed=true;saveSVLocal();renderSaverView()};
     root.append(cell);
   });
 }
@@ -1589,7 +1600,7 @@ function svStage(style,msg,always,host){
 }
 function renderSaverPreview(){
   const always = sv.mode==='always';
-  const style = always ? 0 : (Number(draft.theme.saver)||0);
+  const style = always ? 0 : (Number(sv.dial)||0);
   const host=$('sv-screen');
   if(host){
     try{ svStage(style, draft.theme.savermsg, always, host) }
@@ -1598,8 +1609,8 @@ function renderSaverPreview(){
   }
   if($('sv-mode-note')){
     $('sv-mode-note').textContent = always
-      ? '当前使用：常亮（不息屏）'
-      : `当前使用：${dialDefs[style] ? dialDefs[style].name : '时序'}`;
+      ? '草稿预览：常亮（不息屏）'
+      : `草稿预览：${dialDefs[style] ? dialDefs[style].name : '时序'}`;
   }
   if($('sv-quote-note')){
     const msg=(draft.theme.savermsg||'').trim();
@@ -1627,8 +1638,11 @@ function renderSaverView(){
   $('saver-mode').value=sv.mode;
   $('saver-hide-lock').checked=!!sv.hideLock;
   // 屏保增强控件：按样式联动显隐 + 回填当前值
-  const dial=Number(draft.theme.saver||0);
+  const dial=Number(sv.dial||0);
   if($('saver-extra')) $('saver-extra').hidden=!(dial===4||dial===3);
+  document.querySelectorAll('.album-only').forEach(node=>node.hidden=dial!==4);
+  document.querySelectorAll('.poem-only').forEach(node=>node.hidden=dial!==3);
+  if($('saver-extra-title'))$('saver-extra-title').textContent=dial===4?'相册轮播设置':'诗句轮换设置';
   if($('album-mgr')) $('album-mgr').hidden=dial!==4;
   if($('poem-lib')) $('poem-lib').hidden=dial!==3;
   if($('sv-int')) $('sv-int').value=String(draft.theme.svint||60);
@@ -1643,6 +1657,12 @@ function renderSaverView(){
   $('saver-idle').value=draft.theme.idledim??60;
   $('saver-idle-val').textContent=(draft.theme.idledim??60)==0?'关闭':(draft.theme.idledim+' 秒');
   $('saver-msg').value=draft.theme.savermsg||'';
+  const savedDial=Number(saved?.theme?.saver??draft.theme.saver??0);
+  const chosen=sv.mode==='always'?'常亮':(dialDefs[dial]?.name||'时序');
+  const savedName=(saved?.theme?.idledim===0)?'常亮':(dialDefs[savedDial]?.name||'时序');
+  $('saver-state').textContent=(chosen===savedName&&!sv.changed)
+    ? `当前草稿与已保存设置一致：${savedName}`
+    : `尚未应用：${chosen}；设备已保存设置为 ${savedName}`;
 }
 async function applySaver(){
   try{
@@ -1656,20 +1676,21 @@ async function applySaver(){
     await save(true);
     await request('/api/sync',{});
     saveSVLocal();
+    sv.changed=false;
     logHist('saver', `息屏设置已保存（${sv.mode==='always'?'常亮':dialDefs[sv.dial].name}）`);
     notice('息屏设置已保存并同步到设备');
-    $('saver-state').textContent='已保存。设备应用后息屏画面即生效。';
+    $('saver-state').textContent='已提交，等待设备回报应用结果。';
     poll();
   }catch(err){ notice(err.message, true) }
 }
 
-/* ================= 页面编排（设置） ================= */
+/* ================= 屏幕编辑 · 页面编排 ================= */
 function renderPages() {
   const root=$('pages-list'); if(!root)return; root.replaceChildren();
   draft.pages.forEach((page,i) => {
     const b=el('button',`page-item${i===selected?' active':''}`); b.draggable=true;
     b.append(el('span','page-grip','⠿'),el('span','page-number',String(i+1).padStart(2,'0')),el('strong','',page.title+(i===0?' · 首页':'')),el('small','',`${page.widgets.length} 组件`));
-    b.onclick=()=>{selected=i;renderSettings()};
+    b.onclick=()=>{selected=i;previewPage=i;renderTaskView()};
     b.ondragstart=()=>{dragPage=i;b.classList.add('dragging')};
     b.ondragend=()=>{dragPage=-1;b.classList.remove('dragging')};
     b.ondragover=e=>e.preventDefault();
@@ -1681,11 +1702,24 @@ function renderPalette() {
   const root=$('widget-palette');root.replaceChildren();
   const page=current();
   const used=page.widgets.reduce((n,w)=>n+widgets[w][2],0);
+  const fullWidget=page.widgets.find(key=>widgets[key]?.[2]===4);
   Object.entries(widgets).forEach(([key,[name,icon,units]])=>{
     const b=el('button','palette-item');b.append(el('span','palette-symbol',icon),document.createTextNode(name));
-    b.disabled=page.widgets.includes(key)||used+units>4||(units===4&&used>0)||(used===4);
-    b.onclick=()=>{current().widgets.push(key);markDirty()}; root.append(b);
+    let reason='', replaces=false;
+    if(page.widgets.includes(key))reason='已在当前页面';
+    else if(fullWidget){replaces=true;b.title=`点击后替换全屏组件「${widgets[fullWidget][0]}」`}
+    else if(units===4&&used>0){replaces=true;b.title='点击后替换本页现有组件'}
+    else if(used+units>4)reason=`还需要 ${units} 个槽位，当前只剩 ${4-used} 个`;
+    b.disabled=!!reason;
+    if(reason){b.title=reason;b.setAttribute('aria-description',reason)}
+    b.onclick=()=>{if(replaces)current().widgets=[key];else current().widgets.push(key);markDirty()}; root.append(b);
   });
+  const note=$('widget-palette-note');
+  if(note){
+    note.textContent=fullWidget
+      ? `「${widgets[fullWidget][0]}」占满整页；选择其他组件会直接替换它。`
+      : `当前已使用 ${used}/4 个槽位；悬停灰色组件可查看不能添加的原因。`;
+  }
 }
 function renderInspector() {
   const page=current();
@@ -1720,12 +1754,9 @@ function updateQuantNote(){
   const keys=['bg','grad','card','card_edge','accent','text','sub'];
   const rows=keys.map(k=>({k, c:panelColor(draft.theme[k])}));
   const worst=rows.reduce((a,b)=>b.c.drift>a.c.drift?b:a, rows[0]);
-  const cal=panelSpec().calibration||{};
-  el.textContent = `屏幕色彩管线：${panelSpec().pixelFormat} 量化，标定第 ${cal.cell||'—'} 格`
-    + `（${String(cal.rgbOrder||'RGB')}${cal.lvglFlushByteSwap?' + flush 换字节':''}`
-    + `${cal.panelInvert?' + 硬件反相':''}）。最大量化偏移：`
-    + `${COLOR_FIELD_NAMES[worst.k]||worst.k} Δ${worst.c.drift}`
-    + `（#${worst.c.req} → #${worst.c.hex}）`;
+  el.textContent = `实机色彩预览已开启。当前偏移最大的是${COLOR_FIELD_NAMES[worst.k]||worst.k}`
+    + `：#${worst.c.req} → 屏幕 #${worst.c.hex}`
+    + `；驱动标定参数可在下方“高级 · 屏幕标定”查看。`;
   el.className = worst.c.drift>=8 ? 'hint quant-warn' : 'hint';
 }
 const COLOR_FIELD_NAMES={bg:'背景',grad:'渐变',card:'卡片',card_edge:'描边',accent:'强调',text:'文字',sub:'次要文字'};
@@ -1826,7 +1857,6 @@ async function petRefresh(){
 }
 
 function renderSettings(){
-  renderPages();renderPalette();renderInspector();
   renderMusic();renderMusicNow();
   renderWeatherTab(); petRefresh(); renderPetTab();
   switchSettingsTab(settingsTab);
@@ -2051,36 +2081,34 @@ function renderOverview(){
     root.replaceChildren(el('div','empty',(live.done||[]).length
       ? '当前没有进行中的会话；刚完成的在上一行的「刚完成」里。'
       : '暂无活跃会话。连接 Claude Code、Codex、ZCode 或 WorkBuddy 后将在这里显示。'));
-    return;
-  }
-  if(!shown.length){
+  }else if(!shown.length){
     root.replaceChildren(el('div','empty','当前筛选下没有会话。'));
-    return;
+  }else{
+    // 优化#1：按来源（claude/codex/zcode/workbuddy）分窗格的多窗格监控，
+    // 一眼分清每个 agent 在干什么，不用在混合列表里找。
+    // 复用持久 grid + keyed reconcile，避免每轮 replaceChildren 整屏闪烁。
+    let grid=root.querySelector('.agent-grid');
+    if(!grid){ root.replaceChildren(); grid=el('div','agent-grid'); root.append(grid); }
+    const groups=new Map();
+    shown.forEach(task=>{const k=task.tool||'其他';if(!groups.has(k))groups.set(k,[]);groups.get(k).push(task)});
+    reconcile(grid, [...groups.keys()],
+      tool=>'pane:'+tool,
+      tool=>{ const pane=el('div','agent-pane');
+              const head=el('div','agent-pane-head');
+              head.append(el('strong','',tool),el('span','agent-pane-count',''));
+              const items=el('div','agent-pane-items');
+              pane.append(head, items);
+              pane.__head=head; pane.__items=items;
+              return pane; },
+      (pane,tool)=>{
+        const list=groups.get(tool)||[];
+        pane.__head.querySelector('.agent-pane-count').textContent=`${list.length} 项`;
+        reconcile(pane.__items, list,
+          task=>'t:'+task.id,
+          task=>buildTaskItem(task),
+          (item,task)=>updateTaskItem(item, task));
+      });
   }
-  // 优化#1：按来源（claude/codex/zcode/workbuddy）分窗格的多窗格监控，
-  // 一眼分清每个 agent 在干什么，不用在混合列表里找。
-  // 复用持久 grid + keyed reconcile，避免每轮 replaceChildren 整屏闪烁。
-  let grid=root.querySelector('.agent-grid');
-  if(!grid){ root.replaceChildren(); grid=el('div','agent-grid'); root.append(grid); }
-  const groups=new Map();
-  shown.forEach(task=>{const k=task.tool||'其他';if(!groups.has(k))groups.set(k,[]);groups.get(k).push(task)});
-  reconcile(grid, [...groups.keys()],
-    tool=>'pane:'+tool,
-    tool=>{ const pane=el('div','agent-pane');
-            const head=el('div','agent-pane-head');
-            head.append(el('strong','',tool),el('span','agent-pane-count',''));
-            const items=el('div','agent-pane-items');
-            pane.append(head, items);
-            pane.__head=head; pane.__items=items;
-            return pane; },
-    (pane,tool)=>{
-      const list=groups.get(tool)||[];
-      pane.__head.querySelector('.agent-pane-count').textContent=`${list.length} 项`;
-      reconcile(pane.__items, list,
-        task=>'t:'+task.id,
-        task=>buildTaskItem(task),
-        (item,task)=>updateTaskItem(item, task));
-    });
   $('ov-cpu').textContent=t.cpu===undefined?'—':`${t.cpu}%`;
   $('ov-mem').textContent=t.mem===undefined?'—':`${t.mem}%`;
   $('ov-mem-sub').textContent=t.memtotal?`${t.memused} / ${t.memtotal} GB`:'数据不可用';
@@ -2121,6 +2149,7 @@ function renderTools(){
     root.replaceChildren(el('div','empty','没有检测到 AI 工具进程。'));
     return;
   }
+  if(root.querySelector('.empty'))root.replaceChildren();
   note.textContent=`${tools.filter(t=>t.running).length}/${tools.length} 在运行`;
   // keyed reconcile：工具进程每轮只在 running 状态变化时改样式，不重建整片 chips。
   reconcile(root, tools,
@@ -2193,14 +2222,31 @@ function drawUsageChart(){
   ctx.fillText(`峰值 ${maxK}k`,w-2,10);
 }
 function renderSyncState(){
-  if(!$('ov-sync-state'))return;
-  $('ov-sync-state').textContent=dirty?'未保存草稿':(live.profile_status||'—');
+  const status=dirty?'草稿未应用':(live.profile_status||'—');
+  if($('ov-sync-state'))$('ov-sync-state').textContent=status;
+  const global=$('global-config-state'), bar=$('apply-bar'), dot=$('apply-dot'), button=$('global-apply-btn');
+  if(!global||!bar||!dot||!button)return;
+  const connected=isConnected();
+  let text='', tone='idle';
+  if(dirty){text='草稿已保存在本机，尚未应用到设备';tone='draft'}
+  else if(!connected){text=`设备离线 · 已保存配置 v${saved?.version||'—'}`;tone='offline'}
+  else if(live.profile_status==='同步失败'){
+    text=`应用失败${live.profile_error?'：'+live.profile_error:''}`;tone='error';
+  }else if(live.profile_status==='传输中'||live.profile_status==='待同步'||live.profile_status==='等待设备握手'){
+    text=`${live.profile_status} · 配置 v${saved?.version||'—'}`;tone='pending';
+  }else if(live.applied_version!=null){
+    text=`设备已应用 v${live.applied_version}`;tone='ok';
+  }else{text=`设备已连接 · 配置 v${saved?.version||'—'} 尚未应用`;tone='pending'}
+  global.textContent=text;
+  bar.dataset.tone=tone;
+  button.disabled=!connected||live.profile_status==='传输中';
+  button.textContent=live.profile_status==='传输中'?'正在应用…':'应用到设备';
 }
 function renderConnState(){
   const connected=isConnected();
   $('conn-dot').classList.toggle('on',connected);
   $('conn-text').textContent=connected?'小屏已连接':'小屏未连接';
-  $('ver-text').textContent=`版本 v${saved?.version||'—'} · LVGL 8.3`;
+  $('ver-text').textContent=`配置 v${saved?.version||'—'} · LVGL 8.3`;
 }
 
 /* ================= 概览 · 刚完成 =================
@@ -2295,8 +2341,16 @@ function renderMusicNow(){
   if(!pill||!now) return;
   const info=live.music||{};
   const data=info.now||{};
-  if(info.supported===false){ pill.textContent='不支持'; now.textContent='当前系统读不到播放信息。'; return }
-  if(!data.title){ pill.textContent='无播放'; now.textContent='系统里没有正在播放的软件。'; return }
+  if(info.supported===false){
+    pill.textContent='控制可用';
+    now.textContent='播放控制正常；为保证上位机稳定，暂不读取曲名与进度。';
+    return
+  }
+  if(!data.title){
+    pill.textContent='等待曲目';
+    now.textContent='播放器已打开时，请先选一首歌；之后触屏可播放暂停和切歌。';
+    return
+  }
   pill.textContent=data.playing?'播放中':'已暂停';
   const meta=[data.artist,data.album].filter(Boolean).join(' · ');
   const pos=data.position!==undefined&&data.duration
@@ -2305,19 +2359,16 @@ function renderMusicNow(){
 }
 
 /* ================= 设置页内部标签 =================
-   页面编排 / 主题与显示 / 音乐 / 系统——每个功能域一个页签，
-   新增设置项=新增一个页签，不再堆成一根长滚动页。 */
+   屏幕页面与显示参数已合并到「屏幕编辑」；这里只保留设备能力设置。 */
 const SETTINGS_TABS = {
-  pages:  ['stab-pages', 'spane-pages'],
-  look:   ['stab-look',  'spane-look'],
   music:  ['stab-music', 'spane-music'],
   weather:['stab-weather','spane-weather'],
   pet:   ['stab-pet',   'spane-pet'],
   system: ['stab-system','spane-system'],
 };
-let settingsTab = 'pages';
+let settingsTab = 'music';
 function switchSettingsTab(which){
-  if(!SETTINGS_TABS[which]) which='pages';
+  if(!SETTINGS_TABS[which]) which='music';
   settingsTab=which;
   try{ localStorage.setItem('workbuddy-settings-tab',which); }catch(e){}
   Object.entries(SETTINGS_TABS).forEach(([key,[tabId,paneId]])=>{
@@ -2327,8 +2378,13 @@ function switchSettingsTab(which){
     if(pane) pane.hidden=!on;
   });
 }
-/* 带落点的设置入口（任务视图「详细编排」→页面、主题选项→主题与显示…） */
+/* 兼容旧入口：页面与显示参数落到屏幕编辑，其余落到设置。 */
 function openSettings(tab){
+  if(tab==='pages'||tab==='look'){
+    switchView('tasks');
+    switchTaskTab(tab);
+    return;
+  }
   switchView('settings');
   if(tab) switchSettingsTab(tab);
 }
@@ -2361,7 +2417,9 @@ function switchView(name){
 function renderTaskView(){
   if($('autopage-toggle')) $('autopage-toggle').checked=!!Number(draft.autopage||0);
   renderPageSelect(); renderTaskPages(); renderTaskPreview(); renderThemeGrid();
-  if(!$('pane-multi').hidden)renderMultiPane();
+  if(taskTab==='pages'){renderPages();renderPalette();renderInspector()}
+  if(taskTab==='look')renderInspector();
+  if(taskTab==='multi')renderMultiPane();
 }
 
 /* ================= 轮询与保存 ================= */
@@ -2389,7 +2447,18 @@ async function poll(){
 /* 状态吸收：/api/status 轮询与 /api/stream SSE（优化#3）共用的落地逻辑 */
 function absorb(next){
   live=next;
-  if(!draft){saved=next.profile;const local=JSON.parse(localStorage.getItem('workbuddy-draft')||'null');draft=local?.base===saved.version?local.draft:structuredClone(saved);dirty=!!local&&local.base===saved.version}
+  const firstProfile=!draft;
+  if(firstProfile){saved=next.profile;const local=JSON.parse(localStorage.getItem('workbuddy-draft')||'null');draft=local?.base===saved.version?local.draft:structuredClone(saved);dirty=!!local&&local.base===saved.version}
+  if(firstProfile&&!saverInitialized){
+    sv.dial=Number(draft.theme?.saver||0);
+    sv.mode=Number(draft.theme?.idledim??60)===0?'always':'theme';
+    sv.changed=false;
+    saverInitialized=true;
+    saveSVLocal();
+  }
+  // 页面若从 localStorage 直接恢复到「设置」，switchView() 当时尚无 draft，
+  // 首次状态到达后必须补一次完整渲染，否则音乐列表等字段会一直显示“—”。
+  if(firstProfile&&currentView==='settings')renderSettings();
   notifyTaskTransitions(live.tasks||[]);
   sampleUsage();
   if(currentView==='saver'&&!$('btn-saver-detail').dataset.init){renderSaverView();$('btn-saver-detail').dataset.init='1'}
@@ -2452,11 +2521,35 @@ async function save(silent=false){
   saved=result.profile;draft=structuredClone(saved);dirty=false;localStorage.removeItem('workbuddy-draft');
   renderSyncState();renderConnState();
   if(currentView==='settings')renderSettings();
+  if(currentView==='tasks')renderTaskView();
   if(!silent)notice('配置已保存，等待同步到设备');
   logHist('save', `配置 v${result.profile.version} 已保存`);
   return result;
 }
+async function applyToDevice(){
+  try{
+    if(!isConnected()){
+      if(dirty)await save(true);
+      notice('设备当前离线；草稿已经保存，连接后再应用。',true);
+      renderSyncState();
+      return;
+    }
+    if(dirty)await save(true);
+    await request('/api/sync',{});
+    logHist('sync',`已请求应用配置 v${saved?.version||'—'}`);
+    notice('已提交到设备，等待设备应用回执');
+    await poll();
+  }catch(e){notice(e.message,true)}
+}
 function bind(){
+  // 页面编排与主题显示共用屏幕预览，因此把两块编辑 DOM 并入屏幕编辑工作区。
+  // 保留原 id，旧书签和测试选择器仍可继续使用。
+  const taskMain=document.querySelector('.task-main');
+  ['spane-pages','spane-look'].forEach(id=>{
+    const pane=$(id);
+    if(pane&&taskMain&&pane.parentElement!==taskMain)taskMain.append(pane);
+    if(pane){pane.hidden=true;pane.classList.remove('active')}
+  });
   // 视图路由
   document.querySelectorAll('.nav-item').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   const lastView=localStorage.getItem('workbuddy-view');
@@ -2493,12 +2586,11 @@ function bind(){
     btn.dataset.loading='true';
     try{return await fn(...args)}finally{delete btn.dataset.loading}
   };
+  $('global-apply-btn').onclick=pending($('global-apply-btn'),applyToDevice);
 
   // ---- 概览 ----
   $('ov-save-btn').onclick=pending($('ov-save-btn'),async()=>{try{await save()}catch(e){notice(e.message,true)}});
-  $('ov-sync-btn').onclick=pending($('ov-sync-btn'),async()=>{
-    try{if(dirty)await save();await request('/api/sync',{});logHist('sync','已请求同步到设备');notice('已请求同步，等待设备应用回执');poll()}
-    catch(e){notice(e.message,true)}});
+  $('ov-sync-btn').onclick=pending($('ov-sync-btn'),applyToDevice);
   $('ov-act-tasks').onclick=()=>switchView('tasks');
   $('ov-act-saver').onclick=()=>switchView('saver');
   $('ov-act-bg').onclick=()=>switchView('extras');
@@ -2506,7 +2598,7 @@ function bind(){
     try{await downloadFile('/api/diagnose','workbuddy-diagnose.zip');logHist('diag','诊断包已导出');notice('诊断包已开始下载')}
     catch(e){notice(e.message,true)}});
 
-  // ---- 任务视图 ----
+  // ---- 屏幕编辑 ----
   if(!LAYOUT_PRESETS[tv.layout]) tv.layout='focus';
   const markLayoutButtons=()=>{
     document.querySelectorAll('.layout-btn').forEach(b=>{
@@ -2542,9 +2634,11 @@ function bind(){
     notice('已恢复默认页面组合，保存并同步后生效');
   };
   $('tab-layouts').onclick=()=>switchTaskTab('layouts');
+  $('tab-pages').onclick=()=>switchTaskTab('pages');
   $('tab-themes').onclick=()=>switchTaskTab('themes');
+  $('tab-look').onclick=()=>switchTaskTab('look');
   $('tab-multi').onclick=()=>switchTaskTab('multi');
-  $('btn-multi-edit').onclick=()=>switchView('settings');
+  $('btn-multi-edit').onclick=()=>switchTaskTab('pages');
   $('tab-preset-themes').onclick=()=>{themeTab='preset';selectedThemeKey=null;
     $('tab-preset-themes').classList.add('active');$('tab-my-themes').classList.remove('active');
     $('tab-preset-themes').setAttribute('aria-selected','true');$('tab-my-themes').setAttribute('aria-selected','false');
@@ -2553,10 +2647,10 @@ function bind(){
     $('tab-my-themes').classList.add('active');$('tab-preset-themes').classList.remove('active');
     $('tab-my-themes').setAttribute('aria-selected','true');$('tab-preset-themes').setAttribute('aria-selected','false');
     renderThemeGrid()};
-  $('btn-theme-options').onclick=()=>openSettings('look');
+  $('btn-theme-options').onclick=()=>switchTaskTab('look');
   $('btn-apply-theme').onclick=pending($('btn-apply-theme'),applySelectedTheme);
   $('btn-source-jump').onclick=()=>switchView('overview');
-  $('btn-deep-edit').onclick=()=>openSettings('pages');
+  $('btn-deep-edit').onclick=()=>switchTaskTab('pages');
   // 实拍：请求后轮询 meta（snap_at 翻新即完成），最长等 25s
   $('btn-snap').onclick=pending($('btn-snap'),async()=>{
     try{
@@ -2590,7 +2684,7 @@ function bind(){
 
   // ---- 息屏 ----
   loadSV();
-  $('saver-mode').onchange=e=>{sv.mode=e.target.value;saveSVLocal();renderSaverView()};
+  $('saver-mode').onchange=e=>{sv.mode=e.target.value;sv.changed=true;saveSVLocal();renderSaverView()};
   $('saver-hide-lock').onchange=e=>{sv.hideLock=e.target.checked;saveSVLocal()};
   $('btn-saver-detail').onclick=()=>{
     const d=$('btn-saver-detail');
@@ -2666,67 +2760,7 @@ function bind(){
   $('sv-int').onchange=e=>{draft.theme.svint=Number(e.target.value);markDirty()};
   $('sv-fx').onchange=e=>{draft.theme.svfx=Number(e.target.value);markDirty()};
 
-  // ---- 屏保增强：相册轮播 / 诗句库 ----
-  $('album-file').onchange=async e=>{
-    const files=[...e.target.files||[]];
-    e.target.value='';
-    if(!files.length) return;
-    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
-    let slot=Number(draft.svalbum||0);
-    let okN=0;
-    notice(`开始上传 ${files.length} 张…`);
-    for(const file of files){
-      if(slot>=8){notice('相册最多 8 张',true);break}
-      slot+=1;
-      try{
-        const img=await new Promise((ok2,bad)=>{
-          const i=new Image();
-          i.onload=()=>ok2(i);
-          i.onerror=()=>bad(new Error('图片解码失败'));
-          i.src=URL.createObjectURL(file);
-        });
-        const canvas=document.createElement('canvas');
-        canvas.width=320; canvas.height=480;
-        const c2=canvas.getContext('2d');
-        const scale=Math.max(320/img.width,480/img.height);
-        const w=img.width*scale,h=img.height*scale;
-        c2.drawImage(img,(320-w)/2,(480-h)/2,w,h);
-        const blob=await new Promise(ok2=>canvas.toBlob(ok2,'image/jpeg',0.72));
-        if(!blob || blob.size>120*1024){notice('图片压缩后仍超 120KB，换一张试试',true);continue}
-        const r=await fetch(`/api/bgimg?target=sv${slot}`,{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:await blob.arrayBuffer()});
-        const d2=await r.json();
-        if(!r.ok) throw new Error(d2.error||'上传失败');
-        okN+=1;
-        draft.svalbum=slot;
-      }catch(err){notice(`上传失败：${err.message}`,true)}
-    }
-    if(okN){
-      markDirty(); renderSaverView();
-      notice(`已上传 ${okN} 张到相册，样式选「相册轮播」并同步后生效`);
-    }
-  };
-  $('album-clear').onclick=async()=>{
-    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
-    for(let i=1;i<=8;i++){
-      try{ await fetch(`/api/bgimg-delete?target=sv${i}`,{method:'POST'}); }catch(err){}
-    }
-    draft.svalbum=0; markDirty(); renderSaverView();
-    notice('相册已清空');
-  };
-  $('poem-add').onclick=()=>{
-    const v=$('poem-new').value.trim();
-    if(!v) return;
-    draft.poems=draft.poems||[];
-    if(draft.poems.length>=10){notice('诗句库最多 10 条',true);return}
-    draft.poems.push(v);
-    $('poem-new').value='';
-    markDirty(); renderPoemList();
-    notice('已加入诗句库，保存并同步后小屏轮换显示');
-  };
-  $('poem-int').onchange=e=>{draft.theme.pint=Number(e.target.value);markDirty()};
-  $('sv-int').onchange=e=>{draft.theme.svint=Number(e.target.value);markDirty()};
-  $('sv-fx').onchange=e=>{draft.theme.svfx=Number(e.target.value);markDirty()};
-  $('btn-saver-cancel').onclick=()=>{sv.dial=draft.theme.saver??0;sv.mode='theme';saveSVLocal();renderSaverView();notice('已还原为当前配置的息屏设置')};
+  $('btn-saver-cancel').onclick=()=>{sv.dial=draft.theme.saver??0;sv.mode=(draft.theme.idledim??60)===0?'always':'theme';sv.changed=false;saveSVLocal();renderSaverView();notice('已还原为当前配置的息屏设置')};
 
   // ---- 页面编排 ----
   $('add-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);draft.pages.push({id:uniqueId('p'),title:'新页面',layout:'grid_2x2',widgets:['clock']});selected=draft.pages.length-1;markDirty()};
@@ -2809,7 +2843,7 @@ function bind(){
     list.push({name, colors, opa:draft.theme.card_opa});
     localStorage.setItem('workbuddy-mythemes',JSON.stringify(list));
     logHist('theme',`自定义主题「${name}」已保存`);
-    notice(`已保存「${name}」，可在任务视图 → 主题库 → 自定义主题中应用`);
+    notice(`已保存「${name}」，可在屏幕编辑 → 主题库 → 自定义主题中应用`);
   };
 
   // ---- 其他视图 ----
@@ -2940,7 +2974,7 @@ function bind(){
     try{
       const result=await request('/api/music-play',{});
       notice(result.ok
-        ? `${result.app}${result.launched?' 已启动并开始播放':' 已下发播放'}`
+        ? `${result.app}${result.launched?' 已启动，已发送播放指令':' 已发送播放指令'}`
         : `没能播放：${result.reason||'系统里没有正在播放的软件'}`);
       poll();
     }catch(err){notice(err.message,true)}
@@ -3000,7 +3034,7 @@ function bind(){
   const bindSavePair=(saveId,syncId)=>{
     if(!$(saveId)||!$(syncId))return;
     $(saveId).onclick=pending($(saveId),async()=>{try{await save()}catch(e){notice(e.message,true)}});
-    $(syncId).onclick=pending($(syncId),async()=>{try{if(dirty)await save();await request('/api/sync',{});logHist('sync','已请求同步到设备');notice('已请求同步，等待设备应用回执');poll()}catch(e){notice(e.message,true)}});
+    $(syncId).onclick=pending($(syncId),applyToDevice);
   };
   bindSavePair('extras-save-btn','extras-sync-btn');
   bindSavePair('look-save-btn','look-sync-btn');
@@ -3010,7 +3044,7 @@ function bind(){
   // ---- 设置：保存/同步/维护 ----
   $('validate-btn').onclick=pending($('validate-btn'),async()=>{try{await request('/api/validate',draft);notice('配置检查通过，可以保存')}catch(e){notice(e.message,true)}});
   $('save-btn').onclick=pending($('save-btn'),async()=>{try{await save()}catch(e){notice(e.message,true)}});
-  $('sync-btn').onclick=pending($('sync-btn'),async()=>{try{if(dirty)await save();await request('/api/sync',{});logHist('sync','已请求同步到设备');notice('已请求同步，等待设备应用回执');poll()}catch(e){notice(e.message,true)}});
+  $('sync-btn').onclick=pending($('sync-btn'),applyToDevice);
   $('reset-btn').onclick=()=>{
     if(!confirm('恢复默认档案？当前未保存修改会丢失。'))return;
     draft={schema:1,version:saved.version,pages:defaultPages(),
@@ -3062,15 +3096,26 @@ function bind(){
   const smcState=$('smc-state');
   const smcRefresh=async()=>{
     try{const s=await(await fetch('/api/smc-status')).json();
+      smcState.className='hint-inline';
+      $('btn-smc-install').disabled=!!s.installed;
+      $('btn-smc-uninstall').disabled=!s.installed;
       if(s.installed&&s.fresh&&s.data){
         const parts=[];
         if(s.data.cputemp!=null)parts.push('CPU '+s.data.cputemp+'℃');
         if(s.data.gputemp!=null)parts.push('GPU '+s.data.gputemp+'℃');
         if(s.data.fan!=null)parts.push(s.data.fan+' RPM');
-        smcState.textContent='运行中 · '+(parts.join(' / ')||'采样中')+'（'+s.age+'s 前）';
-      }else if(s.installed){smcState.textContent='已安装但暂无数据';}
+        const cpu=Number(s.data.cputemp), gpu=Number(s.data.gputemp);
+        const invalid=(Number.isFinite(cpu)&&(cpu<0||cpu>115))||(Number.isFinite(gpu)&&(gpu<0||gpu>115));
+        const hot=(Number.isFinite(cpu)&&cpu>=95)||(Number.isFinite(gpu)&&gpu>=90);
+        const warm=(Number.isFinite(cpu)&&cpu>=85)||(Number.isFinite(gpu)&&gpu>=80);
+        const prefix=invalid?'数据异常':hot?'温度过高':warm?'温度偏高':'运行中';
+        if(invalid||hot)smcState.classList.add('status-error');
+        else if(warm)smcState.classList.add('status-warn');
+        smcState.textContent=prefix+' · '+(parts.join(' / ')||'采样中')+'（'+s.age+'s 前）';
+        smcState.title=invalid?'读数超出合理范围，请导出诊断包检查采样器。':hot?'温度已经进入高温区，请检查负载和散热。':'';
+      }else if(s.installed){smcState.textContent='已安装但暂无新鲜数据';smcState.classList.add('status-warn');}
       else{smcState.textContent='未启用（小屏隐藏该项）';}
-    }catch(e){smcState.textContent='状态未知';}
+    }catch(e){smcState.textContent='状态未知';smcState.className='hint-inline status-error';}
   };
   smcRefresh(); setInterval(smcRefresh,10000);
   $('btn-smc-install').onclick=pending($('btn-smc-install'),async()=>{
@@ -3093,7 +3138,9 @@ function bind(){
   });
   const smcIntervalSel=$('smc-interval');
   if(smcIntervalSel){
-    smcIntervalSel.value=String((draft.smc&&draft.smc.interval)||20);
+    // bind() 在首轮 /api/status 返回前执行，此时 draft 还是 null。
+    // 这里只设置安全默认值；poll/absorb 后的 render 会填入已保存配置。
+    smcIntervalSel.value=String((draft&&draft.smc&&draft.smc.interval)||20);
     $('btn-smc-interval').onclick=pending($('btn-smc-interval'),async()=>{
       const seconds=Number(smcIntervalSel.value)||20;
       notice('正在保存；若已启用采样器，请在弹出的密码框授权重装…');
@@ -3111,18 +3158,26 @@ function bind(){
     });
   }
 }
+let taskTab='layouts';
 function switchTaskTab(which){
-  const layouts=which==='layouts';
-  $('tab-layouts').classList.toggle('active',layouts);
-  $('tab-themes').classList.toggle('active',which==='themes');
-  $('tab-multi').classList.toggle('active',which==='multi');
-  $('tab-layouts').setAttribute('aria-selected',layouts?'true':'false');
-  $('tab-themes').setAttribute('aria-selected',which==='themes'?'true':'false');
-  $('tab-multi').setAttribute('aria-selected',which==='multi'?'true':'false');
-  $('pane-layouts').hidden=!layouts;
-  $('pane-themes').hidden=which!=='themes';
-  $('pane-multi').hidden=which!=='multi';
-  if(!layouts&&which==='themes')renderThemeGrid();
+  const tabs={
+    layouts:['tab-layouts','pane-layouts'],
+    pages:['tab-pages','spane-pages'],
+    themes:['tab-themes','pane-themes'],
+    look:['tab-look','spane-look'],
+    multi:['tab-multi','pane-multi'],
+  };
+  if(!tabs[which])which='layouts';
+  taskTab=which;
+  Object.entries(tabs).forEach(([key,[tabId,paneId]])=>{
+    const on=key===which, tab=$(tabId), pane=$(paneId);
+    if(tab){tab.classList.toggle('active',on);tab.setAttribute('aria-selected',on?'true':'false')}
+    if(pane)pane.hidden=!on;
+  });
+  if(!draft)return;
+  if(which==='pages'){renderPages();renderPalette();renderInspector()}
+  if(which==='themes')renderThemeGrid();
+  if(which==='look')renderInspector();
   if(which==='multi')renderMultiPane();
 }
 /* 多窗格：把配置里的页面逐页平铺。用的是同一个 devScreen()，

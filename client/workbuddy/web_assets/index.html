@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
-<meta name="description" content="Maozi Bridge 桌面状态中心：任务视图、息屏表盘、设备监控与主题定制。">
+<meta name="description" content="Maozi Bridge 桌面状态中心：屏幕编辑、息屏表盘、设备监控与主题定制。">
 <title>Maozi Bridge · 桌面状态中心</title>
 <link rel="stylesheet" href="/app.css">
 </head>
@@ -26,7 +26,7 @@
         <span class="nav-icon" aria-hidden="true">⌂</span>概览
       </button>
       <button type="button" class="nav-item" data-view="tasks">
-        <span class="nav-icon" aria-hidden="true">▤</span>任务视图
+        <span class="nav-icon" aria-hidden="true">▤</span>屏幕编辑
       </button>
       <button type="button" class="nav-item" data-view="saver">
         <span class="nav-icon" aria-hidden="true">☾</span>息屏显示
@@ -55,6 +55,13 @@
 
   <!-- ======== 主内容 ======== -->
   <main class="main">
+    <div class="apply-bar" id="apply-bar" aria-live="polite">
+      <div class="apply-state">
+        <i class="apply-dot" id="apply-dot" aria-hidden="true"></i>
+        <span id="global-config-state">正在读取配置状态…</span>
+      </div>
+      <button type="button" class="button primary" id="global-apply-btn">应用到设备</button>
+    </div>
 
     <!-- ========== 概览 ========== -->
     <section class="view active" id="view-overview" aria-labelledby="ov-heading">
@@ -71,8 +78,8 @@
             <div class="kv"><span>同步状态</span><strong id="ov-sync-state">—</strong></div>
           </div>
           <div class="btn-row">
-            <button type="button" class="button" id="ov-save-btn">保存配置</button>
-            <button type="button" class="button primary" id="ov-sync-btn">同步到设备</button>
+            <button type="button" class="button" id="ov-save-btn">保存草稿</button>
+            <button type="button" class="button primary" id="ov-sync-btn">应用到设备</button>
           </div>
         </section>
 
@@ -129,19 +136,19 @@
         <section class="panel ov-quick" aria-label="快捷操作">
           <div class="panel-head"><h2>快捷操作</h2></div>
           <div class="quick-grid">
-            <button type="button" class="button" id="ov-act-tasks">编排任务视图</button>
+            <button type="button" class="button" id="ov-act-tasks">编辑小屏页面</button>
             <button type="button" class="button" id="ov-act-bg">上传背景图</button>
             <button type="button" class="button" id="ov-act-saver">息屏设置</button>
             <button type="button" class="button" id="ov-act-diag">导出诊断包</button>
           </div>
-          <p class="hint">改动会先写入草稿，「同步到设备」后立即生效。</p>
+          <p class="hint">改动会先写入本机草稿，点击「应用到设备」后生效。</p>
         </section>
       </div>
     </section>
 
-    <!-- ========== 任务视图 ========== -->
+    <!-- ========== 屏幕编辑 ========== -->
     <section class="view" id="view-tasks" aria-labelledby="tasks-heading">
-      <h1 id="tasks-heading">任务视图</h1>
+      <h1 id="tasks-heading">屏幕编辑</h1>
       <div class="task-layout">
 
         <!-- 左：小屏画面（与固件同源渲染） -->
@@ -165,16 +172,20 @@
           <button type="button" class="button ghost wide" id="btn-snap">实拍设备屏幕</button>
           <img id="snapshot-img" class="snapshot-img" hidden alt="设备屏幕实拍">
           <button type="button" class="button ghost wide" id="btn-source-jump">监测来源 · 概览 ›</button>
-          <button type="button" class="button ghost wide" id="btn-deep-edit">详细编排 ›</button>
+          <button type="button" class="button ghost wide" id="btn-deep-edit">编辑当前页面 ›</button>
         </aside>
 
         <!-- 右：布局方案 / 主题库 -->
         <div class="task-main">
-          <div class="tabbar" role="tablist" aria-label="任务视图分区">
+          <div class="tabbar editor-tabbar" role="tablist" aria-label="屏幕编辑分区">
             <button type="button" class="tab active" id="tab-layouts" role="tab"
                     aria-selected="true" aria-controls="pane-layouts">布局方案</button>
+            <button type="button" class="tab" id="tab-pages" role="tab"
+                    aria-selected="false" aria-controls="spane-pages">页面编排</button>
             <button type="button" class="tab" id="tab-themes" role="tab"
                     aria-selected="false" aria-controls="pane-themes">主题库</button>
+            <button type="button" class="tab" id="tab-look" role="tab"
+                    aria-selected="false" aria-controls="spane-look">显示设置</button>
             <button type="button" class="tab" id="tab-multi" role="tab"
                     aria-selected="false" aria-controls="pane-multi">多窗格预览</button>
           </div>
@@ -205,7 +216,7 @@
             </div>
 
             <button type="button" class="button primary wide" id="btn-apply-task">应用到设备</button>
-            <p class="hint" id="apply-hint">「应用到设备」把上面的页面组合写入小屏并同步；逐组件编排在「设置 → 页面编排」。</p>
+            <p class="hint" id="apply-hint">「应用到设备」把上面的页面组合写入小屏；逐组件调整可直接切换到“页面编排”。</p>
           </div>
 
           <!-- 主题库 -->
@@ -233,7 +244,7 @@
             <p class="view-sub">把配置里的页面逐页平铺，每块都是该页在小屏上的真实样子（同一个渲染器）。点任一屏切到那一页。</p>
             <div class="multi-grid" id="multi-grid"></div>
             <div class="btn-row">
-              <button type="button" class="button ghost wide" id="btn-multi-edit">当前页面深度编辑 ›</button>
+              <button type="button" class="button ghost wide" id="btn-multi-edit">编辑当前页面 ›</button>
             </div>
           </div>
         </div>
@@ -256,14 +267,14 @@
               </select>
             </label>
             <label class="field toggle">
-              <input type="checkbox" id="saver-hide-lock">
-              <span>电脑锁屏时隐藏任务与计划内容</span>
+              <input type="checkbox" id="saver-hide-lock" disabled>
+              <span>电脑锁屏时隐藏任务与计划内容（规划中）</span>
             </label>
           </section>
 
           <section class="panel" aria-labelledby="saver-dials-heading">
             <div class="panel-head">
-              <h2 id="saver-dials-heading">原有表盘</h2>
+              <h2 id="saver-dials-heading">息屏样式</h2>
               <button type="button" class="linklike" id="btn-saver-detail">编辑表盘细节</button>
             </div>
             <div class="dial-cards" id="saver-cards"></div>
@@ -288,7 +299,7 @@
           </div>
           <div class="entry-list" id="saver-extra" hidden>
             <div class="field-heading" id="saver-extra-title"><span>轮播设置</span></div>
-            <label class="field">
+            <label class="field album-only">
               <span>轮播间隔（相册轮播）</span>
               <select id="sv-int">
                 <option value="30">30 秒</option>
@@ -297,7 +308,7 @@
                 <option value="600">10 分钟</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field album-only">
               <span>切换效果</span>
               <select id="sv-fx">
                 <option value="1" selected>淡入</option>
@@ -305,7 +316,7 @@
                 <option value="0">立即切换</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field poem-only">
               <span>诗句更新间隔（诗词短句）</span>
               <select id="poem-int">
                 <option value="1">1 分钟</option>
@@ -334,19 +345,19 @@
             </div>
             <p class="hint" id="album-state">尚未上传相册图。</p>
           </div>
-          <p class="hint" id="saver-state">息屏设置改动后需保存并同步到设备。</p>
+          <p class="hint" id="saver-state">选择样式后可先预览，再应用到设备。</p>
         </div>
 
         <aside class="panel saver-preview-panel" aria-labelledby="sv-heading">
           <h2 id="sv-heading">息屏画面</h2>
-          <p class="hint" id="sv-mode-note">当前使用：—</p>
+          <p class="hint" id="sv-mode-note">草稿预览：—</p>
           <div class="screen-scale" id="sv-scale">
             <div class="screen-bezel">
               <div class="sv-screen" id="sv-screen" role="img" aria-label="息屏画面预览"></div>
             </div>
           </div>
           <p class="hint" id="sv-quote-note">—</p>
-          <p class="hint">与固件 build_saver() 同源：黑底、四款样式的坐标与固定配色照搬，只有「像素夜色」的色带取主题强调色。</p>
+          <p class="hint">预览使用与设备相同的画面尺寸、布局和颜色规则。</p>
         </aside>
       </div>
     </section>
@@ -356,8 +367,8 @@
       <h1 id="extras-heading">其他视图</h1>
       <p class="view-sub">提醒、日程、闹钟、倒计时与快捷应用，会出现在小屏对应组件里。</p>
       <div class="btn-row">
-        <button type="button" class="button primary" id="extras-save-btn">保存修改</button>
-        <button type="button" class="button" id="extras-sync-btn">同步到设备</button>
+        <button type="button" class="button" id="extras-save-btn">保存草稿</button>
+        <button type="button" class="button primary" id="extras-sync-btn">应用到设备</button>
         <span class="hint-inline">本页的增删改先写入草稿，保存后才落到配置并同步小屏。</span>
       </div>
       <div class="schedule-grid">
@@ -460,12 +471,12 @@
     <section class="view" id="view-settings" aria-labelledby="settings-heading">
       <h1 id="settings-heading">设置</h1>
       <div class="tabbar settings-tabbar" role="tablist" aria-label="设置分区">
-        <button type="button" class="tab active" id="stab-pages" role="tab"
-                aria-selected="true" aria-controls="spane-pages">页面编排</button>
-        <button type="button" class="tab" id="stab-look" role="tab"
+        <button type="button" class="tab" id="stab-pages" role="tab" hidden
+                aria-selected="false" aria-controls="spane-pages">页面编排</button>
+        <button type="button" class="tab" id="stab-look" role="tab" hidden
                 aria-selected="false" aria-controls="spane-look">主题与显示</button>
-        <button type="button" class="tab" id="stab-music" role="tab"
-                aria-selected="false" aria-controls="spane-music">音乐</button>
+        <button type="button" class="tab active" id="stab-music" role="tab"
+                aria-selected="true" aria-controls="spane-music">音乐</button>
         <button type="button" class="tab" id="stab-weather" role="tab"
                 aria-selected="false" aria-controls="spane-weather">天气</button>
         <button type="button" class="tab" id="stab-pet" role="tab"
@@ -473,7 +484,7 @@
         <button type="button" class="tab" id="stab-system" role="tab"
                 aria-selected="false" aria-controls="spane-system">系统</button>
       </div>
-      <div class="tabpane active" id="spane-pages" role="tabpanel">
+      <div class="tabpane" id="spane-pages" role="tabpanel" hidden>
         <div class="settings-grid">
           <section class="panel" aria-labelledby="pages-heading">
           <div class="panel-head">
@@ -488,6 +499,7 @@
           <div class="section-rule" role="separator"></div>
           <div class="panel-head compact"><h3>组件库</h3><span class="hint-inline">点击加入当前页</span></div>
           <div class="widget-palette" id="widget-palette"></div>
+          <p class="hint palette-note" id="widget-palette-note"></p>
           <div class="section-rule" role="separator"></div>
           <div class="panel-head compact"><h3>快速模板</h3></div>
           <div class="template-row" id="start-templates"></div>
@@ -509,8 +521,8 @@
           <div class="selected-widgets" id="selected-widgets"></div>
           <div class="btn-row wrap">
             <button type="button" class="button" id="validate-btn">检查</button>
-            <button type="button" class="button primary" id="save-btn">保存</button>
-            <button type="button" class="button secondary" id="sync-btn">同步</button>
+            <button type="button" class="button" id="save-btn">保存草稿</button>
+            <button type="button" class="button primary" id="sync-btn">应用到设备</button>
             <button type="button" class="button danger" id="reset-btn">恢复默认</button>
           </div>
         </section>
@@ -579,14 +591,14 @@
             <span>顶栏显示天气</span>
           </label>
           <div class="btn-row">
-            <button type="button" class="button primary" id="look-save-btn">保存显示设置</button>
-            <button type="button" class="button" id="look-sync-btn">同步到设备</button>
+            <button type="button" class="button" id="look-save-btn">保存草稿</button>
+            <button type="button" class="button primary" id="look-sync-btn">应用到设备</button>
             <button type="button" class="button" id="btn-save-mytheme">存为自定义主题</button>
           </div>
-          <p class="hint">「保存显示设置」把上面的配色/亮度/顶栏写入配置；「存为自定义主题」只是收进浏览器里的主题库，不会保存配置。</p>
+          <p class="hint">「保存草稿」把上面的配色、亮度和顶栏写入配置；「存为自定义主题」只收进本机主题库，不会应用到设备。</p>
         </section>
       </div>
-      <div class="tabpane" id="spane-music" role="tabpanel" hidden>
+      <div class="tabpane active" id="spane-music" role="tabpanel">
         <section class="panel" aria-labelledby="music-heading">
           <div class="panel-head">
             <h2 id="music-heading">音乐</h2>
@@ -598,18 +610,18 @@
           </label>
           <p class="hint" id="music-note">—</p>
           <div class="btn-row wrap">
-            <button type="button" class="button primary" id="music-test-btn">试一下（启动并播放）</button>
+            <button type="button" class="button primary" id="music-test-btn">打开并发送播放</button>
             <button type="button" class="button" id="music-add-app">加一个小屏快捷入口</button>
           </div>
           <div class="btn-row">
-            <button type="button" class="button primary" id="music-save-btn">保存配置</button>
-            <button type="button" class="button" id="music-sync-btn">同步到设备</button>
+            <button type="button" class="button" id="music-save-btn">保存草稿</button>
+            <button type="button" class="button primary" id="music-sync-btn">应用到设备</button>
           </div>
           <div class="section-rule" role="separator"></div>
           <div class="panel-head compact"><h3>正在播放</h3></div>
           <p class="now-playing" id="music-now">—</p>
-          <p class="hint">播放 / 上一首 / 下一首走系统「正在播放」中枢（macOS MediaRemote），
-            作用于真正在放歌的那个软件——不再默认落到 Apple 音乐。</p>
+          <p class="hint">播放暂停 / 上一首 / 下一首只控制系统当前媒体会话；没有会话时，
+            播放暂停只会打开上面选定的一个软件。首次使用请先在播放器里选一首歌。</p>
         </section>
       </div>
       <div class="tabpane" id="spane-weather" role="tabpanel" hidden>
@@ -624,8 +636,8 @@
           <div class="section-rule" role="separator"></div>
           <div class="panel-head compact"><h3>添加城市</h3></div>
           <div class="btn-row">
-            <input type="text" id="weather-q" class="text-input" maxlength="20"
-                   placeholder="城市名，如 杭州 / 朝阳区" autocomplete="off" class="grow">
+            <input type="text" id="weather-q" class="text-input grow" maxlength="20"
+                   placeholder="城市名，如 杭州 / 朝阳区" autocomplete="off">
             <button type="button" class="button" id="weather-search-btn">搜索</button>
           </div>
           <div class="entry-list" id="weather-search-results"></div>
@@ -633,8 +645,8 @@
             <button type="button" class="button" id="weather-gen-pages">为每个城市生成小屏页面</button>
           </div>
           <div class="btn-row">
-            <button type="button" class="button primary" id="weather-save-btn">保存天气设置</button>
-            <button type="button" class="button" id="weather-sync-btn">同步到设备</button>
+            <button type="button" class="button" id="weather-save-btn">保存草稿</button>
+            <button type="button" class="button primary" id="weather-sync-btn">应用到设备</button>
           </div>
         </section>
       </div>
