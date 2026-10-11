@@ -59,6 +59,10 @@ class Config:
     # 系统日历只读接入（macOS EventKit）：事件进收件箱，不写 profile。默认关——
     # 打开时才首次访问日历（TCC 授权弹窗），被拒不影响手工与 ICS 日程。
     syscal: bool = False
+    # 硬件告警阈值：CPU 温度（℃，持续 60s 防抖、回落到 -10℃ 滞后恢复）与
+    # 磁盘使用率（%）。设备角标与收件箱共用。
+    hw_cpu_temp: float = 85.0
+    hw_disk: int = 90
     reminders: list = field(default_factory=list)  # [{"time":"09:30","text":"站会"}]
     theme: dict = field(default_factory=lambda: {
         "bg": "0B1220", "card": "141E32", "accent": "22D3EE",

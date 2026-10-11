@@ -246,3 +246,68 @@ def test_open_in_finder_rejects_missing_dir():
     from workbuddy.control import open_in_finder
     res = open_in_finder("/nonexistent-dir-xyz")
     assert res["ok"] is False and "不存在" in res["error"]
+
+
+# ---- CPU 高温告警状态机 ----
+
+def _hw_app(tmp_path, cputemp=None, threshold=85.0):
+    import time as t_mod
+    from workbuddy import app as app_mod
+    app = App.__new__(App)
+    app.tasks = []
+    app.profile = {"calendar": []}
+    app.profile_lock = threading.Lock()
+    app.last = {} if cputemp is None else {"cputemp": cputemp}
+    app.health = _Health()
+    app.cfg = type("C", (), {"hw_cpu_temp": threshold, "hw_disk": 90})()
+    app_mod.INBOX_STATE_PATH = tmp_path / "inbox.json"
+    app._inbox_seen_cache = None
+    app._hw_alert = {"since": None, "active": False}
+    return app, t_mod
+
+
+def test_temp_alert_requires_sustained_heat(tmp_path):
+    app, tm = _hw_app(tmp_path, cputemp=90)
+    t = 1000.0
+    app._update_hw_alert(t)            # 第一拍：进入高温但未满 60s
+    assert app._hw_alert["active"] is False
+    app._update_hw_alert(t + 30)       # 30s：仍未满
+    assert app._hw_alert["active"] is False
+    app._update_hw_alert(t + 61)       # 61s：告警生效
+    assert app._hw_alert["active"] is True
+    ids = [x["id"] for x in app.inbox_items()]
+    assert "hw:cputemp" in ids
+
+
+def test_temp_alert_hysteresis_recovery(tmp_path):
+    app, tm = _hw_app(tmp_path, cputemp=90)
+    app._update_hw_alert(1000)
+    app._update_hw_alert(1061)
+    assert app._hw_alert["active"] is True
+    app.last = {"cputemp": 82}         # 回落到阈值-10 之内才恢复（82 < 75? 否）
+    app._update_hw_alert(1100)
+    assert app._hw_alert["active"] is True   # 82 ≥ 75：滞回区不恢复
+    app.last = {"cputemp": 70}
+    app._update_hw_alert(1200)
+    assert app._hw_alert["active"] is False  # 70 < 75：恢复
+    assert all(x["id"] != "hw:cputemp" for x in app.inbox_items())
+
+
+def test_temp_spike_then_drop_never_alerts(tmp_path):
+    app, tm = _hw_app(tmp_path, cputemp=95)
+    app._update_hw_alert(1000)
+    app.last = {"cputemp": 60}         # 单尖峰后立即回落
+    app._update_hw_alert(2000)
+    assert app._hw_alert["active"] is False   # 持续时间不足，不告警
+
+
+def test_no_temp_data_keeps_state_quiet(tmp_path):
+    app, tm = _hw_app(tmp_path, cputemp=None)
+    app._update_hw_alert(1000)
+    app._update_hw_alert(2000)
+    assert app._hw_alert["active"] is False and app._hw_alert["since"] is None
+
+
+def test_open_in_terminal_validates():
+    from workbuddy.control import open_in_terminal
+    assert open_in_terminal("/nonexistent-dir-xyz")["ok"] is False

@@ -2374,15 +2374,17 @@ function renderInbox(){
     if(item.kind==='task'||item.kind==='calendar')title.title='点击查看';
     row.append(title, el('span','',item.detail));
     if(item.kind==='task'&&item.path){
-      const open=el('button','linklike','打开');
-      open.type='button'; open.title='在 Finder 中打开项目目录';
-      open.onclick=async()=>{
-        try{
-          await request('/api/open-project',{id:item.id});
-          logHist('launch',`已打开项目目录（${item.title}）`);
-        }catch(e){notice(e.message,true)}
-      };
-      row.append(open);
+      const mk=(label,mode,title)=>{ const b=el('button','linklike',label);
+        b.type='button'; b.title=title;
+        b.onclick=async()=>{
+          try{
+            await request('/api/open-project',{id:item.id, mode});
+            logHist('launch',`已${title}（${item.title}）`);
+          }catch(e){notice(e.message,true)}
+        };
+        return b; };
+      row.append(mk('终端','terminal','在终端打开项目目录'),
+                 mk('打开','finder','在 Finder 中打开项目目录'));
     }
     const snooze=el('button','linklike','稍后');
     snooze.type='button'; snooze.title='30 分钟后重新提醒';

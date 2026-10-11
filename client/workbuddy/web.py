@@ -287,8 +287,12 @@ def start_settings_server(app, port):
                 if not data or data[0] != 0xE9:
                     self._json(400, {"error": "不是 ESP32 固件文件（magic 校验失败）"})
                     return
-                app.send_ota(data)
-                self._json(200, {"status": "固件已发送，设备将自动重启并切分区"})
+                if not app.send_ota(data):
+                    result = getattr(app, "ota_result", {}) or {}
+                    self._json(502, {"error": "设备未接受固件：" +
+                                     str(result.get("reason") or "未知原因")})
+                    return
+                self._json(200, {"status": "设备已确认固件，正在重启并切分区"})
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0]
             if path == "/api/bgimg-clear":
@@ -418,8 +422,9 @@ def start_settings_server(app, port):
                                      "state": syscal_mod.read_state(),
                                      "refreshed": refreshed})
                 elif path == "/api/open-project":
-                    # 收件箱「打开项目」：在 Finder 显示会话工作目录
-                    result = app.open_task_project(str(data.get("id", "")))
+                    # 收件箱「打开项目」：mode=finder(默认) / terminal
+                    result = app.open_task_project(str(data.get("id", "")),
+                                                   str(data.get("mode", "finder")))
                     if result.get("ok"):
                         self._json(200, result)
                     else:

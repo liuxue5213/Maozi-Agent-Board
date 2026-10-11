@@ -1,5 +1,6 @@
 """主循环：采集 → AI 检测 → 合并遥测 → 控制台/串口输出。"""
 import json
+import math
 import re
 import time
 import threading
@@ -133,6 +134,10 @@ class App:
         self.pet = Pet(lambda: self.profile.get("pet", {}))
         self._np_cache = {"supported": None, "now": {}}
         self._img_reply = None
+        self._ota_reply = None
+        self._ota_event = threading.Event()
+        self._ota_active = False
+        self.ota_result = {"ok": None, "reason": ""}
         self.weather = WeatherFetcher(lambda: (self.profile.get('weather') or {}).get('cities', []))
         # 系统日历只读接入（macOS EventKit）：默认关，设置页打开后开始拉取
         self.syscal_fetcher = None
@@ -227,6 +232,11 @@ class App:
                               reason=d["img_reply"]["reason"])
             self._img_reply = {"ok": d["img_reply"]["ok"],
                                "reason": d["img_reply"]["reason"]}
+        if "ota_reply" in d:
+            self._ota_reply = d["ota_reply"]
+            self._ota_event.set()
+            self.health.event("ota_ack" if d["ota_reply"]["ok"] else "ota_nak",
+                              reason=d["ota_reply"]["reason"][:24])
         if "config_reply" in d:
             reply = d["config_reply"]
             with self.profile_lock:
@@ -247,7 +257,7 @@ class App:
                 self.env_seen[key] = seen
 
     def _parse_fw_caps(self, raw: str):
-        """FW=0.3.1,n16r8,schema:1,pages:6,widgets:7,apps:12,... → 能力字典。"""
+        """FW=0.3.2,n16r8,schema:1,pages:6,widgets:10,apps:12,... → 能力字典。"""
         caps = {"raw": raw[:64]}
         for part in raw.split(","):
             if ":" in part:
@@ -527,11 +537,9 @@ class App:
             cache = self._inbox_seen_cache = (mtime, data)
         return cache[1]
 
-    def open_task_project(self, inbox_id: str) -> dict:
-        """收件箱「打开项目」：按条目 id 找到会话的工作目录，在 Finder 打开。
-
-        安全边界：只接受 open 命令 + 必须是存在且解析过的目录，绝不拼 shell。
-        """
+    def open_task_project(self, inbox_id: str, mode: str = "finder") -> dict:
+        """收件箱「打开项目」：按条目 id 找到会话的工作目录，在 Finder 或
+        终端（新窗口 cd 到该目录）打开。安全边界：数组调用不走 shell。"""
         for t in self.tasks:
             if f"t:{t['tool']}:{t['id']}" != inbox_id:
                 continue
@@ -539,8 +547,9 @@ class App:
             if not path:
                 return {"ok": False, "error": "该会话没有可用的项目路径"}
             from . import control as _control
-            result = _control.open_in_finder(path)
-            return result
+            if mode == "terminal":
+                return _control.open_in_terminal(path)
+            return _control.open_in_finder(path)
         return {"ok": False, "error": "会话不在当前列表里"}
 
     def inbox_dismiss(self, ids: list, snooze_minutes: float = 0):
@@ -560,6 +569,33 @@ class App:
             self._inbox_seen_cache = (INBOX_STATE_PATH.stat().st_mtime, seen)
         except OSError:
             pass
+
+    def _update_hw_alert(self, now: float):
+        """CPU 高温状态机。状态存 self._hw_alert：{since, active}。"""
+        if not hasattr(self, "_hw_alert"):
+            self._hw_alert = {"since": None, "active": False}
+        cfg = getattr(self, "cfg", None)
+        threshold = float(getattr(cfg, "hw_cpu_temp", 85.0) or 85.0)
+        if getattr(self, "_hw_thr_at", None) != threshold:
+            # 阈值被调整：旧的防抖计时/告警状态对新阈值无意义，全部重置
+            self._hw_thr_at = threshold
+            self._hw_alert = {"since": None, "active": False}
+        temp = self.last.get("cputemp")
+        if not isinstance(temp, (int, float)):
+            return                          # 无温度数据：状态保持，不误报也不恢复
+        hot = temp >= threshold
+        state = self._hw_alert
+        if hot and state["since"] is None:
+            state["since"] = now
+        if hot and not state["active"] and now - state["since"] >= 60:
+            state["active"] = True
+            self.health.event("hw_alert", kind="cpu_temp", temp=temp)
+        elif not hot and temp <= threshold - 10 and state["active"]:
+            state["active"] = False
+            state["since"] = None
+            self.health.event("hw_recovered", kind="cpu_temp", temp=temp)
+        elif not hot and not state["active"]:
+            state["since"] = None
 
     def inbox_items(self) -> list:
         """聚合待处理事项（加锁入口）。status_snapshot 已持有 profile_lock，
@@ -619,12 +655,21 @@ class App:
                               else f"{int(dt // 60)} 分钟后开始（{e['time']}）",
                               "at": start})
         disk = self.last.get("disk")
-        if isinstance(disk, (int, float)) and disk >= 90:
+        cfg = getattr(self, "cfg", None)
+        disk_limit = int(getattr(cfg, "hw_disk", 90) or 90)
+        if isinstance(disk, (int, float)) and disk >= disk_limit:
             free = self.last.get("diskfree")
             items.append({"id": "hw:disk", "kind": "hw", "sev": "bad",
                           "title": f"磁盘 {int(disk)}%",
                           "detail": (f"仅剩 {free} GB 可用"
                                      if free is not None else "空间不足")})
+        if getattr(self, "_hw_alert", {}).get("active"):
+            temp = self.last.get("cputemp")
+            if isinstance(temp, (int, float)):
+                limit = float(getattr(getattr(self, "cfg", None), "hw_cpu_temp", 85.0) or 85.0)
+                items.append({"id": "hw:cputemp", "kind": "hw", "sev": "bad",
+                              "title": f"CPU {temp:.0f}℃",
+                              "detail": f"持续高于 {limit:.0f}℃（检查风扇/负载）"})
         seen = self._inbox_seen()
         now2 = time.time()
         return [x for x in items
@@ -892,22 +937,73 @@ class App:
     def send_ota(self, data: bytes) -> bool:
         """OTA 固件分帧下发（OTA=BEGIN/DATA/END）。成功后设备自动重启。
 
-        每行 512B + 2ms 间隔：与固件 proto.cpp 的解码缓冲配对。921600 波特率
-        下 4.3MB 固件约 1 分钟（旧 90B+12ms 组合要 10 分钟，等于不可用）。
-        设备主循环边收边写 flash，2ms 是给 flash 写入留的余量；遥测行按序
-        交织处理，互不影响。
+        每行 512B，与固件 proto.cpp 的解码缓冲配对。发送必须对串口队列施加
+        背压：普通遥测队列满时允许丢旧帧，OTA 丢任意一帧都会触发 SEQ NAK。
+        BEGIN 与 END 都等待设备 ACK，HTTP 层才能如实报告升级是否被设备接受。
         """
         if not self.link or not self.link.status.startswith("connected:"):
             return False
+        self._ota_active = True
+        try:
+            return self._send_ota_transaction(data)
+        finally:
+            self._ota_active = False
+
+    def _send_ota_transaction(self, data: bytes) -> bool:
         import base64 as _b64
-        self.link.send(f"OTA=BEGIN,{len(data)}\n".encode())
-        time.sleep(0.1)
+        direct = getattr(self.link, "send_direct", None)
+        if callable(getattr(self.link, "clear_pending", None)):
+            self.link.clear_pending()
+
+        def send_frame(frame: bytes) -> bool:
+            if callable(direct):
+                return bool(direct(frame))
+            return bool(self.link.send(frame, block=True))
+
+        if not hasattr(self, "_ota_event"):
+            self._ota_event = threading.Event()
+        self._ota_reply = None
+        self._ota_event.clear()
+        if not send_frame(f"OTA=BEGIN,{len(data)}\n".encode()):
+            self.ota_result = {"ok": False, "reason": "串口发送队列不可用"}
+            return False
+        if not self._ota_event.wait(5.0) or not self._ota_reply or not self._ota_reply["ok"]:
+            reason = (self._ota_reply or {}).get("reason", "设备未确认 BEGIN")
+            self.ota_result = {"ok": False, "reason": reason}
+            return False
+        self._ota_reply = None
+        self._ota_event.clear()
+        window = 1
         for seq, start in enumerate(range(0, len(data), 512)):
+            if seq % window == 0:
+                self._ota_reply = None
+                self._ota_event.clear()
             chunk = _b64.b64encode(data[start:start + 512]).decode("ascii")
-            self.link.send(f"OTA=DATA,{seq},{chunk}\n".encode())
-            time.sleep(0.002)
-        time.sleep(0.3)
-        self.link.send("OTA=END\n".encode())
+            if not send_frame(f"OTA=DATA,{seq},{chunk}\n".encode()):
+                self.ota_result = {"ok": False, "reason": "串口队列超时"}
+                return False
+            if self._ota_reply and not self._ota_reply.get("ok"):
+                self.ota_result = {"ok": False, "reason": self._ota_reply.get("reason", "设备拒绝")}
+                return False
+            if (seq + 1) % window == 0:
+                expected = f"DATA:{seq + 1}"
+                if (not self._ota_event.wait(3.0) or not self._ota_reply
+                        or not self._ota_reply.get("ok")
+                        or self._ota_reply.get("reason") != expected):
+                    reason = (self._ota_reply or {}).get(
+                        "reason", f"设备未确认数据片 {seq + 1}")
+                    self.ota_result = {"ok": False, "reason": reason}
+                    return False
+                self._ota_reply = None
+                self._ota_event.clear()
+        if not send_frame(b"OTA=END\n"):
+            self.ota_result = {"ok": False, "reason": "END 未发送"}
+            return False
+        if not self._ota_event.wait(30.0) or not self._ota_reply or not self._ota_reply["ok"]:
+            reason = (self._ota_reply or {}).get("reason", "设备未确认 END")
+            self.ota_result = {"ok": False, "reason": reason}
+            return False
+        self.ota_result = {"ok": True, "reason": self._ota_reply.get("reason", "REBOOTING")}
         self.health.event("ota_sent", size=len(data))
         return True
 
@@ -987,7 +1083,12 @@ class App:
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
         t["remind"] = self._next_remind(now)
-        # 收件箱待处理数：设备页脚角标（INBX=）与 Web 红点共用
+        # CPU 高温告警状态机（防抖 60s + 滞回恢复）
+        try:
+            self._update_hw_alert(now)
+        except Exception:
+            pass
+        # 收件箱待处理数：设备页脚角标（INBOX=）与 Web 红点共用
         try:
             t["inbox"] = self.inbox_count()
         except Exception:
@@ -1018,8 +1119,14 @@ class App:
     def render(self, t: dict) -> str:
         now = time.strftime("%H:%M:%S")
         cpu = f"CPU {t.get('cpu','?'):>3}%"
-        if "cputemp" in t:
-            cpu += f" {t['cputemp']:.0f}°"
+        # macOS 采集器会用空串表示“清除设备上的旧温度”。控制台单次
+        # 采集也会经过这里，因此不能仅凭字段存在就按浮点数格式化。
+        try:
+            cputemp = float(t.get("cputemp"))
+        except (TypeError, ValueError):
+            cputemp = None
+        if cputemp is not None and math.isfinite(cputemp):
+            cpu += f" {cputemp:.0f}°"
         mem = f"MEM {t.get('mem','?'):>3}% {t.get('memused','?')}/{t.get('memtotal','?')}G"
         extra = []
         if "gpu" in t:
@@ -1079,22 +1186,26 @@ class App:
                             self.health.event("device_offline", seconds=secs)
                         self._was_online = online
                         self._online_since = now if online else 0.0
-                    if self.link.consume_connected():
-                        with self.profile_lock:
-                            self.fw_caps = None
-                            self.sync_requested = True
-                            self.profile_status = "等待设备握手"
-                            self.applied_version = None
-                        self.link.send(encode_caps(self.collector.caps))
-                        self._caps_sent_at = time.monotonic()
-                    elif self.fw_caps is None and online:
-                        if time.monotonic() - self._caps_sent_at >= 3:
+                    ota_active = getattr(self, "_ota_active", False)
+                    # OTA 与实拍都是独占串口事务。传输期间插入遥测、HB 或
+                    # 配置帧会让设备的 DATA 序号错位，必须保持下行静默。
+                    if not ota_active:
+                        if self.link.consume_connected():
+                            with self.profile_lock:
+                                self.fw_caps = None
+                                self.sync_requested = True
+                                self.profile_status = "等待设备握手"
+                                self.applied_version = None
                             self.link.send(encode_caps(self.collector.caps))
                             self._caps_sent_at = time.monotonic()
-                    elif self.sync_requested and not snapping:
-                        self.push_profile()
+                        elif self.fw_caps is None and online:
+                            if time.monotonic() - self._caps_sent_at >= 3:
+                                self.link.send(encode_caps(self.collector.caps))
+                                self._caps_sent_at = time.monotonic()
+                        elif self.sync_requested and not snapping:
+                            self.push_profile()
                     # 实拍静默窗：设备正阻塞在回传帧上，任何下行都会打断传输
-                    if not snapping:
+                    if not snapping and not ota_active:
                         self.link.send(text)
                         if now - hb_last >= 5.0:
                             self.link.send(encode_hb())

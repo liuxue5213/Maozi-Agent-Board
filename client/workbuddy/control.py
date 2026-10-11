@@ -167,6 +167,28 @@ class ControlApp:
             pass
 
 
+def open_in_terminal(path: str) -> dict:
+    """在 Terminal.app 新窗口 cd 到目录（收件箱「终端打开」）。
+
+    open -a Terminal <dir> 是 Terminal 原生支持的行为，全机必有；
+    iTerm2/Warp 各有授权差异，不做自动猜测。"""
+    target = Path(path)
+    if not target.is_dir():
+        return {"ok": False, "error": "目录不存在"}
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", "-a", "Terminal", str(target)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["cmd", "/c", "start", "cmd", "/K",
+                              f"cd /d {target}"])
+        else:
+            subprocess.Popen(["x-terminal-emulator", "--working-directory",
+                              str(target)])
+        return {"ok": True}
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)[:64]}
+
+
 def open_in_finder(path: str) -> dict:
     """在 Finder 里显示目录（收件箱「打开项目」）。数组调用不走 shell，无注入面。"""
     target = Path(path)
