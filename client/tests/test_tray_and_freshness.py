@@ -11,6 +11,7 @@
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -82,8 +83,10 @@ class TrayControllerTests(unittest.TestCase):
 
     def test_refresh_without_callback_opens_settings(self):
         c = TrayController(on_show=lambda: None, on_quit=lambda: None, port=8766)
-        # 无回调时退化为重开设置页，不应抛异常
-        self.assertIn(c.refresh(), (True, False))
+        # 测试只能验证“准备打开正确地址”，不能真的启动用户浏览器。
+        with patch("webbrowser.open", return_value=True) as open_browser:
+            self.assertTrue(c.refresh())
+        open_browser.assert_called_once_with("http://127.0.0.1:8766/")
 
     def test_autostart_toggle_returns_new_state(self):
         state = {"on": False}

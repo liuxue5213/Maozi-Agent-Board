@@ -118,9 +118,11 @@ class GatingRuleTests(unittest.TestCase):
         self.assertTrue(by_id["zcode"]["running"])
         self.assertFalse(by_id["codex"]["running"])
         self.assertTrue(by_id["codex"]["gates"])
+        self.assertEqual(by_id["codex"]["capability"], "session")
         # 编辑器没有日志来源，不参与门控
         self.assertIn("cursor", by_id)
         self.assertFalse(by_id["cursor"]["gates"])
+        self.assertEqual(by_id["cursor"]["capability"], "process")
 
     def test_report_when_scan_unavailable(self):
         procwatch.reset_cache()

@@ -158,9 +158,11 @@ def report() -> dict:
     running = running_tools()
     if running is None:
         return {"ok": False, "error": "进程扫描不可用", "tools": []}
-    tools = [{"id": key, "label": label, "running": key in running, "gates": True}
+    tools = [{"id": key, "label": label, "running": key in running,
+              "gates": True, "capability": "session"}
              for key, label in TOOL_LABELS.items()]
     # 编辑器只在运行时列出：它们没有日志来源，未运行不必占位置
-    tools += [{"id": key, "label": label, "running": key in running, "gates": False}
+    tools += [{"id": key, "label": label, "running": key in running,
+               "gates": False, "capability": "process"}
               for key, label in EDITOR_LABELS.items() if key in running]
     return {"ok": True, "error": "", "tools": tools}

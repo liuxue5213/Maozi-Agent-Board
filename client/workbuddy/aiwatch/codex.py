@@ -1,5 +1,8 @@
-"""Codex 多会话监听：~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl"""
-import datetime as dt
+"""Codex 多会话监听：~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl。
+
+会话目录按“创建日期”归档，不会在跨天后搬到当天目录。因此监听最近修改的
+rollout 文件，不能只看今天和昨天；长对话或恢复旧对话仍会继续写原文件。
+"""
 import re
 import time
 from pathlib import Path
@@ -7,7 +10,8 @@ from pathlib import Path
 from . import (Activity, ERROR, GENERATING, THINKING, TOOL, IDLE,
                WAIT_INPUT, tool_to_task, sanitize_project, tail_json_lines)
 
-_CWD_RE = re.compile(rb'"cwd":"([^"]+)"')
+# JSON 序列化器可以在冒号两侧插入空格；不能依赖 Codex 当前恰好输出紧凑 JSON。
+_CWD_RE = re.compile(rb'"cwd"\s*:\s*"([^"]+)"')
 
 
 def _project_from_head(path: Path) -> str:
@@ -27,23 +31,31 @@ class CodexSource:
     def __init__(self, root: Path):
         self.root = Path(root)
 
-    def _day_dirs(self):
-        today = dt.date.today()
-        for offset in range(2):
-            day = today - dt.timedelta(days=offset)
-            d = self.root / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}"
-            if d.is_dir():
-                yield d
+    def _rollouts(self, now, cache):
+        """返回所有会话文件路径，短暂缓存目录遍历结果。
+
+        只缓存“有哪些文件”，每轮仍重新读取 mtime；这样已有长会话持续写入时
+        能在一秒内刷新，同时避免每秒递归扫描整个 sessions 目录。
+        """
+        key = "codex-rollout-paths"
+        hit = cache.get(key)
+        if hit and now - hit[0] < 5:
+            return hit[1]
+        try:
+            paths = list(self.root.rglob("rollout-*.jsonl"))
+        except OSError:
+            paths = []
+        cache[key] = (now, paths)
+        return paths
 
     def poll_all(self, now, cache) -> list:
         acts = []
         files = []
-        for d in self._day_dirs():
+        for p in self._rollouts(now, cache):
             try:
-                for p in d.glob("rollout-*.jsonl"):
-                    m = p.stat().st_mtime
-                    if now - m <= 45:
-                        files.append((m, p))
+                m = p.stat().st_mtime
+                if now - m <= 45:
+                    files.append((m, p))
             except OSError:
                 continue
         files.sort(reverse=True)
@@ -57,7 +69,7 @@ class CodexSource:
         for line in tail_json_lines(f):
             payload = line.get("payload") or {}
             ptype = payload.get("type", "")
-            if ptype == "function_call":
+            if ptype in ("function_call", "custom_tool_call"):
                 name = payload.get("name", "")
                 if name.lower() in ("shell", "exec", "local_shell", "bash"):
                     return Activity("codex", TOOL, mtime, sid=f.stem,
@@ -66,23 +78,26 @@ class CodexSource:
                 return Activity("codex", TOOL, mtime, sid=f.stem,
                                 project=_project_from_head(f),
                                 detail=name, task=tool_to_task(name))
-            if ptype == "function_call_output":
+            if ptype in ("function_call_output", "custom_tool_call_output"):
                 return Activity("codex", THINKING, mtime, sid=f.stem,
                                 project=_project_from_head(f))
             if ptype == "task_complete":
                 # 回复完成，等用户下一句话
                 return Activity("codex", WAIT_INPUT, mtime, sid=f.stem,
                                 project=_project_from_head(f))
-            if ptype in ("task_started", "turn_context", "task_note"):
+            if ptype in ("task_started", "turn_context", "task_note", "reasoning"):
                 return Activity("codex", GENERATING, mtime, sid=f.stem,
                                 project=_project_from_head(f))
             if ptype in ("error", "stream_error"):
                 return Activity("codex", ERROR, mtime, sid=f.stem,
                                 project=_project_from_head(f),
                                 err=str(payload.get("message") or ptype))
-            if ptype == "response_item":
-                inner = payload.get("payload") or {}
+            if ptype in ("response_item", "message"):
+                inner = payload.get("payload") or payload
                 if inner.get("role") == "assistant":
                     return Activity("codex", GENERATING, mtime, sid=f.stem,
+                                    project=_project_from_head(f))
+                if inner.get("role") == "user":
+                    return Activity("codex", THINKING, mtime, sid=f.stem,
                                     project=_project_from_head(f))
         return None
