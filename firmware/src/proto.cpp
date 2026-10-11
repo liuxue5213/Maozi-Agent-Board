@@ -272,10 +272,12 @@ void Proto::handle(const char* line) {
     if (!strcmp(key, "OTA")) {
         static uint32_t ota_size = 0, ota_seq = 0;
         static bool ota_active = false;
-        static uint8_t bin_buf[96]; size_t bin_len = 0;
+        // 每行 512B 负载（客户端 app.send_ota 同步）：90B 曾让 4.3MB 固件
+        // 走 5 万多行、限速下要 10 分钟。上限取 default_16MB.csv 的
+        // app0 槽 0x640000=6.25MB——3MB 旧上限比槽小，实际固件 4.3MB 被拒。
         if (!strncmp(v, "BEGIN,", 6)) {
             ota_size = strtoul(strchr(v, ',') + 1, nullptr, 10);
-            if (!ota_size || ota_size > 3 * 1024 * 1024 || !Update.begin(ota_size)) {
+            if (!ota_size || ota_size > 0x640000 || !Update.begin(ota_size)) {
                 Serial.println("NAK=OTA,BEGIN"); return;
             }
             ota_active = true; ota_seq = 0;
@@ -290,7 +292,7 @@ void Proto::handle(const char* line) {
                 Serial.println("NAK=OTA,SEQ"); return;
             }
             while (*b64_start == ',') ++b64_start;
-            uint8_t bin[96]; size_t bin_len = 0;
+            uint8_t bin[516]; size_t bin_len = 0;
             if (mbedtls_base64_decode(bin, sizeof(bin), &bin_len,
                 (const unsigned char*)b64_start, strlen(b64_start)) != 0) {
                 Update.abort(); ota_active = false;

@@ -3245,14 +3245,17 @@ function bind(){
     const file=e.target.files[0];e.target.value='';
     if(!file)return;
     if(!isConnected()){notice('设备未连接，无法升级固件',true);return}
-    if(!confirm(`确认向设备发送固件 ${file.name}（${Math.round(file.size/1024)} KB）？`))return;
-    notice('正在发送固件，请勿断开设备…');
+    // 预检：OTA 槽 6.25MB（default_16MB.csv app0），超了就别白传一分钟
+    const OTA_MAX=0x640000;
+    if(file.size>OTA_MAX){notice(`固件 ${Math.round(file.size/1048576*10)/10}MB 超过设备 OTA 槽上限 6.25MB`,true);return}
+    if(!confirm(`确认向设备发送固件 ${file.name}（${Math.round(file.size/1024)} KB，约 1 分钟）？`))return;
+    notice('正在发送固件（约 1 分钟），期间请勿断开设备或关闭页面…');
     try{
       const r=await fetch('/api/ota',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:await file.arrayBuffer()});
       const d=await r.json();
       if(!r.ok)throw new Error(d.error||'升级失败');
       logHist('ota','固件包已发送');
-      notice('固件已发送，设备将自行完成升级');
+      notice('固件已发送，设备将自行完成升级（约 20 秒后重新连接）');
     }catch(err){notice('固件升级失败：'+err.message,true);logHist('ota','固件升级失败',false)}
   };
   $('diag-btn').onclick=pending($('diag-btn'),async()=>{

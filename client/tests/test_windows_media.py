@@ -4,6 +4,7 @@ Windows 专属 API 在 macOS 开发机上不存在，全部通过 mock 隔离在
 测试的是**我们的分支逻辑与降级路径**，不是 winsdk/pycaw 本身。
 """
 import sys
+from pathlib import Path
 from unittest import mock
 
 from workbuddy import control
@@ -133,3 +134,51 @@ def test_thermal_hint_zone_fallback():
         out = collector._sample_thermal()
     assert out == {"cputemp": 57}
     assert collector.thermal_hint == "zone"
+
+
+# ---- zcode 项目名推导 ----
+
+def test_project_from_paths_container_skip():
+    from workbuddy.aiwatch.zcode import ZCodeSource
+    src = ZCodeSource.__new__(ZCodeSource)
+    blob = ('"/Users/liuxue/Desktop/www/maozi-diy/client/x.py" '
+            '"/Users/liuxue/Desktop/www/maozi-diy/docs" '
+            '"/Users/liuxue/.zcode/cli/memories" '
+            '"/Users/liuxue/work/molu/backend"')
+    assert src._project_from_blob(blob) == "maozi-diy"  # 频次最高胜出
+
+
+def test_project_from_paths_regex_noise_filtered():
+    from workbuddy.aiwatch.zcode import ZCodeSource
+    src = ZCodeSource.__new__(ZCodeSource)
+    # 转录里嵌着 regex 源码文本，括号组件不许进统计
+    blob = r'/Users/[^/"\,。]+/([^/"\,。]+)(?:/([^/]))(a)( /Users/liuxue/Desktop/www/maozi-diy)'
+    assert src._project_from_blob(blob) == "maozi-diy"
+
+
+def test_project_from_agents_metadata():
+    import json, tempfile
+    from workbuddy.aiwatch.zcode import ZCodeSource
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        meta = root / "agents" / "sess_main" / "agent_abc"
+        meta.mkdir(parents=True)
+        (meta / "metadata.json").write_text(json.dumps(
+            {"cwd": "/Users/liuxue/Desktop/www/maozi-diy", "description": "修 bug"}))
+        src = ZCodeSource(root)
+        assert src._project_from_agents("sess_main") == "maozi-diy"
+
+
+def test_project_subagent_by_child_session_id():
+    import json, tempfile
+    from workbuddy.aiwatch.zcode import ZCodeSource
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        meta = root / "agents" / "sess_parent" / "agent_abc"
+        meta.mkdir(parents=True)
+        (meta / "metadata.json").write_text(json.dumps(
+            {"cwd": "/Users/liuxue/Desktop/www/maozi-diy",
+             "childSessionId": "sess_subagent_agent_abc",
+             "description": "调查距离NaN问题"}))
+        src = ZCodeSource(root)
+        assert src._project_from_agents("sess_subagent_agent_abc") == "调查距离NaN问题"

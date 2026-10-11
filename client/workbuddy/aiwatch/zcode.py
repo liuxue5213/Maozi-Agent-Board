@@ -2,9 +2,20 @@
 
 ~/.zcode/cli/log/zcode-YYYY-MM-DD.jsonl 每条事件带 sessionId/turnId，
 可同时区分多个会话、多个项目的并行任务。
+
+项目名提取（之前完全没有 → 设备/Web 全显示「未命名项目」）：
+  1. agents/<sid>/agent_*/metadata.json —— 主会话派生过子代理时，元数据里带
+     父会话的 cwd/workspaceRoot；
+  2. agents/*/agent_*/metadata.json 的 childSessionId —— 子代理会话
+     （sess_subagent_*）按此归属父工作区，拿 description 当标签；
+  3. rollout/model-io-<sid>.jsonl 转录里的路径频次 —— 兜底，取最常见的
+     用户目录下二级目录名当项目名（排除 .zcode 等系统目录）。
+结果按 sid 缓存：成功 1 小时、失败 90 秒后重试。
 """
 import json
+import re
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +23,18 @@ from . import (Activity, ASK, DONE, ERROR, GENERATING, THINKING, TOOL, IDLE,
                WAIT_INPUT, newest_file, _PRIO)
 
 _INFLIGHT_CAP = 600.0
+_PROJ_HIT_TTL = 3600.0
+_PROJ_MISS_TTL = 90.0
+# 路径频次统计要排除的目录级：用户主目录下的「容器目录」（Desktop/www/maozi-diy
+# 里的项目是 maozi-diy 不是 Desktop），以及系统目录
+_CONTAINERS = {"Desktop", "Documents", "Downloads", "Projects", "projects",
+               "code", "dev", "work", "src", "repos", "www", "go", "git"}
+_NON_PROJECT = {".zcode", ".claude", ".codex", "usr", "opt", "private",
+                "tmp", "var", "etc", "Applications", "Library", "System"}
+_PATH_RE = re.compile(r"/Users/[^/\"\\,\s。()]+(?:/([^/\"\\,\s。()]+))?(?:/([^/\"\\,\s。()]+))?(?:/([^/\"\\,\s。()]+))?(?:/([^/\"\\,\s。()]+))?")
+# 组件名合法性：转录里会出现 regex 源码等非路径文本，肉眼可辨的目录名
+# 只会是「字母数字开头、不含括号引号」的短名——过滤掉解析噪音
+_COMP_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,40}")
 
 
 def _iso_ts(s: str) -> float:
@@ -130,7 +153,83 @@ class ZCodeSource:
             if cur is None or _PRIO.get(ASK, 0) > _PRIO.get(cur.state, 0):
                 per_sid[ask_sid] = Activity("zcode", ASK, now, sid=ask_sid)
 
+        # 5) 项目名：日志源不给 project，逐会话从 agent 元数据/转录推导
+        for a in per_sid.values():
+            if not a.project:
+                a.project = self._sid_project(a.sid, cache)
+
         return list(per_sid.values())
+
+    # ---- 项目名推导（带缓存，结果进共享 cache 字典） ----
+
+    def _sid_project(self, sid: str, cache) -> str:
+        key = f"zc-proj-{sid}"
+        now = time.time()
+        hit = cache.get(key)
+        if hit and now - hit[0] < (_PROJ_HIT_TTL if hit[1] else _PROJ_MISS_TTL):
+            return hit[1]
+        name = self._project_from_agents(sid)
+        if not name:
+            name = self._project_from_rollout(sid)
+        cache[key] = (now, name)
+        return name
+
+    def _project_from_agents(self, sid: str) -> str:
+        """从 agent 元数据拿工作区名。子代理会话走 childSessionId 反查。"""
+        agents_root = self.root / "agents"
+        paths = []
+        if sid.startswith("sess_subagent_"):
+            paths = sorted(agents_root.glob("*/agent_*/metadata.json"))
+        else:
+            paths = sorted(agents_root.glob(f"{sid}/agent_*/metadata.json"))
+        newest, found = (None, 0.0), ""
+        for path in paths:
+            try:
+                mtime = path.stat().st_mtime
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if sid.startswith("sess_subagent_") \
+                    and data.get("childSessionId") != sid:
+                continue
+            if mtime < newest[1]:
+                continue
+            workspace = str(data.get("cwd") or data.get("workspaceRoot") or "")
+            if workspace:
+                newest = (data, mtime)
+                # 子代理优先用任务描述当标签（比目录名更可读），
+                # 但描述可能是长句，只取前 16 字
+                desc = str(data.get("description") or "").strip()
+                found = (desc[:16] if desc and sid.startswith("sess_subagent_")
+                         else Path(workspace).name)
+        return found
+
+    @staticmethod
+    def _project_from_blob(blob: str) -> str:
+        counts = Counter()
+        for parts in _PATH_RE.findall(blob):
+            for comp in parts:
+                if not comp or not _COMP_RE.fullmatch(comp):
+                    continue
+                if comp in _NON_PROJECT or comp in _CONTAINERS:
+                    continue
+                counts[comp] += 1
+                break
+        return counts.most_common(1)[0][0] if counts else ""
+
+    def _project_from_rollout(self, sid: str) -> str:
+        """转录里路径频次兜底：最常见二级目录 = 工作区名。"""
+        path = self.root / "rollout" / f"model-io-{sid}.jsonl"
+        try:
+            if time.time() - path.stat().st_mtime > 86400 * 3:
+                return ""                      # 3 天内的会话才值得找
+            with open(path, "rb") as f:
+                size = path.stat().st_size
+                f.seek(max(0, size - 262144))
+                blob = f.read().decode("utf-8", "ignore")
+        except OSError:
+            return ""
+        return self._project_from_blob(blob)
 
     def _detect_ask(self, now, cache):
         """最新 rollout 记录的 toolCalls 里含 ask/confirm/plan 类工具 → 该会话在等确认。"""

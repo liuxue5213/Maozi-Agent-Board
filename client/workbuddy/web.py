@@ -122,18 +122,6 @@ def start_settings_server(app, port):
                 self.end_headers()
                 self.wfile.write(body)
                 return
-            if path == "/api/ota":
-                length = int(self.headers.get("Content-Length", "0"))
-                if not (0 < length <= 3 * 1024 * 1024):
-                    self._json(413, {"error": "固件需在 3MB 内"})
-                    return
-                if not app.link or not app.link.status.startswith("connected:"):
-                    self._json(503, {"error": "设备未连接"})
-                    return
-                data = self.rfile.read(length)
-                app.send_ota(data)
-                self._json(200, {"status": "固件已发送，设备将自动重启并切分区"})
-                return
             if path == "/api/bgimg":
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > 120 * 1024:
@@ -275,6 +263,27 @@ def start_settings_server(app, port):
                 return
             if path.startswith("/hook/"):
                 self._hook(path)
+                return
+            if path == "/api/ota":
+                # 固件升级是二进制 POST：必须放行在 JSON 门槛之前。
+                # 旧版这条路由只在 do_GET 里，前端 POST 永远 415——升级按钮
+                # 从上线起就没通过。
+                # 上限 = default_16MB.csv 的 app0 槽 0x640000（6.25MB）；
+                # 旧 3MB 是拍脑袋值，当前固件 4.3MB 根本发不出去。
+                # 0xE9 是 ESP32 镜像 magic，明显不是固件的文件直接拒掉。
+                length = int(self.headers.get("Content-Length", "0"))
+                if not (0 < length <= 0x640000):
+                    self._json(413, {"error": "固件需在 6.25MB 内（设备 OTA 槽大小）"})
+                    return
+                if not app.link or not app.link.status.startswith("connected:"):
+                    self._json(503, {"error": "设备未连接"})
+                    return
+                data = self.rfile.read(length)
+                if not data or data[0] != 0xE9:
+                    self._json(400, {"error": "不是 ESP32 固件文件（magic 校验失败）"})
+                    return
+                app.send_ota(data)
+                self._json(200, {"status": "固件已发送，设备将自动重启并切分区"})
                 return
             content_type = self.headers.get("Content-Type", "").split(";", 1)[0]
             if path == "/api/bgimg-clear":

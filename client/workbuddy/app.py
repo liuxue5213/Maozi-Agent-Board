@@ -683,16 +683,22 @@ class App:
         return True
 
     def send_ota(self, data: bytes) -> bool:
-        """OTA 固件分帧下发（OTA=BEGIN/DATA/END）。成功后设备自动重启。"""
+        """OTA 固件分帧下发（OTA=BEGIN/DATA/END）。成功后设备自动重启。
+
+        每行 512B + 2ms 间隔：与固件 proto.cpp 的解码缓冲配对。921600 波特率
+        下 4.3MB 固件约 1 分钟（旧 90B+12ms 组合要 10 分钟，等于不可用）。
+        设备主循环边收边写 flash，2ms 是给 flash 写入留的余量；遥测行按序
+        交织处理，互不影响。
+        """
         if not self.link or not self.link.status.startswith("connected:"):
             return False
         import base64 as _b64
         self.link.send(f"OTA=BEGIN,{len(data)}\n".encode())
         time.sleep(0.1)
-        for seq, start in enumerate(range(0, len(data), 90)):
-            chunk = _b64.b64encode(data[start:start + 90]).decode("ascii")
+        for seq, start in enumerate(range(0, len(data), 512)):
+            chunk = _b64.b64encode(data[start:start + 512]).decode("ascii")
             self.link.send(f"OTA=DATA,{seq},{chunk}\n".encode())
-            time.sleep(0.012)
+            time.sleep(0.002)
         time.sleep(0.3)
         self.link.send("OTA=END\n".encode())
         self.health.event("ota_sent", size=len(data))
