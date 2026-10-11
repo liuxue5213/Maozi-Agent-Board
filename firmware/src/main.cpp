@@ -151,6 +151,10 @@ void loop() {
             // PAGE 为 1 基；ui_set_page 自带越界保护
             if (proto.t.page_req > 0) ui_set_page((uint8_t)(proto.t.page_req - 1));
         }
+        if (proto.t.inbox_changed) {
+            proto.t.inbox_changed = false;
+            ui_set_inbox(proto.t.inbox);
+        }
         if (proto.t.snap_req_changed && !rebuilt_this_pass) {
             // 实拍：阻塞约 10s（串口回传），期间主循环停顿属预期。
             // ⚠️ 重建当拍必须推迟：ui_rebuild 删建控件后同一拍立即

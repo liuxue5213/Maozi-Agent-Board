@@ -6,6 +6,7 @@ void ui_init();
 void ui_rebuild();
 void ui_update(const Telemetry& t);      // 新数据到达时刷新界面
 void ui_set_online(bool online);         // 链路状态（心跳超时判断）
+void ui_set_inbox(int n);                // 服务端收件箱待处理数（页脚角标）
 // 主题推送（hex 颜色 0xRRGGBB），立即生效并整屏重建
 void ui_apply_theme(uint32_t bg, uint32_t card, uint32_t accent,
                     uint32_t text, uint32_t sub, uint32_t grad = 0);

@@ -341,6 +341,10 @@ void Proto::handle(const char* line) {
     else if (!strcmp(key, "UPTIME"))   t.uptime = (uint32_t)atol(v);
     else if (!strcmp(key, "VOL"))      t.vol = atoi(v);
     else if (!strcmp(key, "MUT"))      t.mut = atoi(v);
+    else if (!strcmp(key, "INBOX")) {
+        int n = atoi(v);
+        if (n != t.inbox) { t.inbox = n; t.inbox_changed = true; }
+    }
     else if (!strcmp(key, "WX")) {
         // WX=<temp>,<code>,<tmax>,<tmin>
         char buf[48];

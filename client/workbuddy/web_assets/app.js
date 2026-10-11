@@ -2348,83 +2348,15 @@ function doneSeenAt(){
   return isFinite(raw)&&raw>0 ? raw : 0;
 }
 
-/* ================= 需要处理（收件箱 v2） =================
-   概览顶部回答「现在有什么要我处理」：等你/待确认/出错的会话 + 24 小时内
-   日程 + 硬件告警（磁盘水位）。数据全部来自 /api/status，纯前端聚合。
-   已读状态按条目 id 记在本机，两种处理：
-     · 知道了 = 永久静音该条目（条目消失时记录自动清理）；
-     · 稍后 = 30 分钟后重新出现（存到期时间戳）。
-   同一问题换个会话 id 会重新出现——宁可重复提醒也不静默吞掉。 */
-const INBOX_SEEN_KEY='workbuddy-inbox-seen';
-const INBOX_SNOOZE_MS=30*60000;
-function inboxSeenMap(){
-  try{
-    const raw=JSON.parse(localStorage.getItem(INBOX_SEEN_KEY)||'{}');
-    // v1 存的是数组（永久静音）；迁移成 {id: 0} 形状
-    if(Array.isArray(raw)) return Object.fromEntries(raw.map(id=>[id,0]));
-    return raw&&typeof raw==='object'?raw:{};
-  }catch(e){ return {} }
-}
-function dismissInbox(ids, snoozeMs=0){
-  try{
-    const seen=inboxSeenMap();
-    const until=snoozeMs?Date.now()+snoozeMs:0;
-    ids.forEach(id=>{seen[id]=until});
-    localStorage.setItem(INBOX_SEEN_KEY,
-      JSON.stringify(Object.fromEntries(Object.entries(seen).slice(-100))));
-  }catch(e){}
-}
-function inboxPruneSeen(aliveIds){
-  // 已消失条目的静音记录清掉（永久+过期稍后一并），集合不无限长
-  const seen=inboxSeenMap();
-  const stale=Object.keys(seen).filter(id=>!aliveIds.has(id));
-  if(!stale.length)return;
-  stale.forEach(id=>delete seen[id]);
-  try{ localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify(seen)) }catch(e){}
-}
-function inboxWhen(ms){
-  const m=Math.round(ms/60000);
-  if(m<1)return '1 分钟内';
-  if(m<60)return `${m} 分钟后`;
-  return `${Math.round(m/60)} 小时后`;
-}
-function computeInbox(){
-  const items=[];
-  const ALERT={WAIT_INPUT:['等你回复','warn'],ASK:['等你确认','warn'],ERROR:['出错','bad']};
-  (live.tasks||[]).forEach(t=>{
-    if(!ALERT[t.state])return;
-    const [label,sev]=ALERT[t.state];
-    items.push({id:`t:${t.tool}:${t.id}`, kind:'task', sev,
-      title:`${t.tool} · ${t.project||'未命名'}`,
-      detail:`${label} · 已等 ${fmtElapsed(t.age)}`, state:t.state});
-  });
-  const now=Date.now();
-  ((draft||{}).calendar||[]).forEach(c=>{
-    if(c.enabled===false)return;
-    const at=new Date(`${c.date}T${c.time}:00`).getTime();
-    if(!isFinite(at))return;
-    const dt=at-now;
-    if(dt<-3600e3||dt>24*3600e3)return;
-    items.push({id:`c:${c.id}`, kind:'calendar', sev:'info', title:c.title||'日程',
-      detail: dt<=0?'已开始':`${inboxWhen(dt)}开始（${c.time}）`, at, state:'EVENT'});
-  });
-  const t=live.telemetry||{};
-  if(typeof t.disk==='number'&&t.disk>=90)
-    items.push({id:'hw:disk', kind:'hw', sev:'bad', title:`磁盘 ${t.disk}%`,
-      detail:t.diskfree!=null?`仅剩 ${t.diskfree} GB 可用`:'空间不足', state:'HW'});
-  items.sort((a,b)=>(a.at||0)-(b.at||0));
-  return items;
-}
+/* ================= 需要处理（收件箱 v3） =================
+   概览顶部回答「现在有什么要我处理」。计算已搬到服务端（app.inbox_items，
+   唯一事实源）：Web 收件箱、设备页脚角标（INBX=）、未来的推送去重共用
+   同一份待处理列表；「知道了/稍后」写服务端 inbox-state.json——设备角标
+   与 Web 状态从此一致。前端只负责渲染与发动作。 */
+const INBOX_SNOOZE_MIN=30;
 function renderInbox(){
   const rail=$('ov-inbox'); if(!rail)return;
-  const all=computeInbox();
-  const seen=inboxSeenMap();
-  const now=Date.now();
-  const pending=all.filter(x=>{
-    const until=seen[x.id];
-    return until===undefined || (until>0 && until<=now);   // 0=永久静音
-  });
-  inboxPruneSeen(new Set(all.map(x=>x.id)));
+  const pending=live.inbox_items||[];
   rail.hidden=pending.length===0;
   const count=$('inbox-count');
   if(count)count.textContent=`${pending.length} 项待处理`;
@@ -2443,10 +2375,16 @@ function renderInbox(){
     row.append(title, el('span','',item.detail));
     const snooze=el('button','linklike','稍后');
     snooze.type='button'; snooze.title='30 分钟后重新提醒';
-    snooze.onclick=()=>{dismissInbox([item.id],INBOX_SNOOZE_MS);renderInbox()};
+    snooze.onclick=async()=>{
+      try{await request('/api/inbox-dismiss',{ids:[item.id],snooze_minutes:INBOX_SNOOZE_MIN});poll()}
+      catch(e){notice(e.message,true)}
+    };
     const ok=el('button','linklike','知道了');
     ok.type='button';
-    ok.onclick=()=>{dismissInbox([item.id]);renderInbox()};
+    ok.onclick=async()=>{
+      try{await request('/api/inbox-dismiss',{ids:[item.id]});poll()}
+      catch(e){notice(e.message,true)}
+    };
     row.append(snooze,ok);
     root.append(row);
   });

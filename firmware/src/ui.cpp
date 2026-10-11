@@ -65,6 +65,7 @@ struct PageView {
     lv_obj_t *screen = nullptr, *conn = nullptr, *alert = nullptr;
     lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
     lv_obj_t *offbar = nullptr;   // 离线状态条（顶部 4px 红条）
+    lv_obj_t *inbox_lbl = nullptr;  // 收件箱角标（页脚右下「N件」，琥珀色）
     WidgetView widgets[4];
 };
 
@@ -74,6 +75,7 @@ uint32_t bg = COL_BG, grad = COL_BG, card = COL_CARD, accent = COL_ACCENT;
 uint8_t card_opa = 255;              // 卡片不透明度（0-255），背景图模式下 70% 左右最有层次
 uint32_t text_color = COL_TEXT, sub_color = COL_SUB;
 bool online = false, have_data = false, alarm_active = false;
+static int inbox_pending = -1;   // 服务端收件箱待处理数（build_page 与角标共用）
 bool top_clock = true, top_wx = true;
 Telemetry latest;
 char pinned_id[9] = "";
@@ -1044,6 +1046,16 @@ void build_page(uint8_t index) {
     // 左下角单 ⚙：打开设置页（快捷应用 + 音量/媒体 + 亮度 合并）。
     // 原左 ☰ 右 ⚙ 双按钮按需求合并；右侧留白给页码呼吸。
     button(page.screen, "设", 4, FOOT_Y - 2, 40, 28, open_settings_cb, nullptr);
+    // 收件箱角标：页脚右下（6 页时页码点最多到 x≈281，角标 x284 宽 32 不相撞）。
+    // 文本由 ui_set_inbox 按服务端 INBX= 维护；-1/0 隐藏。
+    page.inbox_lbl = label(page.screen, "", 20, COL_WARN, 284, FOOT_Y - 2, 32, 26);
+    if (inbox_pending > 0) {
+        char t[12];
+        snprintf(t, sizeof(t), "%d件", inbox_pending);
+        set_text(page.inbox_lbl, t);
+    } else {
+        lv_obj_add_flag(page.inbox_lbl, LV_OBJ_FLAG_HIDDEN);
+    }
     for (uint8_t k = 0; k < n; ++k) {
         int cx = x0 + k * (DOT_W + GAP);
         // 透明外扩热区：保证每颗圆点实际可触面积 >= 44x44。
@@ -1771,6 +1783,23 @@ void ui_update(const Telemetry& telemetry) {
     }
     latest = telemetry;
     render_all();
+}
+
+void ui_set_inbox(int n) {
+    // 服务端收件箱待处理数变化 → 页脚角标。set_text 对已删除控件安全
+    // （views 全部指向当前页）；ui_rebuild 后由 build_page 用静态值重建。
+    inbox_pending = n;
+    for (uint8_t i = 0; i < view_count; ++i) {
+        if (!views[i].inbox_lbl) continue;
+        if (n > 0) {
+            char t[12];
+            snprintf(t, sizeof(t), "%d件", n);
+            set_text(views[i].inbox_lbl, t);
+            lv_obj_clear_flag(views[i].inbox_lbl, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(views[i].inbox_lbl, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
 }
 
 void ui_set_online(bool connected) {

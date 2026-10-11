@@ -83,6 +83,9 @@ struct Telemetry {
     // 电脑控制状态（控制中心显示；-1 = 未知/不可用）
     int vol = -1;
     int mut = -1;
+    // 服务端收件箱待处理数（页脚琥珀角标「N件」；-1 = 尚未收到）
+    int inbox = -1;
+    bool inbox_changed = false;
     // 天气（客户端 30 分钟刷新）
     float wx_temp = NAN, wx_hi = NAN, wx_lo = NAN;
     int wx_code = -1;

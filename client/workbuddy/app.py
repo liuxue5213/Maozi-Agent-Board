@@ -37,6 +37,15 @@ DONE_WIRE_SLOTS = 3
 _PUSH_STATE_NAMES = {"DONE": "已完成", "ERROR": "出错",
                      "WAIT_INPUT": "等你回复", "ASK": "待确认"}
 
+# 收件箱静音状态落盘（{id: 到期 epoch}，0=永久）：Web/设备角标/推送共用
+# 一个事实源。文件很小且每秒最多写一次，mtime 校验懒加载足够。
+INBOX_STATE_PATH = Path.home() / ".workbuddy" / "inbox-state.json"
+
+
+def _fmt_mmss(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
 
 def _in_quiet_hours(window: str, now: float | None = None) -> bool:
     """安静时段判定："HH:MM-HH:MM"，可跨零点；空串/解析失败 = 不安静。
@@ -490,6 +499,98 @@ class App:
         elif action == "PREV":
             self.control.media("prev")
 
+    # ---- 需要处理（收件箱）：Web / 设备角标 / 推送共用的服务端事实源 ----
+
+    def _inbox_seen(self) -> dict:
+        """读静音记录；文件被外部改动（mtime 变化）时重新加载。"""
+        cache = getattr(self, "_inbox_seen_cache", None)
+        try:
+            mtime = INBOX_STATE_PATH.stat().st_mtime
+        except OSError:
+            mtime = None
+        if cache is None or cache[0] != mtime:
+            data = {}
+            try:
+                data = json.loads(INBOX_STATE_PATH.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            data = data if isinstance(data, dict) else {}
+            cache = self._inbox_seen_cache = (mtime, data)
+        return cache[1]
+
+    def inbox_dismiss(self, ids: list, snooze_minutes: float = 0):
+        """静音条目：snooze_minutes>0 = 到期重现；否则永久（条目消失自动清）。"""
+        seen = self._inbox_seen()
+        until = time.time() + snooze_minutes * 60 if snooze_minutes else 0
+        for i in ids:
+            i = str(i)
+            # 硬件水位条 id 恒定：永久静音会让未来的告警也哑掉 → 最长静音 12h
+            if i.startswith("hw:") and not until:
+                until = time.time() + 12 * 3600
+            seen[str(i)] = until
+        try:
+            INBOX_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            INBOX_STATE_PATH.write_text(
+                json.dumps(seen, ensure_ascii=False), encoding="utf-8")
+            self._inbox_seen_cache = (INBOX_STATE_PATH.stat().st_mtime, seen)
+        except OSError:
+            pass
+
+    def inbox_items(self) -> list:
+        """聚合待处理事项（加锁入口）。status_snapshot 已持有 profile_lock，
+        必须走 _inbox_items_locked——普通 Lock 不可重入，否则自死锁。"""
+        with self.profile_lock:
+            return self._inbox_items_locked()
+
+    def _inbox_items_locked(self) -> list:
+        """聚合待处理事项（等你/待确认/出错 + 24h 内日程 + 磁盘水位），
+        已静音的剔除。要求调用方已持有 profile_lock。"""
+        items = []
+        now = time.time()
+        names = {"WAIT_INPUT": ("等你回复", "warn"),
+                 "ASK": ("等你确认", "warn"), "ERROR": ("出错", "bad")}
+        for t in self.tasks:
+            state = t.get("state")
+            if state not in names:
+                continue
+            label, sev = names[state]
+            items.append({"id": f"t:{t['tool']}:{t['id']}", "kind": "task",
+                          "sev": sev,
+                          "title": f"{t['tool']} · {t.get('project') or '未命名'}",
+                          "detail": f"{label} · 已等 {_fmt_mmss(t.get('age', 0))}"})
+        calendar = list((self.profile.get("calendar") or []))
+        for c in calendar:
+            if c.get("enabled") is False:
+                continue
+            try:
+                start = time.mktime(time.strptime(
+                    f"{c['date']} {c['time']}", "%Y-%m-%d %H:%M"))
+            except (KeyError, ValueError):
+                continue
+            dt = start - now
+            if dt < -3600 or dt > 24 * 3600:
+                continue
+            items.append({"id": f"c:{c['id']}", "kind": "calendar", "sev": "info",
+                          "title": c.get("title") or "日程",
+                          "detail": "已开始" if dt <= 0
+                          else f"{int(dt // 60)} 分钟后开始（{c['time']}）",
+                          "at": start})
+        disk = self.last.get("disk")
+        if isinstance(disk, (int, float)) and disk >= 90:
+            free = self.last.get("diskfree")
+            items.append({"id": "hw:disk", "kind": "hw", "sev": "bad",
+                          "title": f"磁盘 {int(disk)}%",
+                          "detail": (f"仅剩 {free} GB 可用"
+                                     if free is not None else "空间不足")})
+        seen = self._inbox_seen()
+        now2 = time.time()
+        return [x for x in items
+                if x["id"] not in seen or (seen[x["id"]] and seen[x["id"]] <= now2)]
+
+    def inbox_count(self) -> int:
+        with self.profile_lock:
+            return len(self._inbox_items_locked())
+
     def _push_notify(self, name: str, state: str):
         """手机推送（Bark / ntfy 通用）：AI 跨入需要用户知道的状态时触发。
 
@@ -628,6 +729,10 @@ class App:
                     # 自检面板用：手机推送是否已配置
                     "push_enabled": bool(str(getattr(self.cfg, "push_url", "") or "").strip()),
                     "push_quiet": str(getattr(self.cfg, "push_quiet", "") or ""),
+                    # 需要处理：待处理数 + 明细（Web 收件箱与设备角标的事实源）。
+                    # 本方法已持有 profile_lock：只能用 _locked 变体，不可重入。
+                    "inbox": len(self._inbox_items_locked()),
+                    "inbox_items": self._inbox_items_locked(),
                     # 设置页回填用；仅本机 Web 可见（服务绑定 127.0.0.1）
                     "push_url": str(getattr(self.cfg, "push_url", "") or ""),
                     # 本机采集能力与温度来源（Windows 上用于「装 LHM」引导）
@@ -836,6 +941,11 @@ class App:
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
         t["remind"] = self._next_remind(now)
+        # 收件箱待处理数：设备页脚角标（INBX=）与 Web 红点共用
+        try:
+            t["inbox"] = self.inbox_count()
+        except Exception:
+            t["inbox"] = 0
         t.update(self.control.snapshot())  # VOL/MUT（不可用平台自动省略）
         with self.weather._lock:
             w = dict(self.weather.data)

@@ -389,6 +389,20 @@ def start_settings_server(app, port):
                     return
                 if path == "/api/validate":
                     self._json(200, {"profile": validate_profile(data)})
+                elif path == "/api/inbox":
+                    self._json(200, {"items": app.inbox_items(),
+                                     "count": app.inbox_count()})
+                elif path == "/api/inbox-dismiss":
+                    ids = data.get("ids") or []
+                    if not isinstance(ids, list) or not ids:
+                        self._json(400, {"error": "缺少 ids"})
+                        return
+                    try:
+                        snooze = float(data.get("snooze_minutes", 0) or 0)
+                    except (TypeError, ValueError):
+                        snooze = 0
+                    app.inbox_dismiss([str(i) for i in ids], snooze)
+                    self._json(200, {"count": app.inbox_count()})
                 elif path == "/api/calendar-ics":
                     # ICS 日程导入：解析 → 与现有 calendar 按 id 合并 → 走标准
                     # save（校验 + 版本自增）。同 id = 同一来源事件，重复导入幂等。

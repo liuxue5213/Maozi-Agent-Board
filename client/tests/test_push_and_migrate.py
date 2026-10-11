@@ -164,3 +164,60 @@ def test_push_notify_respects_quiet_hours():
         assert not received, "安静时段内不应推送"
     finally:
         srv.shutdown()
+
+
+# ---- 服务端收件箱 ----
+
+def _inbox_app(tasks=(), calendar=(), telemetry=None, tmp=None):
+    import time as t_mod
+    from workbuddy import app as app_mod
+    app = App.__new__(App)
+    app.tasks = list(tasks)
+    app.profile = {"calendar": list(calendar)}
+    app.profile_lock = threading.Lock()
+    app.last = telemetry or {}
+    app.health = _Health()
+    # 静音文件隔离到临时目录
+    state = tmp / "inbox-state.json"
+    app_mod.INBOX_STATE_PATH = state
+    app._inbox_seen_cache = None
+    return app, t_mod
+
+
+def test_inbox_items_tasks_calendar_disk(tmp_path):
+    app, tm = _inbox_app(
+        tasks=[{"tool": "zcode", "id": "a1", "state": "WAIT_INPUT",
+                "project": "maozi-diy", "age": 65},
+               {"tool": "codex", "id": "b2", "state": "GENERATING"}],
+        calendar=[{"id": "e1", "date": "2026-10-11", "time": "23:50",
+                   "title": "今晚", "enabled": True},
+                  {"id": "e2", "date": "2027-01-01", "time": "09:00",
+                   "title": "远期", "enabled": True},
+                  {"id": "e3", "date": "2026-10-11", "time": "08:00",
+                   "title": "已停用", "enabled": False}],
+        telemetry={"disk": 96, "diskfree": 18.5},
+        tmp=tmp_path)
+    # 固定「现在」到日历当天 23:00，让 23:50 的事件落在 24h 窗口内
+    fixed = tm.mktime(tm.strptime("2026-10-11 23:00:00", "%Y-%m-%d %H:%M:%S"))
+    with mock.patch.object(tm, "time", return_value=fixed):
+        items = app.inbox_items()
+    ids = [x["id"] for x in items]
+    assert "t:zcode:a1" in ids          # 等你回复
+    assert "t:codex:b2" not in ids      # 进行中不进收件箱
+    assert "c:e1" in ids and "c:e2" not in ids and "c:e3" not in ids
+    assert "hw:disk" in ids             # 磁盘 ≥90%
+    assert app.inbox_count() == len(items)
+
+
+def test_inbox_dismiss_and_snooze(tmp_path):
+    app, tm = _inbox_app(
+        tasks=[{"tool": "zcode", "id": "a1", "state": "ERROR",
+                "project": "x", "age": 10}],
+        telemetry={"disk": 95}, tmp=tmp_path)
+    app.inbox_dismiss(["t:zcode:a1"], snooze_minutes=30)
+    assert all(x["id"] != "t:zcode:a1" for x in app.inbox_items())
+    # hw:disk 的「知道了」最多静音 12h（条目 id 恒定，永久静音会哑掉未来告警）
+    app.inbox_dismiss(["hw:disk"])
+    until = app._inbox_seen()["hw:disk"]
+    assert until > tm.time() + 11 * 3600
+    assert all(x["id"] != "hw:disk" for x in app.inbox_items())

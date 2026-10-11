@@ -14,6 +14,7 @@ _ORDER = [
     "disk", "diskfree", "disktotal", "bat",
     "netrx", "nettx", "uptime", "wx",
     "vol", "mut",
+    "inbox",
     # 单任务镜像字段（aistate/aitool/aitask/aiprog/aitime/aierr）已下线：
     # 固件从未渲染它们（grep 证实），内容与 ai0 完全重复，白占约 70 字节/帧。
     "temp", "hum",
