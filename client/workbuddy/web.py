@@ -202,6 +202,11 @@ def start_settings_server(app, port):
             if path == "/api/snapshot-meta":
                 self._json(200, {"at": getattr(app, "snap_at", None)})
                 return
+            if path == "/api/inbox":
+                # 需要处理清单（收件箱）：Web 收件箱与设备角标的事实源
+                self._json(200, {"items": app.inbox_items(),
+                                 "count": app.inbox_count()})
+                return
             if path == "/api/trend":
                 # P1-4 行为遥测趋势：?hours=24（上限 7 天）
                 trend = getattr(app, "trend", None)
@@ -412,9 +417,6 @@ def start_settings_server(app, port):
                     self._json(200, {"enabled": enable,
                                      "state": syscal_mod.read_state(),
                                      "refreshed": refreshed})
-                elif path == "/api/inbox":
-                    self._json(200, {"items": app.inbox_items(),
-                                     "count": app.inbox_count()})
                 elif path == "/api/open-project":
                     # 收件箱「打开项目」：在 Finder 显示会话工作目录
                     result = app.open_task_project(str(data.get("id", "")))
