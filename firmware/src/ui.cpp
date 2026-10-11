@@ -1329,7 +1329,7 @@ void render_hardware(WidgetView& view) {
     snprintf(line, sizeof(line), "%d%%", latest.cpu);
     set_text(view.extra[0], line);
     // 温度已升格为底部三列卡，说明行改显 CPU 频率（信息不重复）
-    if (latest.cpufreq > 0) snprintf(tag, sizeof(tag), "%.1f GHz", latest.cpufreq / 1000.0f);
+    if (latest.cpufreq > 0) snprintf(tag, sizeof(tag), "基频 %.1fG", latest.cpufreq / 1000.0f);
     else strcpy(tag, "即时负载");
     set_text(view.extra[1], tag);
     bar_set(view.hw_fill[0], view.hw_bar[0], latest.cpu, accent);
@@ -1373,7 +1373,7 @@ void render_hardware(WidgetView& view) {
     if (latest.gpu_temp_valid) snprintf(line, sizeof(line), "%d℃", (int)(latest.gputemp + 0.5f));
     else strcpy(line, "--");
     set_text(view.hw_temp[1], line);
-    if (latest.fan_valid) snprintf(line, sizeof(line), "%d", (int)(latest.fan + 0.5f));
+    if (latest.fan_valid) snprintf(line, sizeof(line), "%drpm", (int)(latest.fan + 0.5f));
     else strcpy(line, "--");
     set_text(view.hw_temp[2], line);
 }
