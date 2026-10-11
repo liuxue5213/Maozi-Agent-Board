@@ -2570,6 +2570,15 @@ function render(){
    数据新不新鲜、进程识别/hooks/天气/推送是否就绪、配置有没有损坏回退过。
    数据全部来自已有的 /api/status 与 hooks 缓存，不做额外探测。 */
 let hooksInfoCache = null;
+function renderSyscalView(){
+  const s=live.syscal||{}, on=!!live.syscal_enabled;
+  const box=$('syscal-toggle');
+  if(box)box.checked=on;
+  const st=$('syscal-state');
+  if(st)st.textContent = !on ? '未启用'
+    : (s.ok ? `已读取 ${(s.events||[]).length} 条（未来 14 天）`
+            : (s.error||'读取失败'));
+}
 function renderSelfcheck(){
   const root=$('selfcheck-list'); if(!root||!live)return;
   root.replaceChildren();
@@ -2603,6 +2612,12 @@ function renderSelfcheck(){
   rows.push({ok:tempOk, warn:!tempOk, label:'温度数据',
     value: tempOk ? (srcNames[live.thermal_hint]||'可用')
       : '未获取——Windows 装 LibreHardwareMonitor 并以管理员运行一次即可；macOS 需授权 smcpriv 采样器'});
+  rows.push({ok: !!(live.syscal_enabled && (live.syscal||{}).ok),
+    warn: !!live.syscal_enabled && !(live.syscal||{}).ok,
+    label:'系统日历',
+    value: !live.syscal_enabled ? '未启用（设置页打开，24h 内事件进收件箱）'
+      : ((live.syscal||{}).ok ? `已读取 ${(live.syscal.events||[]).length} 条`
+        : ((live.syscal||{}).error || '读取失败'))});
   rows.push({ok:!!live.push_enabled, label:'手机推送',
     value: live.push_enabled
       ? ('已配置（出错/等你时推送）'+(live.push_quiet?` · 安静时段 ${live.push_quiet}`:''))
@@ -2621,6 +2636,7 @@ function renderSelfcheck(){
   if(urlBox&&document.activeElement!==urlBox) urlBox.value=live.push_url||'';
   const quietBox=$('push-quiet');
   if(quietBox&&document.activeElement!==quietBox) quietBox.value=live.push_quiet||'';
+  renderSyscalView();
 }
 // 趋势视图：每 60s 重画（新桶会推进曲线）；范围切换立即重画
 setInterval(()=>{if(currentView==='history')drawTrendChart()},60000);
@@ -3348,6 +3364,25 @@ function bind(){
       e.target.checked=r.enabled;notice(r.enabled?'已开启开机自启':'已关闭开机自启')}
     catch(err){e.target.checked=!e.target.checked;notice(err.message,true)}
   };
+  // ---- 系统日历只读接入（macOS EventKit；首次打开会弹日历授权） ----
+  $('syscal-toggle').onchange=async e=>{
+    const on=e.target.checked;
+    if(on)notice(on?'正在读取系统日历…首次会请求日历访问授权':'已关闭系统日历接入');
+    try{
+      await request('/api/syscal',{enable:on});
+      await poll(); renderSyscalView();
+    }catch(err){e.target.checked=!on;notice(err.message,true)}
+  };
+  $('btn-syscal-refresh').onclick=pending($('btn-syscal-refresh'),async()=>{
+    try{
+      const r=await request('/api/syscal',{enable:true,refresh:true});
+      $('syscal-toggle').checked=true;
+      const s=r.state||{};
+      notice(s.ok?`已读取 ${s.events.length} 条系统日历事件`:`读取失败：${s.error||'未知原因'}`, !s.ok);
+      await poll(); renderSyscalView();
+    }catch(e){notice(e.message,true)}
+  });
+
   // ---- 手机推送设置（URL + 安静时段，写 config.json） ----
   $('btn-push-save').onclick=pending($('btn-push-save'),async()=>{
     const url=$('push-url').value.trim();

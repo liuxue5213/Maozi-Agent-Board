@@ -18,6 +18,7 @@ from .profile import encode_profile, load_profile, save_profile, validate_profil
 from .telemetry import HealthLog
 from .trend import TrendStore
 from .weather import WeatherFetcher
+from . import syscal as syscal_mod
 
 
 def _proc_report():
@@ -133,6 +134,12 @@ class App:
         self._np_cache = {"supported": None, "now": {}}
         self._img_reply = None
         self.weather = WeatherFetcher(lambda: (self.profile.get('weather') or {}).get('cities', []))
+        # 系统日历只读接入（macOS EventKit）：默认关，设置页打开后开始拉取
+        self.syscal_fetcher = None
+        if getattr(cfg, "syscal", False):
+            from .syscal import SysCalFetcher
+            self.syscal_fetcher = SysCalFetcher()
+            self.syscal_fetcher.start()
         self.fw_caps = None          # 设备能力（来自 FW 握手），None = 未知
         self.profile_lock = threading.Lock()
         self.profile = load_profile()
@@ -273,6 +280,8 @@ class App:
         if self.usage_scanner:
             self.usage_scanner.stop()
         self.weather.stop()
+        if self.syscal_fetcher:
+            self.syscal_fetcher.stop()
         if self.link:
             try:
                 self.link.stop()
@@ -575,6 +584,23 @@ class App:
                           "detail": "已开始" if dt <= 0
                           else f"{int(dt // 60)} 分钟后开始（{c['time']}）",
                           "at": start})
+        # 系统日历（只读）：24h 内事件进收件箱；拉取失败静默跳过
+        if getattr(self, "syscal_fetcher", None) is not None:
+            state = syscal_mod.read_state()
+            for e in state.get("events") or []:
+                try:
+                    start = time.mktime(time.strptime(
+                        f"{e['date']} {e['time']}", "%Y-%m-%d %H:%M"))
+                except (KeyError, ValueError):
+                    continue
+                dt = start - now
+                if dt < -3600 or dt > 24 * 3600:
+                    continue
+                items.append({"id": f"s:{e['id']}", "kind": "syscal", "sev": "info",
+                              "title": e.get("title") or "日程",
+                              "detail": "已开始" if dt <= 0
+                              else f"{int(dt // 60)} 分钟后开始（{e['time']}）",
+                              "at": start})
         disk = self.last.get("disk")
         if isinstance(disk, (int, float)) and disk >= 90:
             free = self.last.get("diskfree")
@@ -733,6 +759,9 @@ class App:
                     # 本方法已持有 profile_lock：只能用 _locked 变体，不可重入。
                     "inbox": len(self._inbox_items_locked()),
                     "inbox_items": self._inbox_items_locked(),
+                    # 系统日历只读接入的当前状态（自检面板/设置页用）
+                    "syscal_enabled": bool(getattr(self.cfg, "syscal", False)),
+                    "syscal": syscal_mod.read_state(),
                     # 设置页回填用；仅本机 Web 可见（服务绑定 127.0.0.1）
                     "push_url": str(getattr(self.cfg, "push_url", "") or ""),
                     # 本机采集能力与温度来源（Windows 上用于「装 LHM」引导）

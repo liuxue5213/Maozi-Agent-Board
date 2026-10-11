@@ -56,6 +56,9 @@ class Config:
     # 安静时段 "HH:MM-HH:MM"（可跨零点，如 23:00-07:30）：窗口内不推手机，
     # 事件仍进 Web 收件箱。空 = 不启用。
     push_quiet: str = ""
+    # 系统日历只读接入（macOS EventKit）：事件进收件箱，不写 profile。默认关——
+    # 打开时才首次访问日历（TCC 授权弹窗），被拒不影响手工与 ICS 日程。
+    syscal: bool = False
     reminders: list = field(default_factory=list)  # [{"time":"09:30","text":"站会"}]
     theme: dict = field(default_factory=lambda: {
         "bg": "0B1220", "card": "141E32", "accent": "22D3EE",

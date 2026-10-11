@@ -742,6 +742,15 @@
         </section>
         <section class="panel settings-card" aria-labelledby="client-heading">
           <div class="panel-head"><div><h2 id="client-heading">客户端与配置</h2><p class="panel-kicker">启动、备份、诊断与升级</p></div></div>
+          <div class="field-heading"><span>系统日历（只读）</span></div>
+          <label class="field toggle">
+            <input type="checkbox" id="syscal-toggle">
+            <span>读取 macOS 日历，24h 内事件进收件箱（不写入小屏日程）</span>
+          </label>
+          <div class="btn-row">
+            <button type="button" class="button" id="btn-syscal-refresh">立即刷新</button>
+            <span class="hint-inline" id="syscal-state">—</span>
+          </div>
           <div class="field-heading"><span>手机推送（Bark / ntfy）</span></div>
           <label class="field">
             <span>推送地址</span>

@@ -14,3 +14,5 @@ pycaw>=20230407 ; sys_platform == "win32"
 comtypes>=1.2 ; sys_platform == "win32"
 # Windows：当前曲目/媒体会话走 SMTC（缺失时设置页显示「不支持读取」）
 winsdk>=1.0.0b10 ; sys_platform == "win32"
+# macOS：系统日历只读接入（EventKit；缺失时设置页诚实降级为未启用）
+pyobjc-framework-EventKit>=10.0 ; sys_platform == "darwin"

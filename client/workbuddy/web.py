@@ -389,6 +389,29 @@ def start_settings_server(app, port):
                     return
                 if path == "/api/validate":
                     self._json(200, {"profile": validate_profile(data)})
+                elif path == "/api/syscal":
+                    # 系统日历只读接入：{enable:bool, refresh:bool}。
+                    # 打开时启动后台拉取（首次会弹 TCC 日历授权）；refresh 立即拉一次。
+                    enable = bool(data.get("enable"))
+                    app.cfg.syscal = enable
+                    try:
+                        app.cfg.save()
+                    except OSError:
+                        pass
+                    from . import syscal as syscal_mod
+                    fetcher = app.syscal_fetcher
+                    if enable and fetcher is None:
+                        app.syscal_fetcher = syscal_mod.SysCalFetcher()
+                        app.syscal_fetcher.start()
+                    if not enable and app.syscal_fetcher is not None:
+                        app.syscal_fetcher.stop()
+                        app.syscal_fetcher = None
+                    refreshed = None
+                    if data.get("refresh") or enable:
+                        refreshed = syscal_mod.refresh()
+                    self._json(200, {"enabled": enable,
+                                     "state": syscal_mod.read_state(),
+                                     "refreshed": refreshed})
                 elif path == "/api/inbox":
                     self._json(200, {"items": app.inbox_items(),
                                      "count": app.inbox_count()})
