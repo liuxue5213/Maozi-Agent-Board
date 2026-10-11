@@ -738,6 +738,18 @@
         </section>
         <section class="panel settings-card" aria-labelledby="client-heading">
           <div class="panel-head"><div><h2 id="client-heading">客户端与配置</h2><p class="panel-kicker">启动、备份、诊断与升级</p></div></div>
+          <div class="field-heading"><span>手机推送（Bark / ntfy）</span></div>
+          <label class="field">
+            <span>推送地址</span>
+            <input type="text" id="push-url" class="text-input" placeholder="https://api.day.app/你的Key/{title}/{body} 或 https://ntfy.sh/主题" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>安静时段（窗口内不推手机，事件仍进收件箱）</span>
+            <input type="text" id="push-quiet" class="text-input" placeholder="如 23:00-07:30，留空不启用" autocomplete="off">
+          </label>
+          <div class="btn-row">
+            <button type="button" class="button primary" id="btn-push-save">保存推送设置</button>
+          </div>
           <label class="field toggle">
             <input type="checkbox" id="autostart-toggle">
             <span>开机自动启动客户端</span>

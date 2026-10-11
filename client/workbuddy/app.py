@@ -38,6 +38,28 @@ _PUSH_STATE_NAMES = {"DONE": "已完成", "ERROR": "出错",
                      "WAIT_INPUT": "等你回复", "ASK": "待确认"}
 
 
+def _in_quiet_hours(window: str, now: float | None = None) -> bool:
+    """安静时段判定："HH:MM-HH:MM"，可跨零点；空串/解析失败 = 不安静。
+
+    事件本身不丢——只是夜里不震手机，Web 收件箱照常记录。
+    """
+    text = (window or "").strip()
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", text)
+    if not m:
+        return False
+    h1, m1, h2, m2 = (int(x) for x in m.groups())
+    if h1 > 23 or h2 > 23 or m1 > 59 or m2 > 59:
+        return False
+    lt = time.localtime(time.time() if now is None else now)
+    cur = lt.tm_hour * 60 + lt.tm_min
+    start, end = h1 * 60 + m1, h2 * 60 + m2
+    if start == end:
+        return False
+    if start < end:
+        return start <= cur < end
+    return cur >= start or cur < end        # 跨零点（23:00-07:30）
+
+
 def weather_wire_lines(cities_cfg, data_by_name):
     """多城市天气 → W0..W2 / WF0..WF2 线级字段。
 
@@ -486,6 +508,9 @@ class App:
                       or "").split(",") if s.strip()}
         if state not in states:
             return
+        if _in_quiet_hours(str(getattr(self.cfg, "push_quiet", "") or "")):
+            self.health.event("push_quiet", state=state)
+            return
         threading.Thread(target=self._push_send,
                          args=(url, name, state), daemon=True).start()
 
@@ -602,6 +627,9 @@ class App:
                     "config_warning": getattr(self, "config_warning", ""),
                     # 自检面板用：手机推送是否已配置
                     "push_enabled": bool(str(getattr(self.cfg, "push_url", "") or "").strip()),
+                    "push_quiet": str(getattr(self.cfg, "push_quiet", "") or ""),
+                    # 设置页回填用；仅本机 Web 可见（服务绑定 127.0.0.1）
+                    "push_url": str(getattr(self.cfg, "push_url", "") or ""),
                     # 本机采集能力与温度来源（Windows 上用于「装 LHM」引导）
                     "local_caps": dict(getattr(self.collector, "caps", {})
                                        if getattr(self, "collector", None) else {}),

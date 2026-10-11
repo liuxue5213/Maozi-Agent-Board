@@ -53,6 +53,9 @@ class Config:
     # ntfy 示例：https://ntfy.sh/你的主题
     push_url: str = ""
     push_states: str = "ERROR,WAIT_INPUT,ASK"   # 触发推送的状态集合
+    # 安静时段 "HH:MM-HH:MM"（可跨零点，如 23:00-07:30）：窗口内不推手机，
+    # 事件仍进 Web 收件箱。空 = 不启用。
+    push_quiet: str = ""
     reminders: list = field(default_factory=list)  # [{"time":"09:30","text":"站会"}]
     theme: dict = field(default_factory=lambda: {
         "bg": "0B1220", "card": "141E32", "accent": "22D3EE",

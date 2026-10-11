@@ -389,6 +389,22 @@ def start_settings_server(app, port):
                     return
                 if path == "/api/validate":
                     self._json(200, {"profile": validate_profile(data)})
+                elif path == "/api/push-config":
+                    # 手机推送配置（设置→系统）：URL + 安静时段，落 config.json。
+                    # 安静时段格式校验在这里做一次，坏值直接 400 不落盘。
+                    quiet = str(data.get("quiet", "") or "").strip()
+                    if quiet and not re.fullmatch(
+                            r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}", quiet):
+                        self._json(400, {"error": "安静时段格式应为 HH:MM-HH:MM"})
+                        return
+                    app.cfg.push_url = str(data.get("url", "") or "").strip()
+                    app.cfg.push_quiet = quiet
+                    try:
+                        app.cfg.save()
+                    except OSError:
+                        pass
+                    self._json(200, {"status": "已保存",
+                                     "enabled": bool(app.cfg.push_url)})
                 elif path == "/api/page":
                     # 切设备页（1 基）：多窗格预览点击直达小屏对应页。
                     # 页号超范围由 set_device_page 拒绝（400 语义此处简化为 ok:false）。

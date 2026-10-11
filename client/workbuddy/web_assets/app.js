@@ -2348,22 +2348,39 @@ function doneSeenAt(){
   return isFinite(raw)&&raw>0 ? raw : 0;
 }
 
-/* ================= 需要处理（收件箱 v1） =================
+/* ================= 需要处理（收件箱 v2） =================
    概览顶部回答「现在有什么要我处理」：等你/待确认/出错的会话 + 24 小时内
-   日程 + 硬件告警（磁盘水位）。数据全部来自 /api/status，纯前端聚合；
-   「知道了」按条目 id 记在本机，条目消失（状态变化/日程开始）自动清理，
+   日程 + 硬件告警（磁盘水位）。数据全部来自 /api/status，纯前端聚合。
+   已读状态按条目 id 记在本机，两种处理：
+     · 知道了 = 永久静音该条目（条目消失时记录自动清理）；
+     · 稍后 = 30 分钟后重新出现（存到期时间戳）。
    同一问题换个会话 id 会重新出现——宁可重复提醒也不静默吞掉。 */
 const INBOX_SEEN_KEY='workbuddy-inbox-seen';
-function inboxSeenIds(){
-  try{ return new Set(JSON.parse(localStorage.getItem(INBOX_SEEN_KEY)||'[]')); }
-  catch(e){ return new Set() }
-}
-function dismissInbox(ids){
+const INBOX_SNOOZE_MS=30*60000;
+function inboxSeenMap(){
   try{
-    const seen=new Set(JSON.parse(localStorage.getItem(INBOX_SEEN_KEY)||'[]'));
-    ids.forEach(id=>seen.add(id));
-    localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify([...seen].slice(-100)));
+    const raw=JSON.parse(localStorage.getItem(INBOX_SEEN_KEY)||'{}');
+    // v1 存的是数组（永久静音）；迁移成 {id: 0} 形状
+    if(Array.isArray(raw)) return Object.fromEntries(raw.map(id=>[id,0]));
+    return raw&&typeof raw==='object'?raw:{};
+  }catch(e){ return {} }
+}
+function dismissInbox(ids, snoozeMs=0){
+  try{
+    const seen=inboxSeenMap();
+    const until=snoozeMs?Date.now()+snoozeMs:0;
+    ids.forEach(id=>{seen[id]=until});
+    localStorage.setItem(INBOX_SEEN_KEY,
+      JSON.stringify(Object.fromEntries(Object.entries(seen).slice(-100))));
   }catch(e){}
+}
+function inboxPruneSeen(aliveIds){
+  // 已消失条目的静音记录清掉（永久+过期稍后一并），集合不无限长
+  const seen=inboxSeenMap();
+  const stale=Object.keys(seen).filter(id=>!aliveIds.has(id));
+  if(!stale.length)return;
+  stale.forEach(id=>delete seen[id]);
+  try{ localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify(seen)) }catch(e){}
 }
 function inboxWhen(ms){
   const m=Math.round(ms/60000);
@@ -2377,7 +2394,7 @@ function computeInbox(){
   (live.tasks||[]).forEach(t=>{
     if(!ALERT[t.state])return;
     const [label,sev]=ALERT[t.state];
-    items.push({id:`t:${t.tool}:${t.id}`, sev,
+    items.push({id:`t:${t.tool}:${t.id}`, kind:'task', sev,
       title:`${t.tool} · ${t.project||'未命名'}`,
       detail:`${label} · 已等 ${fmtElapsed(t.age)}`, state:t.state});
   });
@@ -2388,12 +2405,12 @@ function computeInbox(){
     if(!isFinite(at))return;
     const dt=at-now;
     if(dt<-3600e3||dt>24*3600e3)return;
-    items.push({id:`c:${c.id}`, sev:'info', title:c.title||'日程',
+    items.push({id:`c:${c.id}`, kind:'calendar', sev:'info', title:c.title||'日程',
       detail: dt<=0?'已开始':`${inboxWhen(dt)}开始（${c.time}）`, at, state:'EVENT'});
   });
   const t=live.telemetry||{};
   if(typeof t.disk==='number'&&t.disk>=90)
-    items.push({id:'hw:disk', sev:'bad', title:`磁盘 ${t.disk}%`,
+    items.push({id:'hw:disk', kind:'hw', sev:'bad', title:`磁盘 ${t.disk}%`,
       detail:t.diskfree!=null?`仅剩 ${t.diskfree} GB 可用`:'空间不足', state:'HW'});
   items.sort((a,b)=>(a.at||0)-(b.at||0));
   return items;
@@ -2401,28 +2418,36 @@ function computeInbox(){
 function renderInbox(){
   const rail=$('ov-inbox'); if(!rail)return;
   const all=computeInbox();
-  const seen=inboxSeenIds();
-  const pending=all.filter(x=>!seen.has(x.id));
-  // 已消失的条目从已读记录里清掉，防止集合无限长大
-  if(all.length!==seen.size&&all.length){
-    const alive=new Set(all.map(x=>x.id));
-    try{
-      const kept=[...seen].filter(id=>alive.has(id));
-      localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify(kept.slice(-100)));
-    }catch(e){}
-  }
+  const seen=inboxSeenMap();
+  const now=Date.now();
+  const pending=all.filter(x=>{
+    const until=seen[x.id];
+    return until===undefined || (until>0 && until<=now);   // 0=永久静音
+  });
+  inboxPruneSeen(new Set(all.map(x=>x.id)));
   rail.hidden=pending.length===0;
   const count=$('inbox-count');
   if(count)count.textContent=`${pending.length} 项待处理`;
+  // 概览导航小红点：不在概览页也能看到有事等你
+  const navBtn=document.querySelector('.nav-item[data-view="overview"]');
+  if(navBtn)navBtn.classList.toggle('has-inbox',pending.length>0);
   const root=$('inbox-items'); if(!root)return;
   root.replaceChildren();
   pending.forEach(item=>{
     const row=el('div',`inbox-item sev-${item.sev}`);
-    row.append(el('b','',item.title), el('span','',item.detail));
+    const title=el('b','',item.title);
+    if(item.kind==='task'||item.kind==='calendar')title.classList.add('clickable');
+    if(item.kind==='task')title.onclick=()=>{ovFilter='alert';renderOverview()};
+    if(item.kind==='calendar')title.onclick=()=>switchView('extras');
+    if(item.kind==='task'||item.kind==='calendar')title.title='点击查看';
+    row.append(title, el('span','',item.detail));
+    const snooze=el('button','linklike','稍后');
+    snooze.type='button'; snooze.title='30 分钟后重新提醒';
+    snooze.onclick=()=>{dismissInbox([item.id],INBOX_SNOOZE_MS);renderInbox()};
     const ok=el('button','linklike','知道了');
     ok.type='button';
     ok.onclick=()=>{dismissInbox([item.id]);renderInbox()};
-    row.append(ok);
+    row.append(snooze,ok);
     root.append(row);
   });
 }
@@ -2641,7 +2666,9 @@ function renderSelfcheck(){
     value: tempOk ? (srcNames[live.thermal_hint]||'可用')
       : '未获取——Windows 装 LibreHardwareMonitor 并以管理员运行一次即可；macOS 需授权 smcpriv 采样器'});
   rows.push({ok:!!live.push_enabled, label:'手机推送',
-    value: live.push_enabled?'已配置（出错/等你时推送）':'未配置（config.json 填 push_url）'});
+    value: live.push_enabled
+      ? ('已配置（出错/等你时推送）'+(live.push_quiet?` · 安静时段 ${live.push_quiet}`:''))
+      : '未配置（下方「手机推送」填推送地址）'});
   rows.push({ok:!live.config_warning, warn:!!live.config_warning, label:'配置健康',
     value: live.config_warning||'正常'});
   rows.forEach(r=>{
@@ -2651,6 +2678,11 @@ function renderSelfcheck(){
                el('span','selfcheck-value',r.value));
     root.append(row);
   });
+  // 推送设置输入框回填（焦点在框上时不动，避免打断输入）
+  const urlBox=$('push-url');
+  if(urlBox&&document.activeElement!==urlBox) urlBox.value=live.push_url||'';
+  const quietBox=$('push-quiet');
+  if(quietBox&&document.activeElement!==quietBox) quietBox.value=live.push_quiet||'';
 }
 // 趋势视图：每 60s 重画（新桶会推进曲线）；范围切换立即重画
 setInterval(()=>{if(currentView==='history')drawTrendChart()},60000);
@@ -3364,6 +3396,18 @@ function bind(){
       e.target.checked=r.enabled;notice(r.enabled?'已开启开机自启':'已关闭开机自启')}
     catch(err){e.target.checked=!e.target.checked;notice(err.message,true)}
   };
+  // ---- 手机推送设置（URL + 安静时段，写 config.json） ----
+  $('btn-push-save').onclick=pending($('btn-push-save'),async()=>{
+    const url=$('push-url').value.trim();
+    const quiet=$('push-quiet').value.trim();
+    if(url && !/^https?:\/\//.test(url)){notice('推送地址要以 http(s):// 开头',true);return}
+    try{
+      await request('/api/push-config',{url, quiet});
+      logHist('save', url?'推送设置已保存':'推送已停用');
+      notice(url?(quiet?`已保存，安静时段 ${quiet} 内不推手机`:'已保存，推送已启用'):'已清空推送地址（停用推送）');
+      poll();
+    }catch(e){notice(e.message,true)}
+  });
   const smcState=$('smc-state');
   const smcRefresh=async()=>{
     try{const s=await(await fetch('/api/smc-status')).json();
