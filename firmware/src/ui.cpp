@@ -6,6 +6,7 @@
 #include "bgimg.h"
 #include <lvgl.h>
 #include <math.h>
+#include <Preferences.h>
 #include <esp_heap_caps.h>
 #include <mbedtls/base64.h>
 // LVGL 8.3 的 lvgl.h 不自动引入 snapshot 模块头，显式包含
@@ -79,8 +80,22 @@ static int inbox_pending = -1;   // 服务端收件箱待处理数（build_page 
 bool top_clock = true, top_wx = true;
 Telemetry latest;
 char pinned_id[9] = "";
-char fired_dates[16][11] = {};
-uint32_t last_clock_ms = 0, last_render_ms = 0, alarm_started_ms = 0;
+struct AlarmFireState {
+    char id[17] = "";
+    char date[11] = "";
+};
+AlarmFireState fired_alarms[16];
+char active_alarm_id[17] = "";
+char snooze_alarm_id[17] = "";
+int64_t alarm_snooze_due_local = 0;  // 本地民用时间秒；重启后等 TIME/DATE 恢复再判断
+uint32_t last_render_ms = 0, alarm_started_ms = 0;
+
+// TIME/DATE 的本地锚点。电脑断开后继续用 millis() 推进，日期也能跨午夜。
+// 设备没有电池 RTC，因此完全断电期间无法独立走时；重连后的 TIME/DATE 会校正。
+bool clock_synced = false;
+int64_t clock_anchor_day = 0;
+uint32_t clock_anchor_sod = 0, clock_anchor_ms = 0;
+char clock_anchor_date[11] = "";
 int idle_dim_secs = 60;              // 0=关闭；无触摸超时后进入息屏时钟
 bool saver_active = false;
 lv_obj_t* scr_saver = nullptr;
@@ -99,6 +114,8 @@ struct PetParts {
     int sz = 1;
 };
 static PetParts pet_ai, pet_page;
+static lv_obj_t* pet_photo = nullptr;    // 宠物页角色图层（图片资源包）
+static char pet_photo_frame[24] = "";    // 当前显示的帧名（pet_<x>.jpg）
 // 相册轮播：当前文件序号 / 上次轮换时刻
 static uint8_t sv_idx = 1, sv_count = 0;
 static uint32_t sv_last_rot = 0;
@@ -109,6 +126,137 @@ static uint8_t poem_idx = 0;
 static uint32_t poem_last_switch = 0;             // 0 极简 1 仪表 2 像素夜色 3 诗词短句
 char saver_msg[64] = "代码写完了吗？起来喝口水";
 uint32_t seen_hms = 0;
+
+int64_t days_from_civil(int y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = (unsigned)(y - era * 400);
+    const unsigned doy = (153u * (m + (m > 2 ? -3 : 9)) + 2u) / 5u + d - 1u;
+    const unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return (int64_t)era * 146097 + (int64_t)doe - 719468;
+}
+
+void civil_from_days(int64_t z, int& y, unsigned& m, unsigned& d) {
+    z += 719468;
+    const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    const unsigned doe = (unsigned)(z - era * 146097);
+    const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    y = (int)yoe + (int)era * 400;
+    const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const unsigned mp = (5 * doy + 2) / 153;
+    d = doy - (153 * mp + 2) / 5 + 1;
+    m = mp + (mp < 10 ? 3 : -9);
+    y += m <= 2;
+}
+
+bool local_clock_now(int64_t& total, char* date_out = nullptr, int* sod_out = nullptr) {
+    if (!clock_synced) return false;
+    total = clock_anchor_day * 86400LL + clock_anchor_sod +
+            (uint32_t)(millis() - clock_anchor_ms) / 1000;
+    int64_t day = total / 86400LL;
+    int sod = (int)(total % 86400LL);
+    if (sod < 0) { sod += 86400; --day; }
+    if (sod_out) *sod_out = sod;
+    if (date_out) {
+        int y; unsigned m, d;
+        civil_from_days(day, y, m, d);
+        snprintf(date_out, 11, "%04d-%02u-%02u", y, m, d);
+    }
+    return true;
+}
+
+const char* clock_date() {
+    static char value[11] = "";
+    int64_t total;
+    if (!local_clock_now(total, value, nullptr)) value[0] = 0;
+    return value;
+}
+
+void sync_local_clock(const Telemetry& telemetry) {
+    if (!telemetry.date[0]) return;
+    int y = 0, m = 0, d = 0;
+    int hh = telemetry.clock_hms / 10000;
+    int mm = (telemetry.clock_hms / 100) % 100;
+    int ss = telemetry.clock_hms % 100;
+    if (sscanf(telemetry.date, "%d-%d-%d", &y, &m, &d) != 3 ||
+        m < 1 || m > 12 || d < 1 || d > 31 || hh > 23 || mm > 59 || ss > 59) return;
+    // DHT 刷新也会调用 ui_update；只有主机时间真的变化时才重设锚点，
+    // 否则客户端离线后旧时间会每 2.5 秒把本地时钟拉回去。
+    if (clock_synced && telemetry.clock_hms == seen_hms &&
+        !strcmp(telemetry.date, clock_anchor_date)) return;
+    clock_anchor_day = days_from_civil(y, (unsigned)m, (unsigned)d);
+    clock_anchor_sod = (uint32_t)(hh * 3600 + mm * 60 + ss);
+    clock_anchor_ms = millis();
+    seen_hms = telemetry.clock_hms;
+    snprintf(clock_anchor_date, sizeof(clock_anchor_date), "%s", telemetry.date);
+    clock_synced = true;
+}
+
+void save_fired_slot(uint8_t slot) {
+    Preferences state;
+    if (!state.begin("wb_alarm", false)) return;
+    char key[5], value[32];
+    snprintf(key, sizeof(key), "f%u", slot);
+    snprintf(value, sizeof(value), "%s|%s", fired_alarms[slot].id, fired_alarms[slot].date);
+    state.putString(key, value);
+    state.end();
+}
+
+void save_snooze_state() {
+    Preferences state;
+    if (!state.begin("wb_alarm", false)) return;
+    state.putString("snz_id", snooze_alarm_id);
+    state.putLong64("snz_due", alarm_snooze_due_local);
+    state.end();
+}
+
+void clear_snooze_state() {
+    alarm_snooze_due_local = 0;
+    snooze_alarm_id[0] = 0;
+    save_snooze_state();
+}
+
+void load_alarm_state() {
+    Preferences state;
+    if (!state.begin("wb_alarm", true)) return;
+    for (uint8_t i = 0; i < 16; ++i) {
+        char key[5];
+        snprintf(key, sizeof(key), "f%u", i);
+        String value = state.getString(key, "");
+        int split = value.indexOf('|');
+        if (split <= 0) continue;
+        snprintf(fired_alarms[i].id, sizeof(fired_alarms[i].id), "%s",
+                 value.substring(0, split).c_str());
+        snprintf(fired_alarms[i].date, sizeof(fired_alarms[i].date), "%s",
+                 value.substring(split + 1).c_str());
+    }
+    snprintf(snooze_alarm_id, sizeof(snooze_alarm_id), "%s",
+             state.getString("snz_id", "").c_str());
+    alarm_snooze_due_local = state.getLong64("snz_due", 0);
+    state.end();
+}
+
+bool alarm_was_fired(const char* id, const char* date) {
+    for (const AlarmFireState& item : fired_alarms)
+        if (!strcmp(item.id, id) && !strcmp(item.date, date)) return true;
+    return false;
+}
+
+void mark_alarm_fired(const char* id, const char* date) {
+    int slot = -1;
+    for (uint8_t i = 0; i < 16; ++i) {
+        if (!strcmp(fired_alarms[i].id, id)) { slot = i; break; }
+        if (slot < 0 && !fired_alarms[i].id[0]) slot = i;
+    }
+    if (slot < 0) { // 全满时替换日期最旧的一项
+        slot = 0;
+        for (uint8_t i = 1; i < 16; ++i)
+            if (strcmp(fired_alarms[i].date, fired_alarms[slot].date) < 0) slot = i;
+    }
+    snprintf(fired_alarms[slot].id, sizeof(fired_alarms[slot].id), "%s", id);
+    snprintf(fired_alarms[slot].date, sizeof(fired_alarms[slot].date), "%s", date);
+    save_fired_slot((uint8_t)slot);
+}
 
 // ---- 覆盖面板：0 无 1 启动器 2 控制中心 ----
 uint8_t overlay = 0;
@@ -372,8 +520,6 @@ void bright_step(int delta) {
 void bright_down(lv_event_t*) { bright_step(-10); }
 void bright_up(lv_event_t*) { bright_step(+10); }
 
-static uint32_t alarm_snooze_until_ms = 0;   // 「稍后」到期时刻（0=无）
-
 void stop_alarm(lv_event_t*) {
     alarm_active = false;
     for (uint8_t p = 0; p < view_count; ++p)
@@ -382,10 +528,14 @@ void stop_alarm(lv_event_t*) {
 }
 
 void snooze_alarm_cb(lv_event_t*) {
-    // 先停铃再记稍后：到期后 alarm_tick 直接重新响铃，不依赖时刻匹配
-    //（fired_dates 已标记今天触发过，正常检测不会再响，稍后必须独立补响）。
+    // 用本地民用时间保存截止点，而非 millis：设备重启后只要重新拿到
+    // TIME/DATE，仍能恢复稍后提醒；正常触发记录已持久化，不会重复响。
+    int64_t now_local = 0;
+    if (!local_clock_now(now_local)) return;
+    snprintf(snooze_alarm_id, sizeof(snooze_alarm_id), "%s", active_alarm_id);
+    alarm_snooze_due_local = now_local + 5 * 60;
+    save_snooze_state();
     stop_alarm(nullptr);
-    alarm_snooze_until_ms = millis() + 5UL * 60UL * 1000UL;
 }
 
 void choose_task(lv_event_t* event) {
@@ -795,6 +945,14 @@ void make_pet_compact(WidgetView& view, lv_obj_t* screen) {
 
 void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     (void)view;
+    // 彩色角色图层（/pet_<帧>.jpg 资源包）：存在对应帧时显示图片并隐藏
+    // 像素宠物；无资源包保持像素绘制（诚实降级）。
+    pet_photo = lv_img_create(screen);
+    lv_img_set_src(pet_photo, (const void*)petimg_source());
+    lv_obj_set_pos(pet_photo, 0, 0);
+    lv_obj_set_size(pet_photo, 320, 480);
+    if (petimg_loaded()[0]) lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
     draw_pet(pet_page, screen, g_profile.pet_type, 96, 66, 2);
     // 三条状态条（饱食/水分/活力），PS 遥测实时驱动
     static const char* names[3] = {"饱食", "水分", "活力"};
@@ -823,6 +981,37 @@ void render_pet_page(WidgetView& view) {
         }
     }
     const char* st = latest.tasks[0].used ? latest.tasks[0].state : "IDLE";
+    PetLayer layer = pet_arbitrate(st, millis());
+    static const char* frame_of[] = {
+        "pet_idle", "pet_thinking", "pet_working", "pet_sleepy",
+        "pet_sleeping", "pet_greeting", "pet_happy", "pet_working",
+        "pet_error",
+    };
+    const char* frame = frame_of[(int)layer];
+    Serial.printf("[PET] layer=%d frame=%s exists=%d loaded=%s\n",
+                  (int)layer, frame, (int)petimg_exists(frame), pet_photo_frame);
+    if (petimg_exists(frame)) {
+        if (strcmp(pet_photo_frame, frame)) {           // 帧变化才解码
+            if (petimg_decode_name(frame)) {
+                lv_img_set_src(pet_photo, (const void*)petimg_source());
+                snprintf(pet_photo_frame, sizeof(pet_photo_frame), "%s", frame);
+            }
+        }
+        if (pet_photo_frame[0]) {
+            lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+            if (pet_page.root) lv_obj_add_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
+            Serial.printf("[PETSHOW] frame=%s photo_hid=%d root_hid=%d "
+                          "src=%p photo_kids=%u\n",
+                          pet_photo_frame,
+                          (int)lv_obj_has_flag(pet_photo, LV_OBJ_FLAG_HIDDEN),
+                          (int)lv_obj_has_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN),
+                          (const void*)lv_img_get_src(pet_photo),
+                          (unsigned)lv_obj_get_child_cnt(pet_photo));
+        }
+    } else {
+        lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+        if (pet_page.root) lv_obj_clear_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
+    }
     pet_apply_expression(pet_page, st, latest.pet_h, latest.pet_t, latest.pet_e);
 }
 
@@ -1148,9 +1337,9 @@ const char* weekday_name(int day) {
 }
 
 int clock_seconds() {
-    int base = (latest.clock_hms / 10000) * 3600 +
-        ((latest.clock_hms / 100) % 100) * 60 + latest.clock_hms % 100;
-    return (base + (millis() - last_clock_ms) / 1000) % 86400;
+    int64_t total = 0;
+    int seconds = 0;
+    return local_clock_now(total, nullptr, &seconds) ? seconds : 0;
 }
 
 const char* state_short(const char* s) {
@@ -1417,19 +1606,12 @@ long countdown_seconds(const ScheduleItem* item) {
     int ty = 0, tm = 0, td = 0, th = 0, tmn = 0;
     if (sscanf(item->date, "%d-%d-%d", &ty, &tm, &td) != 3) return -1;
     if (sscanf(item->time, "%d:%d", &th, &tmn) != 2) return -1;
-    // 天数差（Howard Hinnant days_from_civil）
-    auto days_civil = [](int y, int m, int d) -> long {
-        y -= m <= 2;
-        long era = (y >= 0 ? y : y - 399) / 400;
-        unsigned yoe = (unsigned)(y - era * 400);
-        unsigned doy = (153u * (unsigned)(m + (m > 2 ? -3 : 9)) + 2u) / 5u + (unsigned)d - 1u;
-        unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
-        return era * 146097L + (long)doe - 719468L;
-    };
-    if (!latest.date[0]) return -1;
+    const char* current_date = clock_date();
+    if (!current_date[0]) return -1;
     int ny = 0, nm = 0, nd = 0;
-    if (sscanf(latest.date, "%d-%d-%d", &ny, &nm, &nd) != 3) return -1;
-    long day_diff = (days_civil(ty, tm, td) - days_civil(ny, nm, nd)) * 86400L;
+    if (sscanf(current_date, "%d-%d-%d", &ny, &nm, &nd) != 3) return -1;
+    long day_diff = (long)((days_from_civil(ty, tm, td) -
+                            days_from_civil(ny, nm, nd)) * 86400LL);
     int now_secs = clock_seconds();
     long target_secs = (long)th * 3600 + tmn * 60;
     return day_diff + target_secs - now_secs;
@@ -1473,7 +1655,7 @@ void render_weather_city(WidgetView& view) {
         else snprintf(line, sizeof(line), "等客户端推送");
         set_text(view.extra[0], line);
     }
-    int base_wd = weekday(latest.date);      // 1..7，无效时 0
+    int base_wd = weekday(clock_date());      // 1..7，无效时 0
     for (int i = 0; i < 5; ++i) {
         const CityDay& d = c.days[i];
         if (view.wday_lbl[i]) {
@@ -1504,6 +1686,7 @@ void render_generic(WidgetView& view) {
     if (view.kind == W_WEATHER && view.city[0]) { render_weather_city(view); return; }
     if (view.kind == W_PET) { render_pet_page(view); return; }
     if (!view.root) return;
+    const char* current_date = clock_date();
     char line[96], sub[96];
     line[0] = 0; sub[0] = 0;
     switch (view.kind) {
@@ -1511,15 +1694,15 @@ void render_generic(WidgetView& view) {
         // 主值必须写进 line，由函数尾部 set_text(view.main, line) 统一上屏；
         // 直接 set_text(main) 会被尾部空串 line 覆盖，时钟卡会整块变白。
         int secs = clock_seconds();
-        if (!latest.date[0]) strcpy(line, "--:--:--");
+        if (!current_date[0]) strcpy(line, "--:--:--");
         else snprintf(line, sizeof(line), "%02d:%02d:%02d",
                       secs / 3600, (secs / 60) % 60, secs % 60);
-        int wd = weekday(latest.date);
+        int wd = weekday(current_date);
         if (view.extra[6]) {
             // 大时钟卡：右侧=星期 + 2026/10/9（效果图右栏）。主标签只承载
             // 数字冒号（48px 字库不含中文），未同步提示走 24px 全量字库块。
-            if (!latest.date[0] || !wd) {
-                set_text(view.extra[6], latest.date[0] ? "" : "时间未同步");
+            if (!current_date[0] || !wd) {
+                set_text(view.extra[6], current_date[0] ? "" : "时间未同步");
                 set_text(view.extra[7], "");
                 break;
             }
@@ -1527,10 +1710,10 @@ void render_generic(WidgetView& view) {
             snprintf(wd_buf, sizeof(wd_buf), "周%s", weekday_name(wd));
             set_text(view.extra[6], wd_buf);
             int y2, m2, d2;
-            if (sscanf(latest.date, "%d-%d-%d", &y2, &m2, &d2) == 3)
+            if (sscanf(current_date, "%d-%d-%d", &y2, &m2, &d2) == 3)
                 snprintf(date_buf, sizeof(date_buf), "%d/%d/%d", y2, m2, d2);
             else
-                snprintf(date_buf, sizeof(date_buf), "%s", latest.date);
+                snprintf(date_buf, sizeof(date_buf), "%s", current_date);
             set_text(view.extra[7], date_buf);
             break;
         }
@@ -1539,12 +1722,12 @@ void render_generic(WidgetView& view) {
         // 信息量不减反增：年月日的主值时间已经承载了「今天」这一事实。
         if (view.card_w && view.card_w < 300) {
             int y2, m2, d2;
-            if (sscanf(latest.date, "%d-%d-%d", &y2, &m2, &d2) == 3)
+            if (sscanf(current_date, "%d-%d-%d", &y2, &m2, &d2) == 3)
                 snprintf(sub, sizeof(sub), "%02d-%02d 周%s", m2, d2, weekday_name(wd));
             else
                 snprintf(sub, sizeof(sub), "星期%s", weekday_name(wd));
         } else {
-            snprintf(sub, sizeof(sub), "%s 星期%s%s", latest.date,
+            snprintf(sub, sizeof(sub), "%s 星期%s%s", current_date,
                      weekday_name(wd), online ? "" : " · 离线估算");
         }
         break;
@@ -1596,7 +1779,7 @@ void render_generic(WidgetView& view) {
         break;
     case W_REMINDERS: {
         const ScheduleItem* found = nullptr;
-        int day = weekday(latest.date);
+        int day = weekday(current_date);
         for (uint8_t i = 0; i < g_profile.reminder_count; ++i) {
             const ScheduleItem& item = g_profile.reminders[i];
             if (item.enabled && day && (item.weekdays & (1 << (day - 1))) &&
@@ -1611,7 +1794,7 @@ void render_generic(WidgetView& view) {
         const ScheduleItem* found = nullptr;
         for (uint8_t i = 0; i < g_profile.calendar_count; ++i) {
             const ScheduleItem& item = g_profile.calendar[i];
-            if (item.enabled && !strcmp(item.date, latest.date) &&
+            if (item.enabled && !strcmp(item.date, current_date) &&
                 (!found || strcmp(item.time, found->time) < 0)) found = &item;
         }
         if (found) {snprintf(line, sizeof(line), "%s %s", found->time, found->text);
@@ -1621,7 +1804,7 @@ void render_generic(WidgetView& view) {
     }
     case W_ALARM: {
         const ScheduleItem* found = nullptr;
-        int day = weekday(latest.date);
+        int day = weekday(current_date);
         for (uint8_t i = 0; i < g_profile.alarm_count; ++i) {
             const ScheduleItem& item = g_profile.alarms[i];
             if (item.enabled && day && (item.weekdays & (1 << (day - 1))) &&
@@ -1704,7 +1887,9 @@ void render_all() {
     render_control();
 }
 
-void start_ring(uint32_t now) {
+void start_ring(uint32_t now, const char* alarm_id = nullptr) {
+    if (alarm_id)
+        snprintf(active_alarm_id, sizeof(active_alarm_id), "%s", alarm_id);
     alarm_active = true; alarm_started_ms = now;
     for (uint8_t p = 0; p < view_count; ++p)
         lv_obj_clear_flag(views[p].alert, LV_OBJ_FLAG_HIDDEN);
@@ -1715,10 +1900,16 @@ void start_ring(uint32_t now) {
 
 void alarm_tick() {
     uint32_t now = millis();
-    if (alarm_snooze_until_ms && now >= alarm_snooze_until_ms) {
-        // 稍后到期：直接重新响铃（与正常触发同一渲染/闪烁路径）
-        alarm_snooze_until_ms = 0;
-        start_ring(now);
+    int64_t now_local = 0;
+    bool have_clock = local_clock_now(now_local);
+    if (alarm_snooze_due_local && have_clock && now_local >= alarm_snooze_due_local) {
+        // 重启/短暂断电后允许 30 分钟内补响一次；更久的旧稍后提醒直接清除，
+        // 避免设备隔天恢复时突然响起。
+        int64_t late = now_local - alarm_snooze_due_local;
+        char alarm_id[17];
+        snprintf(alarm_id, sizeof(alarm_id), "%s", snooze_alarm_id);
+        clear_snooze_state();
+        if (late <= 30 * 60) start_ring(now, alarm_id);
     }
     if (alarm_active) {
         if (now - alarm_started_ms > 12000) {stop_alarm(nullptr); return;}
@@ -1728,23 +1919,27 @@ void alarm_tick() {
         display_brightness(low + (g_profile.bright - low) * span / 800);
         return;
     }
-    if (!latest.date[0] || now - last_clock_ms > 600000) return;
-    int day = weekday(latest.date), secs = clock_seconds();
+    const char* current_date = clock_date();
+    if (!have_clock || !current_date[0]) return;
+    int day = weekday(current_date), secs = clock_seconds();
     if (!day) return;
     for (uint8_t i = 0; i < g_profile.alarm_count; ++i) {
         const ScheduleItem& item = g_profile.alarms[i];
         int hour = 0, minute = 0;
         sscanf(item.time, "%d:%d", &hour, &minute);
         if (!item.enabled || !(item.weekdays & (1 << (day - 1))) ||
-            secs / 60 != hour * 60 + minute || !strcmp(fired_dates[i], latest.date)) continue;
-        snprintf(fired_dates[i], sizeof(fired_dates[i]), "%s", latest.date);
-        start_ring(now);
+            secs / 60 != hour * 60 + minute || alarm_was_fired(item.id, current_date)) continue;
+        mark_alarm_fired(item.id, current_date);
+        start_ring(now, item.id);
         break;
     }
 }
 } // namespace
 
-void ui_init() { ui_rebuild(); }
+void ui_init() {
+    load_alarm_state();
+    ui_rebuild();
+}
 
 void ui_rebuild() {
     // 保留当前屏直到新首页构建完成，配置同步时不闪出一帧空白。
@@ -1800,10 +1995,7 @@ void ui_rebuild() {
 
 void ui_update(const Telemetry& telemetry) {
     have_data = true;
-    if (telemetry.clock_hms != seen_hms) {
-        seen_hms = telemetry.clock_hms;
-        last_clock_ms = millis();
-    }
+    sync_local_clock(telemetry);
     latest = telemetry;
     render_all();
 }
@@ -1880,7 +2072,7 @@ void close_saver() {
 // ---------- 息屏主题（4 款） ----------
 extern float g_temp, g_hum;
 const char* saver_weekday() {
-    int wd = weekday(latest.date);
+    int wd = weekday(clock_date());
     static char out[16];
     if (wd == 0) return "";          // 日期未同步：留空而不是「星期?」
     snprintf(out, sizeof(out), "星期%s", weekday_name(wd));
@@ -2026,12 +2218,13 @@ void update_saver() {
     lv_label_set_text(saver_time_lbl, st);
     // 日期未同步（刚上电、客户端还没连上）时悬空一个「星期?」/「 星期?」
     // 看起来就像坏了——直接不显示日期行，等 DATE 到位后下一秒自动补上。
-    int wd = weekday(latest.date);
+    const char* current_date = clock_date();
+    int wd = weekday(current_date);
     if (wd == 0) {
         lv_label_set_text(saver_date_lbl, "");
         return;
     }
-    snprintf(sd, sizeof(sd), "%s 星期%s", latest.date, weekday_name(wd));
+    snprintf(sd, sizeof(sd), "%s 星期%s", current_date, weekday_name(wd));
     lv_label_set_text(saver_date_lbl, sd);
     // 诗句轮换（样式3）：文本在 poem_advance 切 idx 后由这里对齐显示
     if (saver_style == 3 && saver_quote && g_profile.poem_count) {

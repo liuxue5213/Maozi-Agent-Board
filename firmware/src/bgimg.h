@@ -24,3 +24,9 @@ bool album_decode_index(uint8_t idx);
 const lv_img_dsc_t* album_source();
 uint8_t album_count();
 void album_delete(const char* name);
+
+// 角色图（/pet_<状态>.jpg）：单缓冲按需解码；供宠物页在状态切换时换图
+bool petimg_exists(const char* name);
+bool petimg_decode_name(const char* name);
+const lv_img_dsc_t* petimg_source();
+const char* petimg_loaded();   // 当前缓冲对应的帧名（空=无）

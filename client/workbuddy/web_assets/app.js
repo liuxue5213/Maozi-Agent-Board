@@ -3396,6 +3396,43 @@ function bind(){
     }catch(e){notice(e.message,true)}
   });
 
+  // ---- 彩色角色图（图集管线）：文件名映射状态，逐张走 IMG 通道 ----
+  const PET_STATES=['working','thinking','sleeping','greeting','happy','error','idle','sleepy'];
+  const petNote=t=>{ const n=$('pet-img-note'); if(n)n.textContent=t; };
+  $('pet-img-file').onchange=async e=>{
+    const files=[...e.target.files||[]]; e.target.value='';
+    if(!files.length)return;
+    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
+    let ok=0, skip=0;
+    petNote(`开始上传 ${files.length} 张…`);
+    for(const f of files){
+      const m=/^pet_([a-z0-9_]+)\.jpe?g$/i.exec(f.name);
+      if(!m){petNote(`跳过 ${f.name}（文件名需 pet_<状态>.jpg）`);skip++;continue}
+      if(f.size>120*1024){petNote(`跳过 ${f.name}（>120KB，请压缩）`);skip++;continue}
+      try{
+        const rq=await fetch(`/api/bgimg?target=${f.name.replace(/\.jpe?g$/i,'')}`,
+          {method:'POST',headers:{'Content-Type':'application/octet-stream'},
+           body:await f.arrayBuffer()});
+        const d=await rq.json();
+        if(!rq.ok)throw new Error(d.error||'上传失败');
+        ok++;
+        logHist('bg',`角色图 ${f.name} 已上传`);
+      }catch(err){notice(`${f.name} 上传失败：${err.message}`,true)}
+    }
+    petNote(ok?`已上传 ${ok} 张${skip?`，跳过 ${skip} 张`:''}——小屏宠物页按状态自动显示`:'没有可上传的图');
+    if(ok)notice(`已上传 ${ok} 张角色图`);
+  };
+  $('pet-img-clear').onclick=async()=>{
+    if(!isConnected()){notice('设备未连接',true);return}
+    if(!confirm('清空设备上全部角色图？像素宠物将恢复显示。'))return;
+    for(const st of PET_STATES){
+      try{const r=await fetch(`/api/bgimg-delete?target=pet_${st}`,{method:'POST'});
+          await r.json()}catch(e){}
+    }
+    petNote('已发送清空指令，像素宠物恢复显示');
+    notice('已清空角色图');
+  };
+
   // ---- 手机推送设置（URL + 安静时段，写 config.json） ----
   $('btn-push-save').onclick=pending($('btn-push-save'),async()=>{
     const url=$('push-url').value.trim();

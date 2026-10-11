@@ -715,6 +715,17 @@
             <button type="button" class="button primary" id="pet-save">保存形象</button>
             <button type="button" class="button" id="pet-page-gen">生成「宠物」小屏页面</button>
           </div>
+          <div class="field-heading"><span>彩色角色图（图集管线）</span></div>
+          <p class="hint">选 1-8 张 320×480 竖版 JPG，按文件名映射状态：
+            pet_working / pet_thinking / pet_sleeping / pet_greeting / pet_happy /
+            pet_error / pet_idle（如 pet_working.jpg）。上传后小屏宠物页在对应
+            状态显示该图；删掉文件名对应图可回落像素宠物（设备重启生效）。</p>
+          <div class="btn-row">
+            <label class="button ghost" for="pet-img-file">选择角色图（可多选）</label>
+            <input type="file" id="pet-img-file" accept="image/jpeg" multiple class="visually-hidden">
+            <button type="button" class="button danger" id="pet-img-clear">清空全部角色图</button>
+          </div>
+          <p class="hint" id="pet-img-note">—</p>
         </section>
         <section class="panel settings-card" aria-labelledby="pet-status-heading">
           <div class="panel-head"><div><h2 id="pet-status-heading">状态与互动</h2><p class="panel-kicker">状态保存在本机并同步显示到小屏</p></div></div>
