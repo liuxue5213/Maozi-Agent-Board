@@ -1711,6 +1711,11 @@ void ui_rebuild() {
     lv_obj_t* old_active = lv_scr_act();
     overlay = 0;
     saver_active = false;
+    // 宠物部件随旧屏幕一起销毁，必须先清零静态结构：draw_pet 开头的
+    // lv_obj_del(p.root) 若摸到已释放的旧指针 = Core1 LoadProhibited
+    // panic（真机复现：每次配置同步后设备静默重启，表现为同步后闪断）。
+    pet_ai = PetParts();
+    pet_page = PetParts();
     lv_obj_t* old[6] = {};
     uint8_t old_count = view_count;
     for (uint8_t i = 0; i < old_count; ++i) old[i] = views[i].screen;

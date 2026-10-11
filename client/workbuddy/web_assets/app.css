@@ -1774,3 +1774,14 @@ svg { display:block; }
 .selfcheck-row.bad .selfcheck-dot { background:var(--err); }
 .selfcheck-label { color:var(--text-tertiary); flex:none; width:72px; }
 .selfcheck-value { word-break:break-all; }
+
+/* ===== 需要处理（收件箱 v1） ===== */
+.inbox { margin:6px 0 10px; padding:10px 12px; border:1px solid var(--warn-line);
+  background:var(--warn-bg);
+  border-radius:10px; }
+.inbox-item { display:flex; align-items:baseline; gap:10px; padding:6px 0;
+  border-bottom:1px solid var(--line); font-size:13px; }
+.inbox-item:last-child { border-bottom:none; }
+.inbox-item b { flex:none; }
+.inbox-item span { color:var(--text-tertiary); flex:1; min-width:0; }
+.inbox-item.sev-bad b { color:var(--err); }

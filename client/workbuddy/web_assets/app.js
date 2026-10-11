@@ -2134,6 +2134,7 @@ function updateTaskItem(item, task){
 function renderOverview(){
   const t=live.telemetry||{};
   renderDone();
+  renderInbox();
   // 已完成的不进主列表：它归「刚完成」条。主列表只放还要你做点什么的会话，
   // 列表长度因此不再随「刚跑完一个」而波动。
   const tasks=sortTasks((live.tasks||[]).filter(x=>x.state!=='DONE'));
@@ -2342,6 +2343,85 @@ const DONE_SEEN_KEY='workbuddy-done-seen';
 function doneSeenAt(){
   const raw=Number(localStorage.getItem(DONE_SEEN_KEY));
   return isFinite(raw)&&raw>0 ? raw : 0;
+}
+
+/* ================= 需要处理（收件箱 v1） =================
+   概览顶部回答「现在有什么要我处理」：等你/待确认/出错的会话 + 24 小时内
+   日程 + 硬件告警（磁盘水位）。数据全部来自 /api/status，纯前端聚合；
+   「知道了」按条目 id 记在本机，条目消失（状态变化/日程开始）自动清理，
+   同一问题换个会话 id 会重新出现——宁可重复提醒也不静默吞掉。 */
+const INBOX_SEEN_KEY='workbuddy-inbox-seen';
+function inboxSeenIds(){
+  try{ return new Set(JSON.parse(localStorage.getItem(INBOX_SEEN_KEY)||'[]')); }
+  catch(e){ return new Set() }
+}
+function dismissInbox(ids){
+  try{
+    const seen=new Set(JSON.parse(localStorage.getItem(INBOX_SEEN_KEY)||'[]'));
+    ids.forEach(id=>seen.add(id));
+    localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify([...seen].slice(-100)));
+  }catch(e){}
+}
+function inboxWhen(ms){
+  const m=Math.round(ms/60000);
+  if(m<1)return '1 分钟内';
+  if(m<60)return `${m} 分钟后`;
+  return `${Math.round(m/60)} 小时后`;
+}
+function computeInbox(){
+  const items=[];
+  const ALERT={WAIT_INPUT:['等你回复','warn'],ASK:['等你确认','warn'],ERROR:['出错','bad']};
+  (live.tasks||[]).forEach(t=>{
+    if(!ALERT[t.state])return;
+    const [label,sev]=ALERT[t.state];
+    items.push({id:`t:${t.tool}:${t.id}`, sev,
+      title:`${t.tool} · ${t.project||'未命名'}`,
+      detail:`${label} · 已等 ${fmtElapsed(t.age)}`, state:t.state});
+  });
+  const now=Date.now();
+  ((draft||{}).calendar||[]).forEach(c=>{
+    if(c.enabled===false)return;
+    const at=new Date(`${c.date}T${c.time}:00`).getTime();
+    if(!isFinite(at))return;
+    const dt=at-now;
+    if(dt<-3600e3||dt>24*3600e3)return;
+    items.push({id:`c:${c.id}`, sev:'info', title:c.title||'日程',
+      detail: dt<=0?'已开始':`${inboxWhen(dt)}开始（${c.time}）`, at, state:'EVENT'});
+  });
+  const t=live.telemetry||{};
+  if(typeof t.disk==='number'&&t.disk>=90)
+    items.push({id:'hw:disk', sev:'bad', title:`磁盘 ${t.disk}%`,
+      detail:t.diskfree!=null?`仅剩 ${t.diskfree} GB 可用`:'空间不足', state:'HW'});
+  items.sort((a,b)=>(a.at||0)-(b.at||0));
+  return items;
+}
+function renderInbox(){
+  const rail=$('ov-inbox'); if(!rail)return;
+  const all=computeInbox();
+  const seen=inboxSeenIds();
+  const pending=all.filter(x=>!seen.has(x.id));
+  // 已消失的条目从已读记录里清掉，防止集合无限长大
+  if(all.length!==seen.size&&all.length){
+    const alive=new Set(all.map(x=>x.id));
+    try{
+      const kept=[...seen].filter(id=>alive.has(id));
+      localStorage.setItem(INBOX_SEEN_KEY, JSON.stringify(kept.slice(-100)));
+    }catch(e){}
+  }
+  rail.hidden=pending.length===0;
+  const count=$('inbox-count');
+  if(count)count.textContent=`${pending.length} 项待处理`;
+  const root=$('inbox-items'); if(!root)return;
+  root.replaceChildren();
+  pending.forEach(item=>{
+    const row=el('div',`inbox-item sev-${item.sev}`);
+    row.append(el('b','',item.title), el('span','',item.detail));
+    const ok=el('button','linklike','知道了');
+    ok.type='button';
+    ok.onclick=()=>{dismissInbox([item.id]);renderInbox()};
+    row.append(ok);
+    root.append(row);
+  });
 }
 function renderDone(){
   const rail=$('ov-done-rail'); if(!rail) return;
