@@ -331,6 +331,26 @@ def validate_profile(raw):
              for key in ("bg", "grad", "card", "card_edge", "accent", "text", "sub")}
     out["theme"]["panel"] = panel   # 便于诊断包/导出核对：请求值 → 上屏值
 
+    # 任务视图 tv.* 参数（AI 页渲染细节 + 空闲切页；缺省 = 现状渲染）
+    tv = raw.get("tv", {})
+    if not isinstance(tv, dict):
+        tv = {}
+
+    def _tv_int(key, default, lo, hi):
+        try:
+            v = int(tv.get(key, default))
+        except (TypeError, ValueError):
+            v = default
+        return max(lo, min(hi, v))
+
+    out["tv"] = {
+        "other_tasks": _tv_int("other_tasks", 1, 0, 1),
+        "task_value": _tv_int("task_value", 0, 0, 1),
+        "tl_mode": _tv_int("tl_mode", 0, 0, 1),
+        "tl_time": _tv_int("tl_time", 0, 0, 2),
+        "idle_page": _tv_int("idle_page", 0, 0, 6),
+    }
+
     def luminance(hex_color):
         values = [int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4)]
         linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in values]

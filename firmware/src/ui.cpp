@@ -1487,16 +1487,47 @@ void render_ai(WidgetView& view) {
         bar_set(view.ai_bar_fill, view.ai_bar, task.prog, accent);
     }
     int row = 0;
+    bool show_others = g_profile.tv_other_tasks != 0;
+    bool tl = g_profile.tv_tl_mode == 1;         // 时间线事件行模式
     for (int i = 0; i < 4 && row < 3; ++i) {
         if (!latest.tasks[i].used || i == focus) continue;
+        if (!show_others) break;                 // tv.other_tasks=0：其余会话整段隐藏
         const AITask& task = latest.tasks[i];
         bool is_err = !strcmp(task.state, "ERROR");
+        if (view.row_bar[row])
+            lv_obj_set_style_opa(view.row_bar[row],
+                                 tl ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+        if (tl) {
+            // 时间线事件行：行1 = 工具 · 状态 · 时间信息；行2 = 项目名
+            char when[20] = "";
+            if (g_profile.tv_tl_time == 1)
+                snprintf(when, sizeof(when), "用时 %d:%02d",
+                         task.elapse / 60, task.elapse % 60);
+            else if (g_profile.tv_tl_time == 0)
+                snprintf(when, sizeof(when), "%d 分前", task.age / 60);
+            snprintf(line, sizeof(line), "%s · %s%s%s", task.tool,
+                     state_short(task.state), when[0] ? " · " : "", when);
+            set_text(view.extra[row + 1], line);
+            snprintf(line, sizeof(line), "%s",
+                     task.proj[0] ? task.proj : "未命名");
+            set_text(view.extra[row + 4], line);
+            if (view.row_dot[row])
+                lv_obj_set_style_bg_color(view.row_dot[row],
+                    lv_color_hex(state_color(task.state)), 0);
+            lv_obj_clear_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
+            ++row;
+            continue;
+        }
         set_text(view.extra[row + 1], task.tool);
         // 出错行工具名转错误色，与状态点同义（行内没有放状态文字的空间）
         lv_obj_set_style_text_color(view.extra[row + 1],
             lv_color_hex(is_err ? COL_ERR : text_color), 0);
-        snprintf(line, sizeof(line), "%s · %d:%02d",
-                 task.proj[0] ? task.proj : "未命名", task.elapse / 60, task.elapse % 60);
+        if (g_profile.tv_task_value == 1)        // 数值=隐藏：行内只留项目名
+            snprintf(line, sizeof(line), "%s",
+                     task.proj[0] ? task.proj : "未命名");
+        else
+            snprintf(line, sizeof(line), "%s · %d:%02d",
+                     task.proj[0] ? task.proj : "未命名", task.elapse / 60, task.elapse % 60);
         set_text(view.extra[row + 4], line);
         if (view.row_dot[row])
             lv_obj_set_style_bg_color(view.row_dot[row],
@@ -2263,6 +2294,28 @@ void ui_theme_tick() {
         }
         // 用户碰了屏幕就算"看过了"
         if (lv_disp_get_inactive_time(nullptr) < 2000) done_fresh_until = 0;
+    }
+    // 空闲时自动切页（tv.idle_page，竞品「空闲时显示」）：无触摸 60s 且不在
+    // 息屏/闹钟时切到指定页；用户一触摸即切回原页（近似"处理后回到原页面"）。
+    static uint8_t idle_prev_page = 0;
+    static bool idle_on = false;
+    if (g_profile.tv_idle_page && g_profile.tv_idle_page <= view_count
+        && !saver_active && !alarm_active && view_count) {
+        bool idle = lv_disp_get_inactive_time(nullptr) > 60000;
+        uint8_t target = g_profile.tv_idle_page - 1;
+        if (idle && !idle_on && current_page != target) {
+            idle_prev_page = current_page;
+            lv_scr_load(views[target].screen);
+            current_page = target;
+            idle_on = true;
+        } else if (!idle && idle_on) {
+            idle_on = false;
+            lv_scr_load(views[idle_prev_page].screen);
+            current_page = idle_prev_page;
+        }
+    } else if (idle_on) {
+        idle_on = false;
+        lv_scr_load(views[current_page].screen);
     }
     // 息屏门控：无触摸超阈值才息屏，且任务活跃时不息屏（盯长任务是核心场景）；
     // 已息屏后任务恢复 → 自动唤醒，避免"任务跑着、屏幕睡着"。

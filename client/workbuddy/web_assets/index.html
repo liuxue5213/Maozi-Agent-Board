@@ -225,7 +225,43 @@
               <button type="button" class="button wide" id="btn-reset-layout">恢复默认组合</button>
             </div>
 
-            <button type="button" class="button primary wide" id="btn-apply-task">应用到设备</button>
+            <div class="field-heading"><span>AI 页显示参数（应用后小屏生效）</span></div>
+          <label class="field">
+            <span>其他会话行</span>
+            <select id="tv-other-tasks" class="text-input">
+              <option value="1">显示进行中任务</option>
+              <option value="0">不显示（仅焦点）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>其他任务行右侧</span>
+            <select id="tv-task-value" class="text-input">
+              <option value="0">本轮用时</option>
+              <option value="1">仅项目名</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>列表渲染</span>
+            <select id="tv-tl-mode" class="text-input">
+              <option value="0">常规行（状态点+进度条）</option>
+              <option value="1">时间线事件行</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>时间线时间</span>
+            <select id="tv-tl-time" class="text-input">
+              <option value="0">更新时刻（X 分前）</option>
+              <option value="1">本轮用时</option>
+              <option value="2">不显示</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>空闲 60 秒后切到页</span>
+            <select id="tv-idle-page" class="text-input">
+              <option value="0">不自动切换</option>
+            </select>
+          </label>
+          <button type="button" class="button primary wide" id="btn-apply-task">应用到设备</button>
             <p class="hint" id="apply-hint">「应用到设备」把上面的页面组合写入小屏；逐组件调整可直接切换到“页面编排”。</p>
           </div>
 

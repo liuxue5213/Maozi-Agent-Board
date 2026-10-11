@@ -2564,8 +2564,25 @@ function switchView(name){
   if(name==='history'){renderHistory();drawTrendChart()}
   window.scrollTo({top:0,behavior:'smooth'});
 }
+function renderTvIdleOptions(){
+  const sel=$('tv-idle-page'); if(!sel||!draft) return;
+  const cur=sel.value;
+  sel.replaceChildren();
+  const o0=el('option','','不自动切换'); o0.value='0'; sel.append(o0);
+  (draft.pages||[]).forEach((p,i)=>{
+    const o=el('option','',`第 ${i+1} 页 · ${p.title}`); o.value=String(i+1); sel.append(o);
+  });
+  sel.value=cur;
+  if(sel.value!==cur) sel.value='0';
+}
 function renderTaskView(){
   if($('autopage-toggle')) $('autopage-toggle').checked=!!Number(draft.autopage||0);
+  // tv.* 参数回填
+  if($('tv-other-tasks')) $('tv-other-tasks').value=String((draft.tv||{}).other_tasks ?? 1);
+  if($('tv-task-value')) $('tv-task-value').value=String((draft.tv||{}).task_value ?? 0);
+  if($('tv-tl-mode')) $('tv-tl-mode').value=String((draft.tv||{}).tl_mode ?? 0);
+  if($('tv-tl-time')) $('tv-tl-time').value=String((draft.tv||{}).tl_time ?? 0);
+  renderTvIdleOptions();
   renderPageSelect(); renderTaskPages(); renderTaskPreview(); renderThemeGrid();
   if(taskTab==='pages'){renderPages();renderPalette();renderInspector()}
   if(taskTab==='look')renderInspector();
@@ -3217,6 +3234,20 @@ function bind(){
   // ---- 自动按工具分页 ----
   // bind() 在首轮 /api/status 之前执行，draft 此时还是 null；
   // 回填在 renderTaskView 里每次都会做，这里只绑事件，绝不碰 draft。
+  const tvSet=(key,selId)=>{ const elx=$(selId); if(!elx)return;
+    elx.onchange=()=>{ if(!draft)return;
+      draft.tv=draft.tv||{};
+      draft.tv[key]=Number(elx.value);
+      markDirty();
+      notice('已记入草稿，「应用到设备」后小屏生效');
+    };
+  };
+  tvSet('other_tasks','tv-other-tasks');
+  tvSet('task_value','tv-task-value');
+  tvSet('tl_mode','tv-tl-mode');
+  tvSet('tl_time','tv-tl-time');
+  tvSet('idle_page','tv-idle-page');
+
   $('autopage-toggle').onchange=e=>{
     if(!draft)return;
     draft.autopage=e.target.checked?1:0; markDirty();

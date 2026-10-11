@@ -48,6 +48,12 @@ struct DeviceProfile {
     char pet_name[13] = "帽子";
     uint8_t pet_sleep = 1;   // 凌晨自动睡觉（01-06 硬覆盖；0=仅犯困提示）
     uint8_t pet_greet = 0;   // 整点/半点问候
+    // 任务视图 tv.* 参数（竞品对齐）：AI 页渲染细节 + 空闲时切页
+    uint8_t tv_other_tasks = 1;  // AI 页其他会话 3 行：1 显示 / 0 隐藏
+    uint8_t tv_task_value = 0;   // 其他任务行右侧：0 用时 / 1 隐藏（仅项目名）
+    uint8_t tv_tl_mode = 0;      // AI 列表渲染：0 常规行（点+进度条）/ 1 时间线事件行
+    uint8_t tv_tl_time = 0;      // 时间线行时间：0 更新时刻(相对) / 1 本轮用时 / 2 不显示
+    uint8_t tv_idle_page = 0;    // 空闲超时切页（1 基，0=不切；须为存在的页）
     // 诗句库（屏保「诗词短句」轮换；空 = 用内置四句）
     uint8_t poem_count = 0;
     char poems[10][61] = {};

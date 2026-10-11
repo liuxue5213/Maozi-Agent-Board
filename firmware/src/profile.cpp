@@ -102,6 +102,16 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         out.pet_sleep = pet_cfg["sleep"] | true;
         out.pet_greet = pet_cfg["greet"] | false;
     }
+    // 任务视图 tv.* 参数（缺省=现状渲染）
+    JsonObjectConst tv_cfg = doc["tv"].as<JsonObjectConst>();
+    if (!tv_cfg.isNull()) {
+        out.tv_other_tasks = tv_cfg["other_tasks"] | 1;
+        out.tv_task_value = tv_cfg["task_value"] | 0;
+        out.tv_tl_mode = tv_cfg["tl_mode"] | 0;
+        out.tv_tl_time = tv_cfg["tl_time"] | 0;
+        uint8_t idle_pg = tv_cfg["idle_page"] | 0;
+        out.tv_idle_page = (idle_pg <= 6) ? idle_pg : 0;
+    }
     // 诗句库（屏保「诗词短句」轮换）
     JsonArrayConst poems = doc["poems"].as<JsonArrayConst>();
     if (!poems.isNull()) {
