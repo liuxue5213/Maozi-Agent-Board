@@ -12,6 +12,7 @@ firmware/.pio/
 outputs/ui-refactor-shots/
 outputs/style-verify/
 client/outputs/
+outputs/screen-regression/
 # SMC helper 编译产物
 client/tools/smc/maozi-smcd
 # 系统杂物
