@@ -1238,14 +1238,15 @@ function devHwPage(screen, ctx){
       if(i===1){ value = `${t.mem===undefined?'--':t.mem}%`;
                  note = t.memtotal ? `${t.memused}/${t.memtotal} GB` : '即时负载'; pct = Number(t.mem)||0; }
       if(i===2){ value = `${t.disk===undefined?'--':t.disk}%`;
-                 note = t.diskfree===undefined ? '使用率' : `余 ${Math.round(t.diskfree)} G`;
+                 note = t.diskfree===undefined ? '使用率' : `余 ${Number(t.diskfree).toFixed(1)} G`;
                  pct = Number(t.disk)||0;
                  if(Number(t.disk) >= 90) color = devSemantic('status.warn'); }
       if(i===3){
         if(isFinite(t.netrx) && isFinite(t.nettx)){
           const sum = Number(t.netrx)+Number(t.nettx);
           value = `${Math.round(sum)} Mb`;
-          note = `下${Math.round(t.netrx)} 上${Math.round(t.nettx)}`;
+          // 明细一位小数：0.3Mbps 取整后全是 0，等于没显示（同固件）
+          note = `下${Number(t.netrx).toFixed(1)} 上${Number(t.nettx).toFixed(1)}`;
           pct = Math.round(sum*100/50);
         }else{ value = '--'; note = '网速未提供'; }
       }
@@ -1257,14 +1258,16 @@ function devHwPage(screen, ctx){
   // 底部整宽「温度与风扇」三列卡（与固件 make_hardware 同几何）
   const tc = devCard(screen, 8, C.y0+296, 304, 84);
   const clean = (v)=>v!==undefined && v!=='' && v!==null && isFinite(Number(v));
+  // 底部三列几何与固件一致：风扇列 104 宽、单位进标题（rpm 值曾截断）
   const hwCols = [
     ['CPU', clean(t.cputemp) ? Math.round(Number(t.cputemp))+'℃' : '--'],
     ['GPU', clean(t.gputemp) ? Math.round(Number(t.gputemp))+'℃' : '--'],
-    ['风扇', clean(t.fan) ? Math.round(Number(t.fan))+'rpm' : '--'],
+    ['风扇 rpm', clean(t.fan) ? String(Math.round(Number(t.fan))) : '--'],
   ];
+  const colX=[12, 104, 192], colW=[80, 80, 104];
   hwCols.forEach((c,i)=>{
-    devLabel(tc, 16+i*100, 12, 88, ok?c[0]:'', 20, 'dev-dim');
-    devLabel(tc, 16+i*100, 38, 88, ok?c[1]:'--', 28, 'dev-ink');
+    devLabel(tc, colX[i], 12, colW[i], ok?c[0]:'', 20, 'dev-dim');
+    devLabel(tc, colX[i], 38, colW[i], ok?c[1]:'--', 28, 'dev-ink');
   });
 }
 

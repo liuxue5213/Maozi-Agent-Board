@@ -833,12 +833,16 @@ void make_hardware(WidgetView& view, lv_obj_t* screen) {
         // 卡片说明始终限制为单行；窄卡上再长的实时数值也不能挤到下一行。
         view.extra[i * 2 + 1] = label1(panel, "", 20, sub_color, 12, 114, 124);
     }
-    // 温度与风扇：三列并排（CPU 温度 / GPU 温度 / 风扇 RPM）
+    // 温度与风扇：三列并排（CPU 温度 / GPU 温度 / 风扇转速）。
+    // 风扇列加宽到 104 且单位上移进标题——"5305rpm" 7 字符在 88px@28px
+    // 下被 LONG_DOT 截成 "529..."（真机实拍确认）；纯数字最大 5 位 85px 稳放。
     lv_obj_t* panel = box(screen, 8, BODY_Y + 296, 304, 84);
-    const char* caps2[3] = {"CPU", "GPU", "风扇"};   // 中文 20px 字宽>字号，标题限 2 字防裁
+    const char* caps2[3] = {"CPU", "GPU", "风扇 rpm"};
+    const int col_x[3] = {12, 104, 192};
+    const int col_w[3] = {80, 80, 104};
     for (int i = 0; i < 3; ++i) {
-        label(panel, caps2[i], 20, sub_color, 16 + i * 100, 12, 88);
-        view.hw_temp[i] = label(panel, "--", 28, text_color, 16 + i * 100, 38, 88, 32);
+        label(panel, caps2[i], 20, sub_color, col_x[i], 12, col_w[i]);
+        view.hw_temp[i] = label(panel, "--", 28, text_color, col_x[i], 38, col_w[i], 32);
     }
 }
 
@@ -1342,14 +1346,14 @@ void render_hardware(WidgetView& view) {
     snprintf(line, sizeof(line), "%d%%", latest.mem);
     set_text(view.extra[2], line);
     if (!isnan(latest.memtotal))
-        snprintf(tag, sizeof(tag), "%.0f/%.0f GB", latest.memused, latest.memtotal);
+        snprintf(tag, sizeof(tag), "%.1f/%.0f GB", latest.memused, latest.memtotal);
     else strcpy(tag, "即时负载");
     set_text(view.extra[3], tag);
     bar_set(view.hw_fill[1], view.hw_bar[1], latest.mem, accent);
 
     snprintf(line, sizeof(line), "%d%%", latest.disk);
     set_text(view.extra[4], line);
-    if (!isnan(latest.diskfree)) snprintf(tag, sizeof(tag), "余 %.0f G", latest.diskfree);
+    if (!isnan(latest.diskfree)) snprintf(tag, sizeof(tag), "余 %.1f G", latest.diskfree);
     else strcpy(tag, "使用率");
     set_text(view.extra[5], tag);
     // 磁盘 ≥90% 迷你条转警告色（效果图规则），一眼看出空间告急
@@ -1361,7 +1365,8 @@ void render_hardware(WidgetView& view) {
     bool net_ok = !isnan(latest.netrx) && !isnan(latest.nettx);
     if (net_ok) {
         snprintf(line, sizeof(line), "%.0f Mb", latest.netrx + latest.nettx);
-        snprintf(tag, sizeof(tag), "下%.0f 上%.0f", latest.netrx, latest.nettx);
+        // 明细保留一位小数：0.3Mbps 这类小流量取整后全是 0，等于没显示
+        snprintf(tag, sizeof(tag), "下%.1f 上%.1f", latest.netrx, latest.nettx);
         int pct = (int)((latest.netrx + latest.nettx) * 100.0f / 50.0f);
         bar_set(view.hw_fill[3], view.hw_bar[3], pct, accent);
     } else {
@@ -1378,7 +1383,8 @@ void render_hardware(WidgetView& view) {
     if (latest.gpu_temp_valid) snprintf(line, sizeof(line), "%d℃", (int)(latest.gputemp + 0.5f));
     else strcpy(line, "--");
     set_text(view.hw_temp[1], line);
-    if (latest.fan_valid) snprintf(line, sizeof(line), "%drpm", (int)(latest.fan + 0.5f));
+    // 风扇不带单位：单位已在标题（"风扇 rpm"），列宽按纯数字校过
+    if (latest.fan_valid) snprintf(line, sizeof(line), "%d", (int)(latest.fan + 0.5f));
     else strcpy(line, "--");
     set_text(view.hw_temp[2], line);
 }

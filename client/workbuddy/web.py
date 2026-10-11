@@ -389,6 +389,11 @@ def start_settings_server(app, port):
                     return
                 if path == "/api/validate":
                     self._json(200, {"profile": validate_profile(data)})
+                elif path == "/api/page":
+                    # 切设备页（1 基）：多窗格预览点击直达小屏对应页。
+                    # 页号超范围由 set_device_page 拒绝（400 语义此处简化为 ok:false）。
+                    ok = app.set_device_page(int(data.get("page", 1)))
+                    self._json(200, {"ok": bool(ok)})
                 elif path == "/api/autostart":
                     from . import autostart
                     self._json(200, {"enabled": autostart.set_enabled(bool(data.get("enable")))})
