@@ -2083,7 +2083,8 @@ void ui_set_page(uint8_t page) {
 // ---------- 实拍（工作台「实拍」按钮 → SNAP=1 下行 → 本函数回传） ----------
 // 屏是写-only SPI（无 MISO）读不了 GRAM，用 LVGL 离屏快照代替：
 // 全分辨率渲染到 PSRAM → 2×2 均值降到 160×240（76KB）→ base64 分帧上行。
-// 115200 波特率下传输约 10s，期间渲染停顿——按需触发可接受。
+// 每行负载 512 字节：90 字节曾把整帧拖到 ~10s（行数太多，逐行 printf/flush
+// 的开销远大于纯带宽）。传输约 1-2s，期间渲染停顿——按需触发可接受。
 void pet_play_event() {                   // 客户端「运动」互动 → PLAYING 场景
     pet_trigger_scene(PL_PLAYING, 2500);
 }
@@ -2130,17 +2131,18 @@ void ui_send_snapshot() {
 
     Serial.printf("SNAP=BEGIN,%d,%d\n", OW, OH);
     const size_t total = (size_t)OW * OH * 2;
-    unsigned char encoded[4 * 91 + 1];     // 90 字节 → base64 120 字符
+    const size_t CHUNK = 512;              // 每行 512 字节 → base64 ~684 字符
+    unsigned char encoded[4 * ((CHUNK + 2) / 3) + 1];
     size_t olen = 0;
     int seq = 0;
-    for (size_t off = 0; off < total; off += 90, ++seq) {
-        size_t n = (total - off < 90) ? (total - off) : 90;
+    for (size_t off = 0; off < total; off += CHUNK, ++seq) {
+        size_t n = (total - off < CHUNK) ? (total - off) : CHUNK;
         mbedtls_base64_encode(encoded, sizeof(encoded), &olen,
                               (const unsigned char *)small + off, n);
         Serial.printf("SNAP=DATA,%d,", seq);
         Serial.write(encoded, olen);
         Serial.print("\n");
-        if ((seq & 15) == 15) delay(2);    // 定期让出，避免看门狗紧张
+        if ((seq & 31) == 31) delay(1);    // 定期让出，避免看门狗紧张
     }
     Serial.print("SNAP=END\n");
     free(small);

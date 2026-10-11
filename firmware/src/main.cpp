@@ -28,7 +28,10 @@ void send_touch(const char* page) {
 
 void setup() {
     Serial.setRxBufferSize(2048);   // 突发事务（背景图/配置分帧）防 RX 溢出丢字节
-    Serial.begin(115200);
+    // 921600：链路是 FT232R 桥（VID 0x0403），115200 时整帧实拍要 ~10s 且
+    // 76KB 的背景图下发同样被带宽卡死。FT232R 与 ESP32 UART 都原生支持
+    // 921600，客户端 serial_link.py 同步改；烧录走 ROM 下载模式不受影响。
+    Serial.begin(921600);
     delay(200);
     profile_init();
     bgimg_init();        // 挂载确认 + 解码已存背景图（在 ui_init 前完成，首屏即带背景）

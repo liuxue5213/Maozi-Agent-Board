@@ -85,7 +85,7 @@ def main() -> int:
                     help="拍第二张前等待秒数（给个 6 秒就能比对秒针是否在走）")
     args = ap.parse_args()
 
-    with serial.Serial(args.port, 115200, timeout=0.5) as ser:
+    with serial.Serial(args.port, 921600, timeout=0.5) as ser:
         time.sleep(0.4)
         ser.reset_input_buffer()
         for index, suffix in enumerate(("", "-2") if args.wait else ("",)):

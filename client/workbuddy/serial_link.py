@@ -20,6 +20,7 @@ class SerialLink:
         self._stop = False
         self._just_connected = False
         self._last_rx_at = 0.0
+        self._rxbuf = bytearray()       # 跨批次保留的不完整行
         if not cfg.serial:
             self._status = "disabled"
         elif not HAVE_SERIAL:
@@ -84,7 +85,7 @@ class SerialLink:
                 dev = self._scan()
                 if dev:
                     try:
-                        self._port = serial.Serial(dev, 115200, timeout=0.2, write_timeout=0.2)
+                        self._port = serial.Serial(dev, 921600, timeout=0.2, write_timeout=0.2)
                         self._status = f"connected:{dev}"
                         self._last_rx_at = time.monotonic()
                         self._just_connected = True
@@ -106,16 +107,28 @@ class SerialLink:
                 continue
 
             try:
-                raw = self._port.readline()
+                # 批量排水：FTDI 驱动 RX 缓冲只有几 KB，921600 下 ~92KB/s，
+                # 缓冲 40ms 就满——逐行 readline 的 Python 开销叠加 web 线程
+                # 抢 GIL，曾稳定丢 15-25% 的实拍帧（直读无此问题）。一次性
+                # 读走 in_waiting 全部字节再本地分行，溢出窗口缩到一个 syscall。
+                raw = self._port.read(max(1, self._port.in_waiting))
                 if raw:
                     self._last_rx_at = time.monotonic()
                     self._status = f"connected:{self._port.port}"
-                    d = parse_uplink(raw.decode("utf-8", errors="ignore"))
-                    if d and self.on_uplink:
-                        self.on_uplink(d)
-                    # 有数据就连读：实拍回传 10s 内约 860 行（~86 行/秒），
-                    # 每行歇 20ms 只有 ~46 行/秒，RX 必然溢出丢帧、永远等不到
-                    # END（tools/device_snapshot.py 直读无此停顿所以能收整帧）。
+                    self._rxbuf += raw
+                    while True:
+                        nl = self._rxbuf.find(b"\n")
+                        if nl < 0:
+                            break
+                        line = bytes(self._rxbuf[:nl])
+                        del self._rxbuf[:nl + 1]
+                        if not line:
+                            continue
+                        d = parse_uplink(line.decode("utf-8", errors="ignore"))
+                        if d and self.on_uplink:
+                            self.on_uplink(d)
+                    if len(self._rxbuf) > 8192:
+                        self._rxbuf.clear()   # 坏流防御：半行残渣不无限累积
                     continue
                 if time.monotonic() - self._last_rx_at > 15.0:
                     self._status = f"stale:{self._port.port}"
@@ -125,6 +138,7 @@ class SerialLink:
             time.sleep(0.02)
 
     def _drop(self):
+        self._rxbuf.clear()
         try:
             if self._port is not None:
                 self._port.close()
