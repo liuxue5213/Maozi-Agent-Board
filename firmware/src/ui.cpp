@@ -372,11 +372,20 @@ void bright_step(int delta) {
 void bright_down(lv_event_t*) { bright_step(-10); }
 void bright_up(lv_event_t*) { bright_step(+10); }
 
+static uint32_t alarm_snooze_until_ms = 0;   // 「稍后」到期时刻（0=无）
+
 void stop_alarm(lv_event_t*) {
     alarm_active = false;
     for (uint8_t p = 0; p < view_count; ++p)
         lv_obj_add_flag(views[p].alert, LV_OBJ_FLAG_HIDDEN);
     display_brightness(g_profile.bright);
+}
+
+void snooze_alarm_cb(lv_event_t*) {
+    // 先停铃再记稍后：到期后 alarm_tick 直接重新响铃，不依赖时刻匹配
+    //（fired_dates 已标记今天触发过，正常检测不会再响，稍后必须独立补响）。
+    stop_alarm(nullptr);
+    alarm_snooze_until_ms = millis() + 5UL * 60UL * 1000UL;
 }
 
 void choose_task(lv_event_t* event) {
@@ -1115,7 +1124,9 @@ void build_page(uint8_t index) {
     page.alert = box(page.screen, 16, 150, 288, 160);
     lv_obj_set_style_bg_color(page.alert, lv_color_hex(COL_WARN), 0);
     label(page.alert, "闹钟提醒", 32, bg, 20, 20, 248);
-    label(page.alert, "点击任意处停止", 24, bg, 20, 84, 248);
+    label(page.alert, "点击空白处停止", 24, bg, 20, 84, 248);
+    // 稍后按钮：LVGL 8 事件不冒泡，点按钮不会误触「任意处停止」
+    button(page.alert, "稍后 5 分", 20, 112, 140, 36, snooze_alarm_cb, nullptr);
     lv_obj_add_flag(page.alert, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(page.alert, stop_alarm, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_flag(page.alert, LV_OBJ_FLAG_HIDDEN);
@@ -1693,8 +1704,22 @@ void render_all() {
     render_control();
 }
 
+void start_ring(uint32_t now) {
+    alarm_active = true; alarm_started_ms = now;
+    for (uint8_t p = 0; p < view_count; ++p)
+        lv_obj_clear_flag(views[p].alert, LV_OBJ_FLAG_HIDDEN);
+    // 设置页没有 alert 覆盖层：响铃时若停在设置页，闹钟会完全不可见
+    if (scr_settings && lv_scr_act() == scr_settings)
+        lv_scr_load(views[current_page].screen);
+}
+
 void alarm_tick() {
     uint32_t now = millis();
+    if (alarm_snooze_until_ms && now >= alarm_snooze_until_ms) {
+        // 稍后到期：直接重新响铃（与正常触发同一渲染/闪烁路径）
+        alarm_snooze_until_ms = 0;
+        start_ring(now);
+    }
     if (alarm_active) {
         if (now - alarm_started_ms > 12000) {stop_alarm(nullptr); return;}
         int phase = (now - alarm_started_ms) % 1600;
@@ -1713,9 +1738,7 @@ void alarm_tick() {
         if (!item.enabled || !(item.weekdays & (1 << (day - 1))) ||
             secs / 60 != hour * 60 + minute || !strcmp(fired_dates[i], latest.date)) continue;
         snprintf(fired_dates[i], sizeof(fired_dates[i]), "%s", latest.date);
-        alarm_active = true; alarm_started_ms = now;
-        for (uint8_t p = 0; p < view_count; ++p)
-            lv_obj_clear_flag(views[p].alert, LV_OBJ_FLAG_HIDDEN);
+        start_ring(now);
         break;
     }
 }
