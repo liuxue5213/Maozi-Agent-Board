@@ -382,10 +382,42 @@ def _payload(profile):
     return json.dumps(profile, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
-def load_profile():
+# 最近一次 load_profile 降级的原因（文件损坏/校验不过被隔离备份后回退默认），
+# 空 = 正常。App 启动时读走放进 status_snapshot，Web 自检面板据此提示。
+LOAD_WARNING = ""
+
+
+def _quarantine_profile() -> str:
+    import time as _time
+    backup = PROFILE_PATH.with_name(
+        PROFILE_PATH.name + f".bad-{_time.strftime('%Y%m%d-%H%M%S')}")
     try:
-        return validate_profile(json.loads(PROFILE_PATH.read_text(encoding="utf-8")))
-    except (OSError, ValueError, TypeError):
+        PROFILE_PATH.replace(backup)
+        return str(backup)
+    except OSError:
+        return ""
+
+
+def load_profile():
+    global LOAD_WARNING
+    LOAD_WARNING = ""
+    try:
+        raw = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return default_profile()          # 首次运行，不是故障
+    except (OSError, ValueError) as exc:
+        backup = _quarantine_profile()
+        LOAD_WARNING = f"屏幕档案损坏已回退默认（备份 {backup}）" if backup \
+            else f"屏幕档案读取失败已回退默认：{exc}"
+        print(f"[workbuddy] {LOAD_WARNING}")
+        return default_profile()
+    try:
+        return validate_profile(raw)
+    except (ValueError, TypeError) as exc:
+        backup = _quarantine_profile()
+        LOAD_WARNING = f"屏幕档案校验未通过已回退默认（备份 {backup}）：{exc}" \
+            if backup else f"屏幕档案校验未通过已回退默认：{exc}"
+        print(f"[workbuddy] {LOAD_WARNING}")
         return default_profile()
 
 

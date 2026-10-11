@@ -1,7 +1,42 @@
 """CLI 入口：python3 -m workbuddy run|once|ports"""
 import argparse
+import os
 import sys
 import time
+from pathlib import Path
+
+PID_PATH = Path.home() / ".workbuddy" / "workbuddy.pid"
+
+
+def _acquire_instance_lock() -> bool:
+    """单实例锁：两个客户端同时跑会抢同一个串口（症状：遥测错乱、互踢断线）。
+
+    PID 文件记录在跑实例；崩溃残留的陈旧 PID 用 os.kill(pid,0) 探活清除。
+    """
+    try:
+        PID_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if PID_PATH.exists():
+            try:
+                old = int(PID_PATH.read_text().strip())
+                if old != os.getpid():
+                    os.kill(old, 0)          # 探活：活着就拒绝，异常=陈旧
+                    print(f"[workbuddy] 已有实例在运行（PID {old}），本次退出。"
+                          f"如确认无残留可删除 {PID_PATH}")
+                    return False
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass                          # 陈旧/损坏的 PID 文件，接管
+        PID_PATH.write_text(str(os.getpid()))
+    except OSError as exc:
+        print(f"[workbuddy] 单实例锁不可用（{exc}），继续启动")
+    return True
+
+
+def _release_instance_lock():
+    try:
+        if PID_PATH.exists() and PID_PATH.read_text().strip() == str(os.getpid()):
+            PID_PATH.unlink()
+    except OSError:
+        pass
 
 
 def main(argv=None):
@@ -51,6 +86,8 @@ def main(argv=None):
         return 0
 
     cfg = Config.load()
+    if cmd == "run" and not _acquire_instance_lock():
+        return 1
     if cmd == "run":
         cfg.interval = args.interval
         cfg.duration = args.duration
@@ -123,6 +160,8 @@ def main(argv=None):
     finally:
         if mini_window is not None:
             mini_window.stop()
+        if cmd == "run":
+            _release_instance_lock()
     return 0
 
 

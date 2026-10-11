@@ -1,4 +1,5 @@
 """主循环：采集 → AI 检测 → 合并遥测 → 控制台/串口输出。"""
+import json
 import re
 import time
 import threading
@@ -30,6 +31,10 @@ def _proc_report():
 # 协议槽位数：与固件 proto.h 的 tasks[8]/done[3] 对应。
 AI_WIRE_SLOTS = 8
 DONE_WIRE_SLOTS = 3
+
+# 推送标题用的状态名（web 端 stateNames 的服务端子集）
+_PUSH_STATE_NAMES = {"DONE": "已完成", "ERROR": "出错",
+                     "WAIT_INPUT": "等你回复", "ASK": "待确认"}
 
 
 def weather_wire_lines(cities_cfg, data_by_name):
@@ -99,6 +104,16 @@ class App:
         self.fw_caps = None          # 设备能力（来自 FW 握手），None = 未知
         self.profile_lock = threading.Lock()
         self.profile = load_profile()
+        # 配置/档案曾在损坏后被隔离回退过 → Web 自检面板要能提示
+        from . import config as _config_module
+        from . import profile as _profile_module
+        self.config_warning = (_profile_module.LOAD_WARNING
+                               or _config_module.LOAD_WARNING)
+        # 旧档案的 weather.city 单字段迁移（地理编码，失败不打扰运行）
+        if (self.profile.get("weather") or {}).get("city") \
+                and not (self.profile.get("weather") or {}).get("cities"):
+            threading.Thread(target=self._migrate_legacy_city,
+                             daemon=True).start()
         self.profile_status = "待同步"
         self.profile_error = ""
         self.applied_version = None
@@ -446,6 +461,83 @@ class App:
         elif action == "PREV":
             self.control.media("prev")
 
+    def _push_notify(self, name: str, state: str):
+        """手机推送（Bark / ntfy 通用）：AI 跨入需要用户知道的状态时触发。
+
+        配置 push_url 两种写法：
+          · 占位符 GET：https://api.day.app/你的Key/{title}/{body}   （Bark）
+          · 直接 POST：https://ntfy.sh/你的主题                      （ntfy，
+            body=消息文本，X-Title 头=标题）
+        push_states 控制哪些状态推送（默认「出错 + 等你 + 待确认」，
+        完成 tends 噪点多，默认不推）。
+        """
+        url = str(getattr(self.cfg, "push_url", "") or "").strip()
+        if not url:
+            return
+        states = {s.strip().upper() for s in
+                  str(getattr(self.cfg, "push_states", "ERROR,WAIT_INPUT,ASK")
+                      or "").split(",") if s.strip()}
+        if state not in states:
+            return
+        threading.Thread(target=self._push_send,
+                         args=(url, name, state), daemon=True).start()
+
+    def _push_send(self, url: str, name: str, state: str):
+        from urllib.parse import quote
+        from urllib.request import Request, urlopen
+        title = f"WorkBuddy · {_PUSH_STATE_NAMES.get(state, state)}"
+        text = f"{name} {title.split('·')[-1].strip()}"
+        try:
+            if "{title}" in url or "{body}" in url:
+                req = Request(url.replace("{title}", quote(title))
+                                  .replace("{body}", quote(text)))
+            else:
+                # HTTP 头只允许 latin-1：ntfy 约定头里用百分号编码 UTF-8
+                req = Request(url, data=json.dumps(
+                    {"title": title, "body": text, "message": text}).encode("utf-8"),
+                    headers={"Content-Type": "application/json",
+                             "X-Title": quote(title)})
+            with urlopen(req, timeout=5) as resp:
+                resp.read(1024)
+            self.health.event("push_ok", state=state)
+        except Exception as exc:
+            self.health.event("push_fail", err=str(exc)[:32])
+
+    def _migrate_legacy_city(self):
+        """旧档案只有 weather.city 单字段：地理编码补坐标后迁入 cities[]。
+
+        新天气管线按 cities[] 拉取与下发，不迁移的话老城市会静默失效
+        （概览/顶栏/天气组件全变「—」，用户却看不出哪里错了）。
+        """
+        with self.profile_lock:
+            weather = dict(self.profile.get("weather") or {})
+            legacy = weather.get("city", "")
+            if not legacy or weather.get("cities"):
+                return
+        try:
+            from .weather import geocode
+            hits = geocode(legacy)
+        except Exception as exc:
+            self.health.event("city_migrate_fail", err=str(exc)[:32])
+            return
+        if not hits:
+            self.health.event("city_migrate_fail", err=f"geocode miss:{legacy[:12]}")
+            return
+        hit = next((h for h in hits if h.get("name") == legacy), hits[0])
+        try:
+            weather["cities"] = [{
+                "name": hit.get("name") or legacy,
+                "lat": float(hit["lat"]), "lon": float(hit["lon"]),
+                "label": hit.get("label") or legacy}]
+            candidate = dict(self.profile)
+            candidate["weather"] = weather
+            self.save_profile(candidate)
+            self.request_sync()               # 新版本号直接推给设备
+            self.health.event("city_migrated",
+                              city=str(hit.get("name") or legacy)[:12])
+        except Exception as exc:
+            self.health.event("city_migrate_fail", err=str(exc)[:32])
+
     def save_profile(self, draft):
         self.weather.kick()   # 城市列表可能变了：立刻拉一轮
         with self.profile_lock:
@@ -478,6 +570,8 @@ class App:
                     "applied_version": self.applied_version,
                     "fw_caps": self.fw_caps,
                     "usage_error": self.usage_scanner.last_error if self.usage_scanner else "off",
+                    # 配置/档案损坏被隔离回退的提示（Web 自检面板用）
+                    "config_warning": getattr(self, "config_warning", ""),
                     "device": self.link.status if self.link else "串口关闭",
                     "tasks": self._tasks_with_trace(), "telemetry": self.last,
                     "telemetry_age": (round(time.time() - last_tick, 1)
@@ -658,6 +752,8 @@ class App:
                     self.on_ai_notice(name, state)
                 except Exception:
                     pass
+                # 屏幕只在桌前有用；人走开了，「等你/出错」必须能追到手机
+                self._push_notify(name, state)
         if self.usage_scanner:
             snap = self.usage_scanner.snapshot()
             day = snap["today"]

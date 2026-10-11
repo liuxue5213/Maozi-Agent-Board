@@ -6,6 +6,21 @@ from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".workbuddy" / "config.json"
 
+# 最近一次加载降级的原因（文件损坏被隔离备份后回退默认值），空 = 正常。
+# Web 自检面板会读取它提示用户，避免「设置悄悄变回默认」却毫无线索。
+LOAD_WARNING = ""
+
+
+def _quarantine(path: Path) -> str:
+    """把读不了的配置改名留证（.bad-时间戳），而不是让坏文件继续留在原地。"""
+    import time as _time
+    backup = path.with_name(path.name + f".bad-{_time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        path.replace(backup)
+        return str(backup)
+    except OSError:
+        return ""
+
 DEFAULT_ROOTS = {
     "claude": Path.home() / ".claude" / "projects",
     "codex": Path.home() / ".codex" / "sessions",
@@ -33,6 +48,11 @@ class Config:
     web_port: int = 8765
     open_settings: bool = False
     disk_path: str = "/"             # 监控的磁盘
+    # 手机推送（Bark/ntfy）：出错/等你回复时 POST 通知。空 = 不推送。
+    # Bark 示例：https://api.day.app/你的Key/{title}/{body}
+    # ntfy 示例：https://ntfy.sh/你的主题
+    push_url: str = ""
+    push_states: str = "ERROR,WAIT_INPUT,ASK"   # 触发推送的状态集合
     reminders: list = field(default_factory=list)  # [{"time":"09:30","text":"站会"}]
     theme: dict = field(default_factory=lambda: {
         "bg": "0B1220", "card": "141E32", "accent": "22D3EE",
@@ -41,17 +61,25 @@ class Config:
 
     @classmethod
     def load(cls) -> "Config":
+        global LOAD_WARNING
         cfg = cls()
         if CONFIG_PATH.exists():
             try:
                 data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-                roots = data.pop("roots", {})
-                for k, v in data.items():
-                    if hasattr(cfg, k):
-                        setattr(cfg, k, v)
-                cfg.roots.update({k: str(v) for k, v in roots.items()})
-            except Exception:
-                pass  # 配置损坏时静默回退默认值
+                if not isinstance(data, dict):
+                    raise ValueError("配置必须是对象")
+            except Exception as exc:
+                # 损坏文件改名留证再回退默认：静默覆盖会让用户失去排查线索
+                backup = _quarantine(CONFIG_PATH)
+                LOAD_WARNING = f"客户端配置损坏已回退默认（备份 {backup}）" if backup \
+                    else f"客户端配置损坏已回退默认：{exc}"
+                print(f"[workbuddy] {LOAD_WARNING}")
+                return cfg
+            roots = data.pop("roots", {})
+            for k, v in data.items():
+                if hasattr(cfg, k):
+                    setattr(cfg, k, v)
+            cfg.roots.update({k: str(v) for k, v in roots.items()})
         return cfg
 
     def save(self):
