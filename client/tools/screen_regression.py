@@ -27,6 +27,10 @@ import urllib.request
 from pathlib import Path
 
 BASE = "http://127.0.0.1:8765"
+# 存档目录锚定仓库根（client/tools/ 的上两级）：从任何 CWD 运行产物都落同一处，
+# 不会在工作目录里散落 client/outputs/ 这类一次性目录
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_OUT = _REPO_ROOT / "outputs" / "screen-regression"
 
 # 默认场景：一套基线 + 两个差异大的主题（深色→浅色，验证边界与文字对比度）
 SCENARIOS = [
@@ -137,8 +141,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="实屏截图回归")
     parser.add_argument("--run", action="store_true", help="真的执行（默认只打印计划）")
     parser.add_argument("--only", default="", help="只跑指定场景名")
-    parser.add_argument("--out", default="outputs/screen-regression",
-                        help="PNG 存档目录")
+    parser.add_argument("--out", default=str(DEFAULT_OUT),
+                        help="PNG 存档目录（默认 仓库根/outputs/screen-regression）")
     args = parser.parse_args()
     out_dir = Path(args.out)
     if not args.run:
