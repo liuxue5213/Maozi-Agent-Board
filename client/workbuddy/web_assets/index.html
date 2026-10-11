@@ -48,6 +48,7 @@
         <i class="conn-dot" id="conn-dot" aria-hidden="true"></i>
         <span id="conn-text">小屏未连接</span>
       </div>
+      <button type="button" class="linklike alert-badge" id="btn-alert-hist" hidden>⚠ 有未读异常 <span id="alert-count"></span></button>
       <button type="button" class="linklike" id="btn-cmd-hint">⌘K 命令面板 / 快捷键 ?</button>
       <small class="ver" id="ver-text">版本 —</small>
     </div>
@@ -818,6 +819,20 @@
       <button type="button" class="icon-button" id="kbd-close" title="关闭" aria-label="关闭快捷键帮助"><span aria-hidden="true">×</span></button>
     </div>
     <div class="kbd-rows" id="kbd-rows"></div>
+  </div>
+</div>
+
+<!-- 异常记录：toast 4 秒即逝，落一份历史供回看（实拍超时/保存被拒/连接中断…） -->
+<div class="cmd-overlay" id="alert-overlay" hidden>
+  <div class="cmd-box kbd-box" role="dialog" aria-modal="true" aria-labelledby="alert-heading">
+    <div class="panel-head">
+      <h2 id="alert-heading">异常记录</h2>
+      <div class="panel-head-actions">
+        <button type="button" class="linklike" id="btn-alert-clear">清空</button>
+        <button type="button" class="icon-button" id="alert-close" title="关闭" aria-label="关闭异常记录"><span aria-hidden="true">×</span></button>
+      </div>
+    </div>
+    <div class="kbd-rows" id="alert-rows"></div>
   </div>
 </div>
 

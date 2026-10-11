@@ -1755,3 +1755,11 @@ svg { display:block; }
 
 /* 占满同行剩余宽度的输入框（服务端 CSP 禁内联 style 属性，弹性布局只能走类） */
 .grow { flex:1 1 auto; min-width:0; }
+
+/* ===== 异常中心：侧栏未读徽章 + 记录面板 ===== */
+.alert-badge { color:var(--err); font-weight:600; }
+.alert-badge:hover { color:var(--err-line); }
+.alert-row { display:flex; gap:10px; padding:9px 2px; border-bottom:1px solid var(--line);
+  font-size:13px; align-items:baseline; }
+.alert-time { color:var(--text-tertiary); white-space:nowrap; font-size:12px; }
+.alert-msg { word-break:break-all; }

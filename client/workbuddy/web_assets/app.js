@@ -40,6 +40,7 @@ let polling = false, lastOkAt = 0, failStreak = 0, tickTimer = null;
 let currentView = 'overview';
 let selectedThemeKey = null, themeTab = 'preset';
 let colorMap = null;
+let lastProfileStatus = null;   // absorb 用：同步状态转换检测（异常历史）
 
 /* ---------- 颜色工具：预览按「半透明卡片叠在背景上」的真实合成色校验对比度 ---------- */
 function hexToRgb(hex){
@@ -394,6 +395,54 @@ function notice(message, bad=false) {
   const box = $('message'); box.textContent = message;
   box.className = `message show${bad?' error':''}`;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => box.className='message', 4200);
+  if (bad) logError(message);
+}
+
+/* ================= 异常中心 =================
+   toast 4 秒即逝，实拍超时/保存被拒/连接中断这类错误没正好看着就永远错过。
+   所有 notice(bad=true) 落一份到本机列表（≤50 条），侧栏徽章显示未读数，
+   点开面板回看；同步失败等状态级异常在 absorb 的状态转换里也走这里。 */
+const ERR_KEY='workbuddy-errors', ERR_SEEN_KEY='workbuddy-errors-seen';
+function errorList(){ try{ return JSON.parse(localStorage.getItem(ERR_KEY)||'[]') }catch(e){ return [] } }
+function logError(msg){
+  const list=errorList();
+  // 同一条错误 5 秒内连发去重（轮询/SSE 双通道会重复投递）
+  if(list[0] && list[0].msg===String(msg) && Date.now()-list[0].t<5000)return;
+  list.unshift({t:Date.now(), msg:String(msg).slice(0,200)});
+  try{ localStorage.setItem(ERR_KEY, JSON.stringify(list.slice(0,50))) }catch(e){}
+  updateAlertBadge();
+}
+function unreadErrors(){
+  const seen=Number(localStorage.getItem(ERR_SEEN_KEY))||0;
+  return errorList().filter(x=>x.t>seen);
+}
+function updateAlertBadge(){
+  const btn=$('btn-alert-hist'); if(!btn)return;
+  const n=unreadErrors().length;
+  btn.hidden=n===0;
+  const count=$('alert-count'); if(count)count.textContent=n;
+}
+function renderAlertRows(){
+  const root=$('alert-rows'); if(!root)return;
+  root.replaceChildren();
+  const list=errorList();
+  if(!list.length){ root.append(el('div','empty','近期没有异常记录。')); return }
+  list.forEach(item=>{
+    const row=el('div','alert-row');
+    row.append(el('time','alert-time',
+                 new Date(item.t).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})),
+               el('span','alert-msg',item.msg));
+    root.append(row);
+  });
+}
+function toggleAlerts(open){
+  const ov=$('alert-overlay'); if(!ov)return;
+  if(open&&ov.hidden){
+    localStorage.setItem(ERR_SEEN_KEY,String(Date.now()));
+    renderAlertRows();
+    updateAlertBadge();
+  }
+  ov.hidden=!open;
 }
 function markDirty() {
   dirty = true;
@@ -497,7 +546,7 @@ function toggleKbd(open){
   }
   ov.hidden=!open;
 }
-function overlayOpen(){ return !$('cmd-overlay').hidden || !$('kbd-overlay').hidden; }
+function overlayOpen(){ return !$('cmd-overlay').hidden || !$('kbd-overlay').hidden || !$('alert-overlay').hidden; }
 function typingTarget(e){
   const t=e.target;
   return !!(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT'||t.isContentEditable));
@@ -531,7 +580,7 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();
     if(!$('focus-stage').hidden){closeFocus();return}
     if(!$('task-drawer').hidden){closeTaskDrawer();return}
-    if(overlayOpen()){openCmd(false);toggleKbd(false)}
+    if(overlayOpen()){openCmd(false);toggleKbd(false);toggleAlerts(false)}
     return;
   }
   if($('cmd-overlay').hidden){
@@ -2498,6 +2547,11 @@ function absorb(next){
   // 页面若从 localStorage 直接恢复到「设置」，switchView() 当时尚无 draft，
   // 首次状态到达后必须补一次完整渲染，否则音乐列表等字段会一直显示“—”。
   if(firstProfile&&currentView==='settings')renderSettings();
+  // 同步失败是状态级异常：apply-bar 只在当前页可见，落进异常历史保证不漏
+  if(live.profile_status==='同步失败'&&lastProfileStatus!=='同步失败'){
+    logError(`配置应用失败${live.profile_error?'：'+live.profile_error:''}`);
+  }
+  lastProfileStatus=live.profile_status;
   notifyTaskTransitions(live.tasks||[]);
   sampleUsage();
   if(currentView==='saver'&&!$('btn-saver-detail').dataset.init){renderSaverView();$('btn-saver-detail').dataset.init='1'}
@@ -2599,6 +2653,12 @@ function bind(){
   $('kbd-close').onclick=()=>toggleKbd(false);
   $('cmd-overlay').onclick=e=>{if(e.target===$('cmd-overlay'))openCmd(false)};
   $('kbd-overlay').onclick=e=>{if(e.target===$('kbd-overlay'))toggleKbd(false)};
+  // 异常记录面板：徽章点开、点空白/×关闭、可清空
+  $('btn-alert-hist').onclick=()=>toggleAlerts(true);
+  $('alert-close').onclick=()=>toggleAlerts(false);
+  $('alert-overlay').onclick=e=>{if(e.target===$('alert-overlay'))toggleAlerts(false)};
+  $('btn-alert-clear').onclick=()=>{localStorage.removeItem(ERR_KEY);renderAlertRows();updateAlertBadge()};
+  updateAlertBadge();
   $('cmd-input').oninput=e=>renderCmdList(e.target.value);
   // 会话抽屉关闭（#2）：点 scrim 或 ×
   $('drawer-close').onclick=closeTaskDrawer;
