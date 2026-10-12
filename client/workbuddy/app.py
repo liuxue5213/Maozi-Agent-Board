@@ -1165,6 +1165,11 @@ class App:
             day = snap["today"]
             if day.get("total"):
                 t["ait"] = str(day["total"] // 1000)   # 今日总 token（K）
+            # 分模型今日消耗（AIB0..2 = 模型名,token；竞品「多智能体分组指标」
+            # 的本地口径——软件本身用几个模型就显示几个，按消耗降序最多 3）
+            for i, (model, tok) in enumerate(
+                    list((snap.get("by_model") or {}).items())[:3]):
+                t[f"aib{i}"] = f"{model[:19]},{tok}"
             focus = self.tasks[0] if self.tasks else None
             if focus:
                 model = (snap["models"].get(focus["tool"]) or "")[:15]

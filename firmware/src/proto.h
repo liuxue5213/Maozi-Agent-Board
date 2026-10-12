@@ -94,6 +94,9 @@ struct Telemetry {
     char ai_model[16] = "";
     long ai_tok_out = -1;                      // 焦点会话本轮输出
     long day_tok_total = -1;                   // 今日总 token
+    // 分模型今日消耗（AIB0..2 = 模型名,token；按消耗降序）
+    char ai_by_model[3][20] = {};
+    long ai_by_tok[3] = {-1, -1, -1};
     // 主题色推送（CFG=bg:xxxxxx,card:...,accent:...,text:...,sub:...）
     uint32_t theme_bg = 0, theme_grad = 0, theme_card = 0, theme_accent = 0, theme_text = 0, theme_sub = 0;
     bool theme_changed = false;
@@ -126,8 +129,10 @@ public:
     void feed(char c);
 
 private:
-    char _line[192];
-    uint8_t _len = 0;
+    // OTA 每片 512B 经 Base64 + 序号后最长约 710 字节。旧 192B 缓冲会
+    // 静默截断每一个 OTA=DATA 行，客户端却只能在最后看到 SEQ NAK。
+    char _line[768];
+    uint16_t _len = 0;
     void handle(const char* line);
     void handle_cfg(const char* value);
     void handle_ai(int idx, const char* value);

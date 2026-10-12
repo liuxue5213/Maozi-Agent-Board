@@ -112,6 +112,27 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         uint8_t idle_pg = tv_cfg["idle_page"] | 0;
         out.tv_idle_page = (idle_pg <= 6) ? idle_pg : 0;
     }
+    // AI 用量卡看板参数（缺省=现状三槽轮换）。槽序=用户勾选序。
+    JsonObjectConst ac_cfg = doc["ai_cost"].as<JsonObjectConst>();
+    if (!ac_cfg.isNull()) {
+        out.ac_mode = ((ac_cfg["mode"] | 0) == 1) ? 1 : 0;
+        uint8_t n = 0;
+        JsonArrayConst mets = ac_cfg["metrics"].as<JsonArrayConst>();
+        if (!mets.isNull()) {
+            for (const char* m : mets) {
+                if (!m || n >= 4) continue;
+                uint8_t code;
+                if (!strcmp(m, "today"))      code = 0;
+                else if (!strcmp(m, "turn"))  code = 1;
+                else if (!strcmp(m, "model")) code = 2;
+                else if (!strcmp(m, "models")) code = 3;
+                else continue;               // 旧档案里的 cost/rate 在此被忽略
+                out.ac_slots[n++] = code;    // 重复勾选去重交给校验层
+            }
+        }
+        if (!n) { out.ac_slots[0] = 0; out.ac_slots[1] = 1; out.ac_slots[2] = 2; n = 3; }
+        out.ac_slot_n = n;
+    }
     // 诗句库（屏保「诗词短句」轮换）
     JsonArrayConst poems = doc["poems"].as<JsonArrayConst>();
     if (!poems.isNull()) {

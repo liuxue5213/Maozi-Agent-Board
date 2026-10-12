@@ -360,6 +360,22 @@ def validate_profile(raw):
         "idle_page": _tv_int("idle_page", 0, 0, 6),
     }
 
+    # AI 用量卡看板参数（竞品图4「内容组合/显示指标」；缺省=现状三槽轮换）
+    # metrics 勾选与顺序即展示槽位；models=分模型消耗（每模型一槽，设备端
+    # 从 AIB0..2 取按消耗降序的最多 3 个）。金额换算已按用户要求移除。
+    ac = raw.get("ai_cost", {})
+    if not isinstance(ac, dict):
+        ac = {}
+    allowed = ("today", "turn", "model", "models")
+    raw_mets = ac.get("metrics") if isinstance(ac.get("metrics"), list) else []
+    seen = set()
+    metrics = [m for m in raw_mets
+               if isinstance(m, str) and m in allowed and not (m in seen or seen.add(m))]
+    if not metrics:
+        metrics = ["today", "turn", "model"]
+    out["ai_cost"] = {"mode": 1 if ac.get("mode") in (1, "fixed") else 0,
+                      "metrics": metrics}
+
     def luminance(hex_color):
         values = [int(hex_color[i:i + 2], 16) / 255 for i in (0, 2, 4)]
         linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in values]

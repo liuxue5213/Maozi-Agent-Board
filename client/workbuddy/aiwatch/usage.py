@@ -84,6 +84,7 @@ class UsageScanner:
         self._cinc = _IncFile()
         self._lock = threading.Lock()
         self.today = {"total": 0}
+        self.today_by_model: dict[str, int] = {}   # 今日分模型 token（降序 top6）
         self.models: dict[str, str] = {}      # tool -> 最近模型名
         # 会话级今日累计（客户端启动后增量；sid -> {"total","out"}）——
         # 供「本轮 Token」显示。重启清零：语义 = 本次运行期间该会话的用量。
@@ -102,6 +103,7 @@ class UsageScanner:
     def snapshot(self) -> dict:
         with self._lock:
             return {"today": dict(self.today), "models": dict(self.models),
+                    "by_model": dict(self.today_by_model),
                     "by_sid": {k: dict(v) for k, v in self.by_sid.items()}}
 
     def _loop(self):
@@ -117,6 +119,7 @@ class UsageScanner:
         today = time.strftime("%Y-%m-%d")
         total = 0
         models = {}
+        by_model: dict[str, int] = {}
 
         # ZCode：rollout 增量
         zroot = Path(self.roots.get("zcode", "")) / "rollout"
@@ -134,6 +137,8 @@ class UsageScanner:
                     day, r_total, r_out, model = rec
                     if day == today:
                         total += r_total
+                        if model:
+                            by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem.replace("model-io-", "")
                         acc = self.by_sid.setdefault(
                             sid, {"total": 0, "out": 0})
@@ -162,6 +167,8 @@ class UsageScanner:
                     day, r_total, r_out, model = rec
                     if day == today:
                         total += r_total
+                        if model:
+                            by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem
                         acc = self.by_sid.setdefault(
                             sid, {"total": 0, "out": 0})
@@ -172,4 +179,6 @@ class UsageScanner:
 
         with self._lock:
             self.today = {"total": total}
+            self.today_by_model = dict(
+                sorted(by_model.items(), key=lambda kv: -kv[1])[:6])
             self.models.update(models)

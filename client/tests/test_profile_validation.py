@@ -209,6 +209,34 @@ class PetFlagTests(unittest.TestCase):
         self.assertEqual((out["pet"]["sleep"], out["pet"]["greet"]), (1, 1))
 
 
+class AiCostBoardTests(unittest.TestCase):
+    """AI 用量卡看板参数（竞品图4 内容组合/显示指标）。"""
+
+    def test_defaults_three_slot_rotation(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(out["ai_cost"],
+                         {"mode": 0, "metrics": ["today", "turn", "model"]})
+
+    def test_metrics_order_dedup_and_filter(self):
+        out = validate_profile(base(ai_cost={"metrics":
+            ["model", "today", "bogus", "model", "models"]}))
+        self.assertEqual(out["ai_cost"]["metrics"], ["model", "today", "models"])
+
+    def test_legacy_cost_and_rate_ignored(self):
+        # 金额换算已按用户要求移除：旧档案里的 cost 槽/rate 字段静默忽略
+        out = validate_profile(base(ai_cost={"metrics": ["today", "cost"],
+                                             "rate": 6.5}))
+        self.assertEqual(out["ai_cost"], {"mode": 0,
+                                          "metrics": ["today"]})
+        out2 = validate_profile(base(ai_cost={"metrics": ["cost"], "rate": -3}))
+        self.assertEqual(out2["ai_cost"]["metrics"], ["today", "turn", "model"])
+
+    def test_mode_fixed_normalization(self):
+        self.assertEqual(validate_profile(base(ai_cost={"mode": "fixed"}))["ai_cost"]["mode"], 1)
+        self.assertEqual(validate_profile(base(ai_cost={"mode": 1}))["ai_cost"]["mode"], 1)
+        self.assertEqual(validate_profile(base(ai_cost={"mode": "auto"}))["ai_cost"]["mode"], 0)
+
+
 class PetPackTests(unittest.TestCase):
     """昼夜自动切包的 profile 字段与切换判定。"""
 

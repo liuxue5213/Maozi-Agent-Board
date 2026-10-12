@@ -337,6 +337,18 @@ void Proto::handle(const char* line) {
         dirty = true;
         return;
     }
+    if (!strncmp(key, "AIB", 3) && key[3] >= '0' && key[3] <= '2') {
+        // AIB<n>=模型名,今日token（逗号分割；名字里的逗号已由客户端截断）
+        uint8_t idx = key[3] - '0';
+        const char* comma = strchr(v, ',');
+        if (comma) {
+            snprintf(t.ai_by_model[idx], sizeof(t.ai_by_model[0]),
+                     "%.*s", (int)(comma - v), v);
+            t.ai_by_tok[idx] = atol(comma + 1);
+            dirty = true;
+        }
+        return;
+    }
 
     if      (!strcmp(key, "CPU"))      t.cpu = atoi(v);
     else if (!strcmp(key, "CPUFREQ"))  t.cpufreq = atoi(v);

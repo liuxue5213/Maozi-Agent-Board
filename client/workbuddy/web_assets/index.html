@@ -655,6 +655,20 @@
             <input type="checkbox" id="topwx-toggle">
             <span>顶栏显示天气</span>
           </label>
+          <div class="section-rule" role="separator"></div>
+          <div class="panel-head compact"><h3>AI 用量卡（数据看板）</h3></div>
+          <p class="hint">「AI 用量」组件展示哪些指标（竞品看板的显示指标勾选）。勾选多个=大字每 3 秒轮换；只勾一个或关掉轮换=固定显示。</p>
+          <label class="field toggle">
+            <input type="checkbox" id="ac-auto" checked>
+            <span>自动轮换（关闭=固定显示第一个勾选项）</span>
+          </label>
+          <div class="btn-row" id="ac-mets" style="flex-wrap:wrap;gap:6px">
+            <label class="field toggle" style="flex:none"><input type="checkbox" id="ac-met-today" checked><span>今日总消耗</span></label>
+            <label class="field toggle" style="flex:none"><input type="checkbox" id="ac-met-turn" checked><span>单任务消耗</span></label>
+            <label class="field toggle" style="flex:none"><input type="checkbox" id="ac-met-model" checked><span>当前模型</span></label>
+            <label class="field toggle" style="flex:none"><input type="checkbox" id="ac-met-models"><span>分模型消耗</span></label>
+          </div>
+          <p class="hint">分模型消耗=每个用到的模型各占一槽（按今日消耗降序，最多 3 个），来自本机会话日志的按模型统计；「剩余/总额度」是厂商账号侧数据，本地日志拿不到。</p>
           <div class="btn-row">
             <button type="button" class="button" id="look-save-btn">保存草稿</button>
             <button type="button" class="button primary" id="look-sync-btn">应用到设备</button>

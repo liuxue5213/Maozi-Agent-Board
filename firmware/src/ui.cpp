@@ -1875,24 +1875,65 @@ void render_generic(WidgetView& view) {
             strcpy(sub, "AI 会话活动后显示");
             break;
         }
-        // 大字每 3 秒轮换：今日累计 → 本轮输出 → 模型名（竞品看板的滚动指标）
+        // 竞品看板「内容组合/显示指标」：勾选槽位按用户勾选序 + 自动轮换/
+        // 固定第一项。槽位可用性还受运行时数据约束（无本轮/无模型名时该槽
+        // 跳过，固定模式顺延到下一个可用槽）；槽 3=分模型消耗，展开成每
+        // 模型一槽（AIB0..2 降序，最多 3 槽）。
+        uint8_t avail[6] = {};
+        uint8_t n_avail = 0;
+        long k = latest.day_tok_total / 1000;
+        for (uint8_t i = 0; i < g_profile.ac_slot_n && i < 4; ++i) {
+            uint8_t slot = g_profile.ac_slots[i];
+            if (slot == 1 && latest.ai_tok_out <= 0) continue;       // 无本轮
+            if (slot == 2 && !latest.ai_model[0]) continue;          // 无模型名
+            if (slot == 3) {
+                for (uint8_t m = 0; m < 3; ++m) {
+                    if (latest.ai_by_tok[m] > 0 && latest.ai_by_model[m][0])
+                        avail[n_avail++] = 4 + m;                    // 4..6 = 模型槽
+                }
+                continue;
+            }
+            avail[n_avail++] = slot;
+        }
+        if (!n_avail) { avail[n_avail++] = 0; }                      // 兜底今日
         static uint8_t rot = 0;
         static uint32_t rot_ms = 0;
-        bool has_out = latest.ai_tok_out > 0;
-        uint8_t slots = has_out ? 3 : 2;
-        if (millis() - rot_ms >= 3000) { rot_ms = millis(); rot = (rot + 1) % slots; }
-        long k = latest.day_tok_total / 1000;
-        if (rot == 1 && has_out) {
-            snprintf(line, sizeof(line), "本轮 %.1fk", latest.ai_tok_out / 1000.0);
-            snprintf(sub, sizeof(sub), "本轮输出 token");
-        } else if ((rot == 2 && has_out) || (rot == 1 && !has_out)) {
-            strncpy(line, latest.ai_model, sizeof(line) - 1);
-            line[sizeof(line) - 1] = 0;
-            snprintf(sub, sizeof(sub), "当前模型");
+        uint8_t pick = 0;
+        if (g_profile.ac_mode != 1) {                                // 3 秒轮换
+            if (millis() - rot_ms >= 3000) { rot_ms = millis(); rot = (rot + 1) % n_avail; }
+            pick = rot % n_avail;
+        }
+        uint8_t slot = avail[pick];
+        if (slot >= 4) {
+            // 分模型：大字=短名+消耗（GLM-5.3-Flash → GLM），小字=完整模型名
+            uint8_t m = slot - 4;
+            const char* full = latest.ai_by_model[m];
+            char short_name[9];
+            const char* dash = strchr(full, '-');
+            snprintf(short_name, sizeof(short_name), "%.*s",
+                     dash ? (int)(dash - full) : 8, full);
+            long mt = latest.ai_by_tok[m];
+            if (mt >= 1000000) snprintf(line, sizeof(line), "%s %.1fM", short_name, mt / 1e6);
+            else snprintf(line, sizeof(line), "%s %ldk", short_name, mt / 1000);
+            strncpy(sub, full, sizeof(sub) - 1);
+            sub[sizeof(sub) - 1] = 0;
         } else {
-            if (k >= 1000) snprintf(line, sizeof(line), "今日 %.1fM", k / 1000.0);
-            else snprintf(line, sizeof(line), "今日 %ldk", k);
-            snprintf(sub, sizeof(sub), "今日累计 token");
+            switch (slot) {
+            case 1:
+                snprintf(line, sizeof(line), "本轮 %.1fk", latest.ai_tok_out / 1000.0);
+                strcpy(sub, "本轮输出 token");
+                break;
+            case 2:
+                strncpy(line, latest.ai_model, sizeof(line) - 1);
+                line[sizeof(line) - 1] = 0;
+                strcpy(sub, "当前模型");
+                break;
+            default:
+                if (k >= 1000) snprintf(line, sizeof(line), "今日 %.1fM", k / 1000.0);
+                else snprintf(line, sizeof(line), "今日 %ldk", k);
+                strcpy(sub, "今日累计 token");
+                break;
+            }
         }
         break;
     }

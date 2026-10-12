@@ -1788,6 +1788,14 @@ function renderInspector() {
   $('bright-auto').checked=!!Number(draft.theme.bright_auto??0);
   $('topclock-toggle').checked=!!Number(draft.theme.topclock??1);
   $('topwx-toggle').checked=!!Number(draft.theme.topwx??1);
+  // AI 用量卡看板（竞品「内容组合/显示指标」）
+  const ac=draft.ai_cost||{};
+  $('ac-auto').checked=!(ac.mode===1);
+  const mets=new Set(ac.metrics||['today','turn','model']);
+  $('ac-met-today').checked=mets.has('today');
+  $('ac-met-turn').checked=mets.has('turn');
+  $('ac-met-model').checked=mets.has('model');
+  $('ac-met-models').checked=mets.has('models');
   for(const key of ['bg','grad','card','card_edge','accent','text','sub']) $('theme-'+key).value='#'+draft.theme[key];
   $('theme-bright').value=draft.theme.bright;$('bright-value').textContent=draft.theme.bright+'%';
   updateQuantNote();
@@ -3101,6 +3109,19 @@ function bind(){
   };
   $('theme-bright').oninput=e=>{draft.theme.bright=Number(e.target.value);markDirty()};
   $('card-opa').oninput=e=>{draft.theme.card_opa=Number(e.target.value);$('opa-value').textContent=e.target.value+'%';markDirty()};
+  // ---- AI 用量卡看板：控件 → draft.ai_cost（走「保存草稿/同步」标准链路） ----
+  function collectAiCost(){
+    const mets=[];
+    if($('ac-met-today').checked)mets.push('today');
+    if($('ac-met-turn').checked)mets.push('turn');
+    if($('ac-met-model').checked)mets.push('model');
+    if($('ac-met-models').checked)mets.push('models');
+    if(!mets.length)mets.push('today');   // 至少一项，别让卡片没得显示
+    draft.ai_cost={mode:$('ac-auto').checked?0:1,metrics:mets};
+    markDirty();
+  }
+  $('ac-auto').onchange=collectAiCost;
+  ['ac-met-today','ac-met-turn','ac-met-model','ac-met-models'].forEach(id=>{$(id).onchange=collectAiCost;});
   $('bright-auto').onchange=e=>{draft.theme.bright_auto=e.target.checked?1:0;markDirty();notice(e.target.checked?'已开启自动亮度（白天亮/夜间暗）':'已切回手动亮度')};
   $('btn-save-mytheme').onclick=()=>{
     const colors={bg:draft.theme.bg,grad:draft.theme.grad,card:draft.theme.card,
