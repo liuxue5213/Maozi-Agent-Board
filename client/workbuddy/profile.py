@@ -216,10 +216,13 @@ def validate_profile(raw):
             if not isinstance(comps, list) or len(comps) > 8:
                 raise ValueError("自由布局页组件需为 ≤8 项的列表")
             allowed = ("clock", "date", "lunar", "weather", "sys", "quote",
-                       "ai_cost", "pet")
+                       "ai_cost", "pet", "remind", "alarm", "countdown",
+                       "env", "net")
             sizes = {"clock": (220, 60), "date": (260, 28), "lunar": (304, 28),
                      "weather": (240, 36), "sys": (280, 28), "quote": (300, 96),
-                     "ai_cost": (304, 116), "pet": (96, 120)}
+                     "ai_cost": (304, 116), "pet": (96, 120),
+                     "remind": (304, 28), "alarm": (280, 28),
+                     "countdown": (304, 28), "env": (240, 28), "net": (240, 28)}
             big_sizes = {"clock": (260, 64), "weather": (240, 40)}
             out_comps = []
             for c in comps:

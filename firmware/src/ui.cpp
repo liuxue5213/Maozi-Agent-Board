@@ -980,12 +980,15 @@ void make_pet_compact(WidgetView& view, lv_obj_t* screen) {
 // ---------- 自由布局页（竞品拖拽编辑器 v1） ----------
 int weekday(const char* date);           // 定义在文件后部（此处前向引用）
 const char* weekday_name(int day);
+long countdown_seconds(const ScheduleItem* item);   // 同上
 static PetParts pet_free_parts;          // 自由页「角色」组件的像素宠物部件
 static uint8_t pet_free_used = 0;
 static void ai_cost_build_rows(char rows[5][48]);   // 定义在 render_generic 前
 // 组件固定尺寸、坐标自由；数据全走既有遥测，零新数据源。
-static const uint8_t FC_FONT[6] = {48, 20, 20, 28, 20, 24};
-static const uint16_t FC_W[6] = {220, 260, 304, 240, 280, 300};
+static const uint8_t FC_FONT[13] = {48, 20, 20, 28, 20, 24,
+                                    20, 20, 20, 20, 20, 20, 20};
+static const uint16_t FC_W[13] = {220, 260, 304, 240, 280, 300,
+                                  304, 280, 304, 240, 240, 304, 304};
 // 6=ai_cost 7=pet：容器型组件（多标签/嵌入式宠物），尺寸固定
 static const uint16_t FC_BOX[2][2] = {{304, 116}, {96, 120}};
 static const uint32_t FC_COL[6] = {0, 0, 0, 0, 0, 0};   // 占位；颜色在 make 内定
@@ -1029,7 +1032,7 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
             page.free_n = i + 1;
             continue;
         }
-        uint8_t t = c.t < 6 ? c.t : 0;
+        uint8_t t = c.t < 13 ? c.t : 0;   // 越界码兜底为时钟（decode 只放行 0-12）
         // 样式档（竞品「时间样式」）：clock/weather 支持大字（48/28）
         uint8_t font = FC_FONT[t];
         uint16_t w = FC_W[t];
@@ -1037,7 +1040,7 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
         if (c.big && t == 3) { font = 28; w = 240; }
         uint32_t col = t == 0 ? accent : (t == 2 || t == 4) ? sub_color : text_color;
         lv_obj_t* lbl;
-        if (t == 5) {   // 短句：可折行（LONG_DOT 会截成一行）
+        if (t == 5) {   // 短句：可折行（LONG_DOT 会截成一行）  // codes 8-12 走单行分支
             lbl = label(screen, "", FC_FONT[t], col, c.x, c.y, FC_W[t], 96);
             lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
         } else {
@@ -1100,6 +1103,52 @@ void render_free_page(PageView& page, const char* tb) {
             break;
         case 4:
             snprintf(buf, sizeof(buf), "CPU %d%% · 内存 %d%%", latest.cpu, latest.mem);
+            set_text(lbl, buf);
+            break;
+        case 8:
+            set_text(lbl, latest.remind[0] ? latest.remind : "今天无提醒");
+            break;
+        case 9: {
+            // 今日最早闹钟（与闹钟卡同逻辑）
+            const ScheduleItem* found = nullptr;
+            int day = wd;
+            for (uint8_t k = 0; k < g_profile.alarm_count; ++k) {
+                const ScheduleItem& item = g_profile.alarms[k];
+                if (item.enabled && day && (item.weekdays & (1 << (day - 1))) &&
+                    (!found || strcmp(item.time, found->time) < 0)) found = &item;
+            }
+            if (found) snprintf(buf, sizeof(buf), "闹钟 %s %s", found->time, found->text);
+            else strcpy(buf, "未设置闹钟");
+            set_text(lbl, buf);
+            break;
+        }
+        case 10: {
+            const ScheduleItem* found = nullptr;
+            for (uint8_t k = 0; k < g_profile.countdown_count; ++k) {
+                const ScheduleItem& item = g_profile.countdowns[k];
+                if (item.enabled && (!found || strcmp(item.time, found->time) < 0))
+                    found = &item;
+            }
+            if (!found) strcpy(buf, "未设置倒计时");
+            else {
+                long remain = countdown_seconds(found);
+                if (remain < 0) snprintf(buf, sizeof(buf), "%s 已结束", found->text);
+                else snprintf(buf, sizeof(buf), "%s 剩%ld天%02ld:%02ld",
+                              found->text, remain / 86400,
+                              remain / 3600 % 24, remain / 60 % 60);
+            }
+            set_text(lbl, buf);
+            break;
+        }
+        case 11:
+            if (isnan(g_temp)) strcpy(buf, "传感离线");
+            else snprintf(buf, sizeof(buf), "%.1f℃ %.0f%%", g_temp, g_hum);
+            set_text(lbl, buf);
+            break;
+        case 12:
+            if (isnan(latest.netrx) || isnan(latest.nettx)) strcpy(buf, "网速未提供");
+            else snprintf(buf, sizeof(buf), "↓%.1f ↑%.1f Mbps",
+                          latest.netrx, latest.nettx);
             set_text(lbl, buf);
             break;
         default:

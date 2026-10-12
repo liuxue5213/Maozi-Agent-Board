@@ -193,6 +193,11 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
                     else if (!strcmp(t, "quote")) code = 5;
                     else if (!strcmp(t, "ai_cost")) code = 6;
                     else if (!strcmp(t, "pet")) code = 7;
+                    else if (!strcmp(t, "remind")) code = 8;
+                    else if (!strcmp(t, "alarm")) code = 9;
+                    else if (!strcmp(t, "countdown")) code = 10;
+                    else if (!strcmp(t, "env")) code = 11;
+                    else if (!strcmp(t, "net")) code = 12;
                     else continue;
                     dst.comps[cn].t = code;
                     dst.comps[cn].big = (c["big"] | 0) ? 1 : 0;

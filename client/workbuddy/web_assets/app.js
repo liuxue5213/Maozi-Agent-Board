@@ -1287,7 +1287,7 @@ function devGenericCard(screen, ctx, kind, x, y, w, h){
 function devWidgetUnits(kind){ return (kind === 'reminder_list' || kind === 'today_calendar') ? 2 : 1 }
 /* 自由布局页预览：组件按 (x,y) 直接摆放，值来自 live 遥测（缺省占位）。 */
 function devFreePage(screen, ctx, page){
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28]};
   const now=new Date();
   const t=(live.telemetry||{});
   const vals={
@@ -1297,6 +1297,11 @@ function devFreePage(screen, ctx, page){
     weather: (()=>{const w=devWx();return w?`${(w.temp??'--')}℃ ${weatherText(w.code)}`:'天气未配置'})(),
     sys: `CPU ${t.cpu??'--'}% · 内存 ${t.mem??'--'}%`,
     quote: (draft.theme&&draft.theme.savermsg)||'代码写完了吗？\n起来喝口水吧',
+    remind: t.remind||'今天无提醒',
+    alarm: '闹钟（以设备配置为准）',
+    countdown: '倒计时（以设备配置为准）',
+    env: (t.temp!=null?`${t.temp}℃ ${t.hum??''}%`:'传感离线'),
+    net: (t.netrx!=null?`↓${t.netrx} ↑${t.nettx} Mbps`:'网速未提供'),
   };
   (page.components||[]).forEach(c=>{
     if(c.hidden)return;
@@ -1797,7 +1802,9 @@ function renderPalette() {
   if(page.layout==='free'){
     const FREE_COMPS=[['clock','时间'],['date','日期'],['lunar','农历节气'],
                       ['weather','天气'],['sys','CPU/内存'],['quote','短句'],
-                      ['ai_cost','AI 用量'],['pet','角色']];
+                      ['ai_cost','AI 用量'],['pet','角色'],['remind','下一提醒'],
+                      ['alarm','闹钟'],['countdown','倒计时'],['env','温湿度'],
+                      ['net','网速']];
     FREE_COMPS.forEach(([t,name])=>{
       const b=el('button','palette-item');
       b.append(el('span','palette-symbol','⊞'),document.createTextNode(name));
@@ -1841,9 +1848,9 @@ function renderPalette() {
    画布 0.85 缩放显示 320×480，写回 draft 的仍是设备像素坐标。 */
 function renderFreeEditor(page, root){
   const SCALE=0.85;
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28]};
   const BIG={clock:[260,64],weather:[240,40]};
-  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色'};
+  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色',remind:'下一提醒',alarm:'闹钟',countdown:'倒计时',env:'温湿度',net:'网速'};
   page.components=page.components||[];
   if(!Array.isArray(page._undo)) page._undo=[];
   if(!Array.isArray(page._redo)) page._redo=[];
