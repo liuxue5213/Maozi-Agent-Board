@@ -3517,6 +3517,52 @@ function bind(){
       logHist('bg',`场景包「${name}」已应用（${r.sent} 张）`);
     }catch(e){notice('应用失败：'+e.message,true)}
   };
+  // 导入：网页读 zip → base64 → 服务端校验落盘 → 刷新列表
+  $('pet-pack-import-file').onchange=async e=>{
+    const f=e.target.files[0]; e.target.value='';
+    if(!f)return;
+    let name=prompt('导入为包名（小写字母/数字/下划线）：',
+      (f.name.replace(/\.zip$/i,'').toLowerCase().match(/^[a-z0-9_]{1,24}$/)
+        ? f.name.replace(/\.zip$/i,'').toLowerCase() : ''));
+    if(!name)return;
+    name=name.trim().toLowerCase();
+    if(!/^[a-z0-9_]{1,24}$/.test(name)){notice('包名限小写字母/数字/下划线',true);return}
+    const buf=await f.arrayBuffer();
+    let bin=''; const bytes=new Uint8Array(buf);
+    for(let i=0;i<bytes.length;i+=8192)
+      bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+8192));
+    notice(`正在导入「${name}」…`);
+    try{
+      const r=await request('/api/petpack-import',{name,data:btoa(bin)});
+      notice(r.status);
+      logHist('bg',`场景包「${name}」已导入（${r.frames} 帧）`);
+      refreshPetPacks();
+    }catch(err){notice('导入失败：'+err.message,true)}
+  };
+  // 下载分享：浏览器直接拉 zip
+  $('pet-pack-dl').onclick=()=>{
+    const name=$('pet-pack-select').value;
+    if(!name){notice('先选择场景包',true);return}
+    const a=document.createElement('a');
+    a.href=`/api/petpack-download?name=${encodeURIComponent(name)}`;
+    a.download=`petpack_${name}.zip`;
+    document.body.append(a); a.click(); a.remove();
+  };
+  // 改名：目录重命名（目标已存在服务端拒绝）
+  $('pet-pack-rename').onclick=async()=>{
+    const from=$('pet-pack-select').value;
+    if(!from){notice('先选择场景包',true);return}
+    const to=prompt(`把包「${from}」改名为（小写字母/数字/下划线）：`,'');
+    if(!to)return;
+    const dst=to.trim().toLowerCase();
+    if(!/^[a-z0-9_]{1,24}$/.test(dst)){notice('包名非法',true);return}
+    try{
+      const r=await request('/api/petpack-rename',{from,to:dst});
+      notice(r.status);
+      logHist('bg',r.status);
+      refreshPetPacks();
+    }catch(err){notice('改名失败：'+err.message,true)}
+  };
   refreshPetPacks();
 
   // ---- 彩色角色图（图集管线）：文件名映射状态，逐张走 IMG 通道 ----

@@ -1,16 +1,59 @@
 """Local only settings and live preview server (stdlib HTTP)."""
 from __future__ import annotations
 
+import io
 import json
+import re as _re_mod
 import sys
 import threading
 import time
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import re
 from urllib.parse import parse_qs, urlsplit
 
 from .profile import validate_profile
+
+
+def petpack_base_dir() -> Path:
+    """场景包根目录（outputs/，包目录名 petpack_<名>/）。"""
+    return Path(__file__).resolve().parents[2] / "outputs"
+
+
+def validate_pack_zip(zb: bytes):
+    """场景包 zip 校验（导入安全闸）。
+
+    只接受 pet_<a-z0-9_>{2,14}.jpg 的平铺文件；≤12 个文件、单文件 ≤200KB、
+    解压总量 ≤1.5MB（防 zip 炸弹）。返回 (files, err)：成功 err=None。
+    """
+    if not zb:
+        return None, "空文件"
+    if len(zb) > 512 * 1024:
+        return None, "zip 超过 512KB"
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zb))
+    except zipfile.BadZipFile:
+        return None, "不是有效的 zip"
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+    if not names:
+        return None, "包内没有文件"
+    if len(names) > 12:
+        return None, "包内文件过多（≤12）"
+    files: dict[str, bytes] = {}
+    total = 0
+    for n in names:
+        if "/" in n or ".." in n or not _re_mod.fullmatch(
+                r"pet_[a-z0-9_]{2,14}\.jpg", n):
+            return None, f"包内出现不允许的文件：{n[:40]}"
+        content = zf.read(n)
+        if len(content) > 200 * 1024:
+            return None, f"{n} 超过 200KB"
+        total += len(content)
+        if total > 1536 * 1024:
+            return None, "解压总量超过 1.5MB"
+        files[n] = content
+    return files, None
 
 WEB_ROOT = Path(__file__).with_name("web_assets")
 FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -199,6 +242,34 @@ def start_settings_server(app, port):
                                           "dir": str(d), "frames": len(frames)})
                 self._json(200, {"packs": packs})
                 return
+            if path == "/api/petpack-download":
+                # 分享场景包：目录内 pet_*.jpg 打 zip 回流（浏览器下载）
+                try:
+                    name = urlsplit(self.path).query.split("name=")[1].split("&")[0]
+                except IndexError:
+                    name = ""
+                if not re.fullmatch(r"[a-z0-9_]{1,24}", name):
+                    self._json(400, {"error": "包名非法"})
+                    return
+                d = petpack_base_dir() / f"petpack_{name}"
+                frames = sorted(d.glob("pet_*.jpg")) if d.is_dir() else []
+                if not frames:
+                    self._json(404, {"error": "包不存在或没有帧"})
+                    return
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for f in frames:
+                        zf.write(f, f.name)
+                data = buf.getvalue()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Disposition",
+                                 f'attachment; filename="petpack_{name}.zip"')
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path == "/api/petpack-thumb":
                 # 场景包缩略图（取包内 pet_idle.jpg）；name 白名单防路径穿越
                 try:
@@ -376,7 +447,9 @@ def start_settings_server(app, port):
                 self._json(415, {"error": "需要 application/json"})
                 return
             length = int(self.headers.get("Content-Length", "0"))
-            if length < 0 or length > 16384:
+            # 768KB：场景包导入走 base64 zip（约 200KB zip → 270KB JSON）留余量；
+            # 本地工作台（127.0.0.1），不构成公网大包面。
+            if length < 0 or length > 768 * 1024:
                 self._json(413, {"error": "请求过大"})
                 return
             try:
@@ -490,6 +563,48 @@ def start_settings_server(app, port):
                                      "failed": result["failed"],
                                      "reasons": result["reasons"],
                                      "status": f"已下发 {result['sent']} 张（{name} 包）"})
+                    return
+                elif path == "/api/petpack-import":
+                    # 导入场景包：网页端读 .zip → base64 上传 → 校验落盘
+                    name = str(data.get("name", "")).strip().lower()
+                    if not re.fullmatch(r"[a-z0-9_]{1,24}", name):
+                        self._json(400, {"error": "包名限小写字母/数字/下划线，≤24 字"})
+                        return
+                    import base64 as _b64mod
+                    try:
+                        zb = _b64mod.b64decode(str(data.get("data", "")))
+                    except Exception:
+                        self._json(400, {"error": "数据不是有效的 base64"})
+                        return
+                    files, err = validate_pack_zip(zb)
+                    if err:
+                        self._json(400, {"error": err})
+                        return
+                    d = petpack_base_dir() / f"petpack_{name}"
+                    d.mkdir(parents=True, exist_ok=True)
+                    for fn, content in files.items():
+                        (d / fn).write_bytes(content)
+                    self._json(200, {"status": f"已导入 {len(files)} 帧（{name} 包）",
+                                     "frames": len(files)})
+                    return
+                elif path == "/api/petpack-rename":
+                    # 改名：目录重命名（目标已存在则拒绝，防覆盖）
+                    src = str(data.get("from", "")).strip().lower()
+                    dst = str(data.get("to", "")).strip().lower()
+                    if not re.fullmatch(r"[a-z0-9_]{1,24}", src) or \
+                            not re.fullmatch(r"[a-z0-9_]{1,24}", dst):
+                        self._json(400, {"error": "包名非法"})
+                        return
+                    base = petpack_base_dir()
+                    sp, dp = base / f"petpack_{src}", base / f"petpack_{dst}"
+                    if not sp.is_dir():
+                        self._json(404, {"error": "包不存在"})
+                        return
+                    if dp.exists():
+                        self._json(400, {"error": f"petpack_{dst} 已存在"})
+                        return
+                    sp.rename(dp)
+                    self._json(200, {"status": f"已改名：{src} → {dst}"})
                     return
                 if path == "/api/inbox-open":
                     # 收件箱「打开项目」：mode=finder(默认) / terminal

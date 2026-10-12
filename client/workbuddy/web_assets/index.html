@@ -781,6 +781,12 @@
             </select>
             <button type="button" class="button primary" id="pet-pack-apply">应用此包</button>
           </div>
+          <div class="btn-row" style="gap:6px">
+            <label class="button ghost" for="pet-pack-import-file" style="flex:1;text-align:center">导入包(.zip)</label>
+            <input type="file" id="pet-pack-import-file" accept=".zip" class="visually-hidden">
+            <button type="button" class="button" id="pet-pack-dl" style="flex:1">下载分享</button>
+            <button type="button" class="button" id="pet-pack-rename" style="flex:1">改名</button>
+          </div>
           <p class="hint" id="pet-pack-note">包目录在 outputs/petpack_&lt;名称&gt;/（pet_artwork.py 生成），应用时整套 8 张重传设备（约 20 秒）；应用包会替换设备上的自定义形象（以包为准，想恢复自定义图重新上传即可）。</p>
           <label class="field toggle">
             <input type="checkbox" id="pet-autopack">
