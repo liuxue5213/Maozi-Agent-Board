@@ -101,6 +101,8 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         copy_text(out.pet_name, sizeof(out.pet_name), pet_cfg["name"] | "帽子");
         out.pet_sleep = pet_cfg["sleep"] | true;
         out.pet_greet = pet_cfg["greet"] | false;
+        out.pet_show_stats = (pet_cfg["show_stats"] | 1) ? 1 : 0;
+        out.pet_show_buttons = (pet_cfg["show_buttons"] | 1) ? 1 : 0;
     }
     // 任务视图 tv.* 参数（缺省=现状渲染）
     JsonObjectConst tv_cfg = doc["tv"].as<JsonObjectConst>();

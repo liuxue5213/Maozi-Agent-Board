@@ -114,6 +114,8 @@ def validate_profile(raw):
             return default
     pet_sleep = _pet_flag("sleep", 1)   # 凌晨自动睡觉（0=仅犯困提示）
     pet_greet = _pet_flag("greet", 0)   # 整点/半点问候
+    pet_stats = _pet_flag("show_stats", 1)    # 角色页数值行（饱食/水分/活力）
+    pet_btns = _pet_flag("show_buttons", 1)   # 角色页喂食/喝水/运动按钮
     # 昼夜自动切包：包名只作 outputs/petpack_<名>/ 目录引用，白名单字符集
     # 久坐提醒阈值（分钟，0=关）：键鼠空闲超限 → 宠物犯困 + 一次性推送
     try:
@@ -135,6 +137,7 @@ def validate_profile(raw):
     "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
             "sleep": pet_sleep, "greet": pet_greet,
             "autopack": _pet_flag("autopack", 0),
+            "show_stats": pet_stats, "show_buttons": pet_btns,
             "break_min": pet_break,
             "day_pack": pet_day, "night_pack": pet_night,
             "weather_pack": pet_weather}}

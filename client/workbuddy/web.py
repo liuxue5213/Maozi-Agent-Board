@@ -502,6 +502,8 @@ def start_settings_server(app, port):
                         "sleep": 1 if data.get("sleep", old_pet.get("sleep", 1)) else 0,
                         "greet": 1 if data.get("greet", old_pet.get("greet", 0)) else 0,
                         "autopack": 1 if data.get("autopack", old_pet.get("autopack", 0)) else 0,
+                        "show_stats": 1 if data.get("show_stats", old_pet.get("show_stats", 1)) else 0,
+                        "show_buttons": 1 if data.get("show_buttons", old_pet.get("show_buttons", 1)) else 0,
                         "break_min": break_min,
                         "day_pack": str(data.get("day_pack", old_pet.get("day_pack", "")) or ""),
                         "night_pack": str(data.get("night_pack", old_pet.get("night_pack", "")) or ""),

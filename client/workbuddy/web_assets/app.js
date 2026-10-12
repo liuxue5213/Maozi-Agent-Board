@@ -3556,6 +3556,8 @@ function bind(){
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
         autopack:$('pet-autopack')?.checked?1:0,
         break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
+        show_stats:$('pet-show-stats')?.checked?1:0,
+        show_buttons:$('pet-show-buttons')?.checked?1:0,
         day_pack:$('pet-pack-day')?.value||'',
         night_pack:$('pet-pack-night')?.value||'',
         weather_pack:$('pet-pack-weather')?.value||''});
@@ -3564,6 +3566,8 @@ function bind(){
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
         autopack:$('pet-autopack')?.checked?1:0,
         break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
+        show_stats:$('pet-show-stats')?.checked?1:0,
+        show_buttons:$('pet-show-buttons')?.checked?1:0,
         day_pack:$('pet-pack-day')?.value||'',
         night_pack:$('pet-pack-night')?.value||'',
         weather_pack:$('pet-pack-weather')?.value||''};

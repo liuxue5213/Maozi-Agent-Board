@@ -62,6 +62,8 @@ struct DeviceProfile {
     char pet_name[13] = "帽子";
     uint8_t pet_sleep = 1;   // 凌晨自动睡觉（01-06 硬覆盖；0=仅犯困提示）
     uint8_t pet_greet = 0;   // 整点/半点问候
+    uint8_t pet_show_stats = 1;    // 角色页数值行（竞品#29 显示内容勾选）
+    uint8_t pet_show_buttons = 1;  // 角色页喂食/喝水/运动按钮
     // 任务视图 tv.* 参数（竞品对齐）：AI 页渲染细节 + 空闲时切页
     uint8_t tv_other_tasks = 1;  // AI 页其他会话 3 行：1 显示 / 0 隐藏
     uint8_t tv_task_value = 0;   // 其他任务行右侧：0 用时 / 1 隐藏（仅项目名）

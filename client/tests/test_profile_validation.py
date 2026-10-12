@@ -251,6 +251,21 @@ class TvNameRangeTests(unittest.TestCase):
         self.assertEqual(out["tv"]["name_mode"], 0)
         self.assertEqual(out["tv"]["tl_range"], 0)
 
+
+class PetShowFlagsTests(unittest.TestCase):
+    """角色页显示内容勾选（#29：数值行/按钮）。"""
+
+    def test_defaults_on(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(out["pet"]["show_stats"], 1)
+        self.assertEqual(out["pet"]["show_buttons"], 1)
+
+    def test_roundtrip(self):
+        out = validate_profile(base(pet={"type": "cat", "name": "x",
+                                         "show_stats": 0, "show_buttons": 0}))
+        self.assertEqual((out["pet"]["show_stats"], out["pet"]["show_buttons"]),
+                         (0, 0))
+
     def test_roundtrip(self):
         out = validate_profile(base(tv={"name_mode": 1, "tl_range": 1}))
         self.assertEqual((out["tv"]["name_mode"], out["tv"]["tl_range"]), (1, 1))

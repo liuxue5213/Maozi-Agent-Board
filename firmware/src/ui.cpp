@@ -1218,13 +1218,16 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     // 用户反馈：不要数值条，直接显示数字。行距 24（cn_20 行高）×3 行
     // 恰好放进 y354..426，不压 y428 的按钮行（cn_24 三行 84px 会溢出）。
     static const char* names[3] = {"饱食", "水分", "活力"};
-    for (int i = 0; i < 3; ++i) {
-        label1(screen, names[i], 14, sub_color, 20, 354 + i * 24, 70);
-        view.pm_val[i] = label1(screen, "--", 14, text_color, 92, 354 + i * 24, 70);
+    if (g_profile.pet_show_stats)
+        for (int i = 0; i < 3; ++i) {
+            label1(screen, names[i], 14, sub_color, 20, 354 + i * 24, 70);
+            view.pm_val[i] = label1(screen, "--", 14, text_color, 92, 354 + i * 24, 70);
+        }
+    if (g_profile.pet_show_buttons) {
+        button(screen, "喂食", 12, 428, 96, 44, pet_action_cb, (void*)"feed");
+        button(screen, "喝水", 112, 428, 96, 44, pet_action_cb, (void*)"water");
+        button(screen, "运动", 212, 428, 96, 44, pet_action_cb, (void*)"play");
     }
-    button(screen, "喂食", 12, 428, 96, 44, pet_action_cb, (void*)"feed");
-    button(screen, "喝水", 112, 428, 96, 44, pet_action_cb, (void*)"water");
-    button(screen, "运动", 212, 428, 96, 44, pet_action_cb, (void*)"play");
 }
 
 /* 氛围层：按时段与天气给角色场景叠色，让静态图有"活"的气息。
