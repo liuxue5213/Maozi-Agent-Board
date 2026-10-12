@@ -270,6 +270,21 @@ def start_settings_server(app, port):
                 self.end_headers()
                 self.wfile.write(data)
                 return
+            if path == "/api/theme-download":
+                # 主题文件化：当前主题导出为独立 JSON（可分享/备份）
+                theme = dict((app.profile.get("theme") or {}))
+                body = json.dumps({"kind": "workbuddy-theme",
+                                   "theme": theme},
+                                  ensure_ascii=False, indent=2).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="workbuddy-theme.json"')
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if path == "/api/petpack-thumb":
                 # 场景包缩略图（取包内 pet_idle.jpg）；name 白名单防路径穿越
                 try:
@@ -605,6 +620,18 @@ def start_settings_server(app, port):
                         return
                     sp.rename(dp)
                     self._json(200, {"status": f"已改名：{src} → {dst}"})
+                    return
+                elif path == "/api/theme-import":
+                    # 导入主题文件：只接受 theme 段（kind 校验），走标准保存
+                    payload = data.get("theme")
+                    if not isinstance(payload, dict):
+                        self._json(400, {"error": "主题文件格式无效（缺 theme 段）"})
+                        return
+                    candidate = dict(app.profile)
+                    candidate["theme"] = payload
+                    result = app.save_profile(candidate)
+                    self._json(200, {"status": "主题已导入，保存并同步后上屏",
+                                     "version": result["version"]})
                     return
                 if path == "/api/inbox-open":
                     # 收件箱「打开项目」：mode=finder(默认) / terminal

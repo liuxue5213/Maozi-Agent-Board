@@ -1287,7 +1287,7 @@ function devGenericCard(screen, ctx, kind, x, y, w, h){
 function devWidgetUnits(kind){ return (kind === 'reminder_list' || kind === 'today_calendar') ? 2 : 1 }
 /* 自由布局页预览：组件按 (x,y) 直接摆放，值来自 live 遥测（缺省占位）。 */
 function devFreePage(screen, ctx, page){
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28],stat:[304,28]};
   const now=new Date();
   const t=(live.telemetry||{});
   const vals={
@@ -1302,6 +1302,7 @@ function devFreePage(screen, ctx, page){
     countdown: '倒计时（以设备配置为准）',
     env: (t.temp!=null?`${t.temp}℃ ${t.hum??''}%`:'传感离线'),
     net: (t.netrx!=null?`↓${t.netrx} ↑${t.nettx} Mbps`:'网速未提供'),
+    stat: (t.ast?`今日会话 ${t.ast}`:'今日无会话'),
   };
   (page.components||[]).forEach(c=>{
     if(c.hidden)return;
@@ -1809,7 +1810,7 @@ function renderPalette() {
                       ['weather','天气'],['sys','CPU/内存'],['quote','短句'],
                       ['ai_cost','AI 用量'],['pet','角色'],['remind','下一提醒'],
                       ['alarm','闹钟'],['countdown','倒计时'],['env','温湿度'],
-                      ['net','网速'],['text','自定义文字']];
+                      ['net','网速'],['text','自定义文字'],['stat','任务统计']];
     FREE_COMPS.forEach(([t,name])=>{
       const b=el('button','palette-item');
       b.append(el('span','palette-symbol','⊞'),document.createTextNode(name));
@@ -1853,9 +1854,9 @@ function renderPalette() {
    画布 0.85 缩放显示 320×480，写回 draft 的仍是设备像素坐标。 */
 function renderFreeEditor(page, root){
   const SCALE=0.85;
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28],stat:[304,28]};
   const BIG={clock:[260,64],weather:[240,40]};
-  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色',remind:'下一提醒',alarm:'闹钟',countdown:'倒计时',env:'温湿度',net:'网速',text:'自定义文字'};
+  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色',remind:'下一提醒',alarm:'闹钟',countdown:'倒计时',env:'温湿度',net:'网速',text:'自定义文字',stat:'任务统计'};
   page.components=page.components||[];
   if(!Array.isArray(page._undo)) page._undo=[];
   if(!Array.isArray(page._redo)) page._redo=[];
@@ -3370,6 +3371,25 @@ function bind(){
     markDirty();
   }
   $('pet-break-min').oninput=e=>{const ov=$('pet-break-val');if(ov)ov.textContent=e.target.value+' 分钟';};
+  // 主题文件化：导出当前主题为 JSON；导入把 theme 段合并进草稿
+  $('theme-dl').onclick=()=>{
+    const a=document.createElement('a');
+    a.href='/api/theme-download';
+    a.download='workbuddy-theme.json';
+    document.body.append(a); a.click(); a.remove();
+  };
+  $('theme-import-file').onchange=async e=>{
+    const f=e.target.files[0]; e.target.value='';
+    if(!f)return;
+    try{
+      const parsed=JSON.parse(await f.text());
+      const theme=parsed.theme||parsed;   // 兼容裸 theme 对象
+      if(typeof theme!=='object')throw new Error('格式无效');
+      draft.theme={...draft.theme, ...theme};
+      markDirty();
+      notice('主题文件已读入草稿：检查配色后「保存草稿 → 应用到设备」');
+    }catch(err){notice('导入失败：'+err.message,true)}
+  };
   $('ac-auto').onchange=collectAiCost;
   ['ac-met-today','ac-met-turn','ac-met-model','ac-met-models'].forEach(id=>{$(id).onchange=collectAiCost;});
   $('bright-auto').onchange=e=>{draft.theme.bright_auto=e.target.checked?1:0;markDirty();notice(e.target.checked?'已开启自动亮度（白天亮/夜间暗）':'已切回手动亮度')};

@@ -272,6 +272,11 @@
               <button type="button" class="subtab" id="tab-my-themes"
                       aria-selected="false">自定义主题</button>
             </div>
+            <div class="btn-row" style="gap:6px">
+              <button type="button" class="button" id="theme-dl" style="flex:1">导出主题文件</button>
+              <label class="button ghost" for="theme-import-file" style="flex:1;text-align:center">导入主题文件</label>
+              <input type="file" id="theme-import-file" accept=".json" class="visually-hidden">
+            </div>
             <div class="theme-layout">
               <div class="theme-cards" id="theme-grid" role="listbox" aria-label="主题列表"></div>
               <aside class="panel theme-side" aria-labelledby="theme-side-heading">

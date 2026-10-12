@@ -1256,6 +1256,10 @@ class App:
             for i, (model, tok) in enumerate(
                     list((snap.get("by_model") or {}).items())[:3]):
                 t[f"aib{i}"] = f"{model[:19]},{tok}"
+            # 今日会话数按工具（AST 线，竞品「任务统计」）：zcode:3 · claude:1
+            sby = snap.get("sessions_by_tool") or {}
+            if sby:
+                t["ast"] = " · ".join(f"{tool}:{n}" for tool, n in sby.items())
             focus = self.tasks[0] if self.tasks else None
             if focus:
                 model = (snap["models"].get(focus["tool"]) or "")[:15]

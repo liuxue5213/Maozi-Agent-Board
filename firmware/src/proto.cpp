@@ -339,6 +339,11 @@ void Proto::handle(const char* line) {
         dirty = true;
         return;
     }
+    if (!strcmp(key, "AST")) {
+        snprintf(t.ast, sizeof(t.ast), "%s", v);
+        dirty = true;
+        return;
+    }
     if (!strcmp(key, "PB")) {
         t.pb = atoi(v) ? 1 : 0;
         dirty = true;
