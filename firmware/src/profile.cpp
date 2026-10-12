@@ -198,10 +198,14 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
                     else if (!strcmp(t, "countdown")) code = 10;
                     else if (!strcmp(t, "env")) code = 11;
                     else if (!strcmp(t, "net")) code = 12;
+                    else if (!strcmp(t, "text")) code = 13;
                     else continue;
                     dst.comps[cn].t = code;
                     dst.comps[cn].big = (c["big"] | 0) ? 1 : 0;
                     dst.comps[cn].hidden = (c["hidden"] | 0) ? 1 : 0;
+                    dst.comps[cn].color = (uint8_t)constrain((int)(c["color"] | 0), 0, 3);
+                    copy_text(dst.comps[cn].text, sizeof(dst.comps[cn].text),
+                              c["text"] | "");
                     dst.comps[cn].x = (uint16_t)constrain((int)(c["x"] | 0), 0, 319);
                     dst.comps[cn].y = (uint16_t)constrain((int)(c["y"] | 0), 0, 479);
                     ++cn;

@@ -1306,6 +1306,11 @@ function devFreePage(screen, ctx, page){
   (page.components||[]).forEach(c=>{
     if(c.hidden)return;
     const [w,h]=SIZE[c.t]||[120,30];
+    if(c.t==='text'){
+      const cols=[ctx.text,ctx.accent,ctx.sub,'#F59E0B'];
+      devLabel(screen, c.x, c.y, 200, c.text||'自定义文字', 20, null, cols[c.color||0]);
+      return;
+    }
     if(c.t==='ai_cost'){
       // 预览：三行指标 + 摘要（值从 live 摊平，缺省占位）
       const ait=t.ait?`${Math.round(Number(t.ait)/1000*10)/10}M`:'--';
@@ -1804,7 +1809,7 @@ function renderPalette() {
                       ['weather','天气'],['sys','CPU/内存'],['quote','短句'],
                       ['ai_cost','AI 用量'],['pet','角色'],['remind','下一提醒'],
                       ['alarm','闹钟'],['countdown','倒计时'],['env','温湿度'],
-                      ['net','网速']];
+                      ['net','网速'],['text','自定义文字']];
     FREE_COMPS.forEach(([t,name])=>{
       const b=el('button','palette-item');
       b.append(el('span','palette-symbol','⊞'),document.createTextNode(name));
@@ -1848,9 +1853,9 @@ function renderPalette() {
    画布 0.85 缩放显示 320×480，写回 draft 的仍是设备像素坐标。 */
 function renderFreeEditor(page, root){
   const SCALE=0.85;
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28]};
   const BIG={clock:[260,64],weather:[240,40]};
-  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色',remind:'下一提醒',alarm:'闹钟',countdown:'倒计时',env:'温湿度',net:'网速'};
+  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色',remind:'下一提醒',alarm:'闹钟',countdown:'倒计时',env:'温湿度',net:'网速',text:'自定义文字'};
   page.components=page.components||[];
   if(!Array.isArray(page._undo)) page._undo=[];
   if(!Array.isArray(page._redo)) page._redo=[];
@@ -1870,7 +1875,7 @@ function renderFreeEditor(page, root){
     `border-radius:10px;border:1px solid #2a3a52;overflow:hidden;touch-action:none;user-select:none`;
   wrap.append(canvas);
   let sel=-1;
-  const paintSel=()=>{[...canvas.children].forEach((b,i)=>{
+  let paintSel=()=>{[...canvas.children].forEach((b,i)=>{
     b.style.borderColor = i===sel ? '#57C8F5' : 'rgba(87,200,245,.35)';
   });};
   page.components.forEach((c,i)=>{
@@ -1902,6 +1907,25 @@ function renderFreeEditor(page, root){
     });
     canvas.append(b);
   });
+  paintSel();
+  const form=el('div');
+  const syncForm=()=>{
+    form.replaceChildren();
+    const c=page.components[sel];
+    if(!c||c.t!=='text')return;
+    const ti=el('input','text-input'); ti.value=c.text||''; ti.maxLength=8;
+    ti.placeholder='自定义文字（≤8 汉字）';
+    ti.oninput=()=>{c.text=ti.value;markDirty()};
+    const row=el('div','btn-row');
+    [['0','正文'],['1','强调'],['2','次要'],['3','警示']].forEach(([v,name])=>{
+      const cb=el('button','button'+((c.color||0)===Number(v)?' primary':''),name);
+      cb.onclick=()=>{c.color=Number(v);markDirty();syncForm()};
+      row.append(cb);
+    });
+    form.append(el('p','hint','自定义文字内容与颜色：'),ti,row);
+  };
+  const origPaint=paintSel;
+  paintSel=()=>{origPaint();syncForm();};
   paintSel();
   const bar=el('div','btn-row');
   const del=el('button','button','删除选中组件');
@@ -1965,6 +1989,7 @@ function renderFreeEditor(page, root){
   const re=el('button','button','重做');
   re.onclick=redo;
   bar.append(del,dup,hide,lock,up1,down1,un,re,clear);
+  wrap.append(form);
   canvas.tabIndex=0;
   canvas.addEventListener('keydown',ev=>{
     if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){ev.preventDefault();undo()}

@@ -217,12 +217,14 @@ def validate_profile(raw):
                 raise ValueError("自由布局页组件需为 ≤8 项的列表")
             allowed = ("clock", "date", "lunar", "weather", "sys", "quote",
                        "ai_cost", "pet", "remind", "alarm", "countdown",
-                       "env", "net")
+                       "env", "net", "text")
             sizes = {"clock": (220, 60), "date": (260, 28), "lunar": (304, 28),
                      "weather": (240, 36), "sys": (280, 28), "quote": (300, 96),
                      "ai_cost": (304, 116), "pet": (96, 120),
                      "remind": (304, 28), "alarm": (280, 28),
-                     "countdown": (304, 28), "env": (240, 28), "net": (240, 28)}
+                     "countdown": (304, 28), "env": (240, 28), "net": (240, 28),
+                     "text": (200, 28)}
+            colors = (0, 1, 2, 3)   # 0=正文 1=强调 2=次要 3=警示
             big_sizes = {"clock": (260, 64), "weather": (240, 40)}
             out_comps = []
             for c in comps:
@@ -244,8 +246,17 @@ def validate_profile(raw):
                     y = max(0, min(480 - h, int(c.get("y", 0))))
                 except (TypeError, ValueError):
                     x = y = 0
-                out_comps.append({"t": t, "x": x, "y": y, "big": big,
-                                  "hidden": hidden})
+                entry = {"t": t, "x": x, "y": y, "big": big, "hidden": hidden}
+                if t == "text":
+                    # 自定义文字：≤24 字节（8 汉字）；color 0=正文 1=强调
+                    # 2=次要 3=警示（固件按主题色解析）
+                    text = _label(str(c.get("text", "")) or "自定义文字", 24)
+                    try:
+                        color = max(0, min(3, int(c.get("color", 1)) or 0))
+                    except (TypeError, ValueError):
+                        color = 1
+                    entry.update({"text": text, "color": color})
+                out_comps.append(entry)
             out["pages"].append({"id": pid, "title": _label(page.get("title", ""), 24),
                                  "layout": "free", "widgets": [],
                                  "filter": "", "city": "",
