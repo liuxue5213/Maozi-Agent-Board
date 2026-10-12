@@ -1287,7 +1287,7 @@ function devGenericCard(screen, ctx, kind, x, y, w, h){
 function devWidgetUnits(kind){ return (kind === 'reminder_list' || kind === 'today_calendar') ? 2 : 1 }
 /* 自由布局页预览：组件按 (x,y) 直接摆放，值来自 live 遥测（缺省占位）。 */
 function devFreePage(screen, ctx, page){
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120]};
   const now=new Date();
   const t=(live.telemetry||{});
   const vals={
@@ -1300,6 +1300,22 @@ function devFreePage(screen, ctx, page){
   };
   (page.components||[]).forEach(c=>{
     const [w,h]=SIZE[c.t]||[120,30];
+    if(c.t==='ai_cost'){
+      // 预览：三行指标 + 摘要（值从 live 摊平，缺省占位）
+      const ait=t.ait?`${Math.round(Number(t.ait)/1000*10)/10}M`:'--';
+      const rows=[`今日 ${ait}`,
+                  t.aiu?`模型 ${String(t.aiu).split(',')[1]||''}`:'模型 --',
+                  t.aib0?String(t.aib0).split(',')[0]+' '+Math.round(Number(String(t.aib0).split(',')[1])/1000)+'k':'分模型 --',
+                  t.inbox?`待处理 ${t.inbox} 件`:''];
+      rows.forEach((txt,r)=>{ if(txt) devLabel(screen, c.x, c.y+r*28, 304, txt, 20,
+        r===3?'dev-dim':null); });
+      return;
+    }
+    if(c.t==='pet'){
+      const box=devAbs(el('div','dev-el'), c.x, c.y, w, h);
+      devPet(box, (draft.pet&&draft.pet.type)||'robot', 'IDLE', 0, 0, 1);
+      screen.append(box); return;
+    }
     if(c.t==='quote'){
       const box=devAbs(el('div','dev-el'), c.x, c.y, w, h);
       box.style.color=ctx.sub; box.style.fontSize='24px'; box.style.lineHeight='34px';
@@ -1779,7 +1795,8 @@ function renderPalette() {
   const page=current();
   if(page.layout==='free'){
     const FREE_COMPS=[['clock','时间'],['date','日期'],['lunar','农历节气'],
-                      ['weather','天气'],['sys','CPU/内存'],['quote','短句']];
+                      ['weather','天气'],['sys','CPU/内存'],['quote','短句'],
+                      ['ai_cost','AI 用量'],['pet','角色']];
     FREE_COMPS.forEach(([t,name])=>{
       const b=el('button','palette-item');
       b.append(el('span','palette-symbol','⊞'),document.createTextNode(name));
@@ -1819,8 +1836,8 @@ function renderPalette() {
    画布 0.85 缩放显示 320×480，写回 draft 的仍是设备像素坐标。 */
 function renderFreeEditor(page, root){
   const SCALE=0.85;
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96]};
-  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句'};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120]};
+  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色'};
   page.components=page.components||[];
   root.replaceChildren();
   const wrap=el('div');
@@ -1843,9 +1860,10 @@ function renderFreeEditor(page, root){
     b.addEventListener('pointerdown', ev=>{
       ev.preventDefault(); sel=i; paintSel();
       const sx=ev.clientX, sy=ev.clientY, ox=c.x, oy=c.y;
+      const snap=v=>Math.round(v/4)*4;   // 4px 网格吸附（竞品「吸附/网格」）
       const move=ev2=>{
-        c.x=Math.max(0,Math.min(320-SIZE[c.t][0], ox+Math.round((ev2.clientX-sx)/SCALE)));
-        c.y=Math.max(0,Math.min(480-SIZE[c.t][1], oy+Math.round((ev2.clientY-sy)/SCALE)));
+        c.x=Math.max(0,Math.min(320-SIZE[c.t][0], snap(ox+Math.round((ev2.clientX-sx)/SCALE))));
+        c.y=Math.max(0,Math.min(480-SIZE[c.t][1], snap(oy+Math.round((ev2.clientY-sy)/SCALE))));
         b.style.left=c.x*SCALE+'px'; b.style.top=c.y*SCALE+'px';
         b.textContent=`${NAME[c.t]} ${c.x},${c.y}`;
       };

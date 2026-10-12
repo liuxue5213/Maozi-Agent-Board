@@ -980,17 +980,54 @@ void make_pet_compact(WidgetView& view, lv_obj_t* screen) {
 // ---------- 自由布局页（竞品拖拽编辑器 v1） ----------
 int weekday(const char* date);           // 定义在文件后部（此处前向引用）
 const char* weekday_name(int day);
+static PetParts pet_free_parts;          // 自由页「角色」组件的像素宠物部件
+static uint8_t pet_free_used = 0;
+static void ai_cost_build_rows(char rows[5][48]);   // 定义在 render_generic 前
 // 组件固定尺寸、坐标自由；数据全走既有遥测，零新数据源。
 static const uint8_t FC_FONT[6] = {48, 20, 20, 28, 20, 24};
 static const uint16_t FC_W[6] = {220, 260, 304, 240, 280, 300};
+// 6=ai_cost 7=pet：容器型组件（多标签/嵌入式宠物），尺寸固定
+static const uint16_t FC_BOX[2][2] = {{304, 116}, {96, 120}};
 static const uint32_t FC_COL[6] = {0, 0, 0, 0, 0, 0};   // 占位；颜色在 make 内定
 
 void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) {
     static const uint32_t colors[6] = {};
     (void)colors; (void)FC_COL;
     page.free_n = 0;
+    pet_free_used = 0;
     for (uint8_t i = 0; i < config.comp_n && i < 8; ++i) {
         const FreeComp& c = config.comps[i];
+        if (c.t == 6) {
+            // AI 用量：透明容器内 3 行指标 + 1 行收件箱摘要
+            lv_obj_t* box = lv_obj_create(screen);
+            lv_obj_set_pos(box, c.x, c.y);
+            lv_obj_set_size(box, FC_BOX[0][0], FC_BOX[0][1]);
+            lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(box, 0, 0);
+            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+            for (uint8_t r = 0; r < 4; ++r)
+                label1(box, "--", 20, r == 3 ? sub_color : text_color,
+                       0, r * 28, 304);
+            page.free_lbl[i] = box;      // 容器指针，渲染期按子序取标签
+            page.free_t[i] = 6;
+            page.free_n = i + 1;
+            continue;
+        }
+        if (c.t == 7) {
+            // 角色：像素宠物嵌入式渲染（v1 像素形态；photo 包仍走整页宠物页）
+            lv_obj_t* box = lv_obj_create(screen);
+            lv_obj_set_pos(box, c.x, c.y);
+            lv_obj_set_size(box, FC_BOX[1][0], FC_BOX[1][1]);
+            lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(box, 0, 0);
+            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+            draw_pet(pet_free_parts, box, g_profile.pet_type, 0, 0, 1);
+            pet_free_used = 1;
+            page.free_lbl[i] = box;
+            page.free_t[i] = 7;
+            page.free_n = i + 1;
+            continue;
+        }
         uint8_t t = c.t < 6 ? c.t : 0;
         uint32_t col = t == 0 ? accent : (t == 2 || t == 4) ? sub_color : text_color;
         lv_obj_t* lbl;
@@ -1009,10 +1046,30 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
 void render_free_page(PageView& page, const char* tb) {
     const char* current_date = clock_date();
     int wd = current_date[0] ? weekday(current_date) : 0;
+    const char* st = latest.tasks[0].used ? latest.tasks[0].state : "IDLE";
     for (uint8_t i = 0; i < page.free_n && i < 8; ++i) {
+        char buf[96];
+        if (page.free_t[i] == 6) {
+            // AI 用量容器：3 行指标 + 底行收件箱摘要（子序 0..3）
+            lv_obj_t* box = page.free_lbl[i];
+            if (!box) continue;
+            char rows[5][48];
+            ai_cost_build_rows(rows);
+            for (uint8_t r = 0; r < 3; ++r)
+                set_text(lv_obj_get_child(box, r), rows[r][0] ? rows[r] : "--");
+            lv_obj_t* sub = lv_obj_get_child(box, 3);
+            if (sub) set_text(sub, latest.inbox > 0 ? (snprintf(
+                buf, sizeof(buf), "待处理 %d 件", latest.inbox), buf) : "");
+            continue;
+        }
+        if (page.free_t[i] == 7) {
+            if (pet_free_used)
+                pet_apply_expression(pet_free_parts, st,
+                                     latest.pet_h, latest.pet_t, latest.pet_e);
+            continue;
+        }
         lv_obj_t* lbl = page.free_lbl[i];
         if (!lbl) continue;
-        char buf[96];
         switch (page.free_t[i]) {
         case 0:
             set_text(lbl, tb);
@@ -1911,6 +1968,47 @@ void render_weather_city(WidgetView& view) {
     }
 }
 
+/* AI 用量卡列表内容（看板卡与自由页 ai_cost 组件共用）：
+   今日+本轮一行、模型一行、每模型一行，勾选序即行序。 */
+static void ai_cost_build_rows(char rows[5][48]) {
+    uint8_t n = 0;
+    bool want[4] = {};
+    for (uint8_t i = 0; i < g_profile.ac_slot_n && i < 4; ++i)
+        want[g_profile.ac_slots[i] & 3] = true;
+    long k = latest.day_tok_total / 1000;
+    if (latest.day_tok_total < 0) {
+        strcpy(rows[n++], "今日暂无用量");
+        return;
+    }
+    char row0[48] = "";
+    if (want[0]) {
+        if (k >= 1000) snprintf(row0, sizeof(row0), "今日 %.1fM", k / 1000.0);
+        else snprintf(row0, sizeof(row0), "今日 %ldk", k);
+    }
+    if (want[1] && latest.ai_tok_out > 0) {
+        char t2[24];
+        snprintf(t2, sizeof(t2), "%s本轮 %.1fk",
+                 row0[0] ? " · " : "", latest.ai_tok_out / 1000.0);
+        strncat(row0, t2, sizeof(row0) - strlen(row0) - 1);
+    }
+    if (row0[0]) strncpy(rows[n++], row0, sizeof(rows[0]) - 1);
+    if (want[2] && latest.ai_model[0] && n < 5)
+        snprintf(rows[n++], sizeof(rows[0]), "模型 %s", latest.ai_model);
+    if (want[3])
+        for (uint8_t m = 0; m < 3 && n < 5; ++m) {
+            if (latest.ai_by_tok[m] <= 0 || !latest.ai_by_model[m][0]) continue;
+            const char* full = latest.ai_by_model[m];
+            const char* dash = strchr(full, '-');
+            char short_name[9];
+            snprintf(short_name, sizeof(short_name), "%.*s",
+                     dash ? (int)(dash - full) : 8, full);
+            long mt = latest.ai_by_tok[m];
+            if (mt >= 1000000) snprintf(rows[n++], sizeof(rows[0]), "%s %.1fM", short_name, mt / 1e6);
+            else snprintf(rows[n++], sizeof(rows[0]), "%s %ldk", short_name, mt / 1000);
+        }
+    if (!n) strcpy(rows[n++], "今日 0k");
+}
+
 void render_generic(WidgetView& view) {
     if (view.kind == W_WEATHER && view.city[0]) { render_weather_city(view); return; }
     if (view.kind == W_PET) { render_pet_page(view); return; }
@@ -1972,42 +2070,7 @@ void render_generic(WidgetView& view) {
         // 每模型一行（勾选序即行序，无数据的行跳过），一次看全。
         if (view.ac_rows[0]) {
             char rows[5][48] = {};
-            uint8_t n = 0;
-            bool want[4] = {};               // 按勾选槽展开
-            for (uint8_t i = 0; i < g_profile.ac_slot_n && i < 4; ++i)
-                want[g_profile.ac_slots[i] & 3] = true;
-            long k = latest.day_tok_total / 1000;
-            if (latest.day_tok_total < 0) {
-                strcpy(rows[n++], "今日暂无用量");
-            } else {
-                char row0[48] = "";
-                if (want[0]) {
-                    if (k >= 1000) snprintf(row0, sizeof(row0), "今日 %.1fM", k / 1000.0);
-                    else snprintf(row0, sizeof(row0), "今日 %ldk", k);
-                }
-                if (want[1] && latest.ai_tok_out > 0) {
-                    char t2[24];
-                    snprintf(t2, sizeof(t2), "%s本轮 %.1fk",
-                             row0[0] ? " · " : "", latest.ai_tok_out / 1000.0);
-                    strncat(row0, t2, sizeof(row0) - strlen(row0) - 1);
-                }
-                if (row0[0]) strncpy(rows[n++], row0, sizeof(rows[0]) - 1);
-                if (want[2] && latest.ai_model[0] && n < 5)
-                    snprintf(rows[n++], sizeof(rows[0]), "模型 %s", latest.ai_model);
-                if (want[3])
-                    for (uint8_t m = 0; m < 3 && n < 5; ++m) {
-                        if (latest.ai_by_tok[m] <= 0 || !latest.ai_by_model[m][0]) continue;
-                        const char* full = latest.ai_by_model[m];
-                        const char* dash = strchr(full, '-');
-                        char short_name[9];
-                        snprintf(short_name, sizeof(short_name), "%.*s",
-                                 dash ? (int)(dash - full) : 8, full);
-                        long mt = latest.ai_by_tok[m];
-                        if (mt >= 1000000) snprintf(rows[n++], sizeof(rows[0]), "%s %.1fM", short_name, mt / 1e6);
-                        else snprintf(rows[n++], sizeof(rows[0]), "%s %ldk", short_name, mt / 1000);
-                    }
-                if (!n) strcpy(rows[n++], "今日 0k");
-            }
+            ai_cost_build_rows(rows);
             for (uint8_t i = 0; i < 5; ++i)
                 set_text(view.ac_rows[i], rows[i][0] ? rows[i] : "");
             // 卡底收件箱摘要（竞品看板内通知摘要）：有待处理才显示
@@ -2281,6 +2344,8 @@ void ui_rebuild() {
     // panic（真机复现：每次配置同步后设备静默重启，表现为同步后闪断）。
     pet_ai = PetParts();
     pet_page = PetParts();
+    pet_free_parts = PetParts();
+    pet_free_used = 0;
     lv_obj_t* old[6] = {};
     uint8_t old_count = view_count;
     for (uint8_t i = 0; i < old_count; ++i) old[i] = views[i].screen;

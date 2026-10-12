@@ -191,6 +191,8 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
                     else if (!strcmp(t, "weather")) code = 3;
                     else if (!strcmp(t, "sys")) code = 4;
                     else if (!strcmp(t, "quote")) code = 5;
+                    else if (!strcmp(t, "ai_cost")) code = 6;
+                    else if (!strcmp(t, "pet")) code = 7;
                     else continue;
                     dst.comps[cn].t = code;
                     dst.comps[cn].x = (uint16_t)constrain((int)(c["x"] | 0), 0, 319);
