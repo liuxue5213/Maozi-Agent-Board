@@ -170,6 +170,12 @@ def validate_profile(raw):
             continue
         seen_poems.add(verse)
         out["poems"].append(verse)
+    # 用户库为空 → 启用内置名句（带作者署名，竞品「秋日清和/王维」观感）；
+    # 用户一旦配置自己的诗句，完全以用户库为准。
+    if not out["poems"]:
+        from .poems import BUILTIN as _POEMS
+        for verse in _POEMS[:10]:
+            out["poems"].append(verse)
     seen_names = set()
     for entry in cities:
         if not isinstance(entry, dict):

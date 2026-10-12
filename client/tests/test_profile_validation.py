@@ -209,6 +209,30 @@ class PetFlagTests(unittest.TestCase):
         self.assertEqual((out["pet"]["sleep"], out["pet"]["greet"]), (1, 1))
 
 
+class PoemsTests(unittest.TestCase):
+    """内置名句库（用户诗句库为空时自动启用，带作者署名）。"""
+
+    def test_empty_poems_filled_from_builtin(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(len(out["poems"]), 10)
+        self.assertTrue(all("（" in p and "）" in p for p in out["poems"]))
+
+    def test_user_poems_win_when_present(self):
+        out = validate_profile(base(poems=["空山新雨后"]))
+        self.assertEqual(out["poems"], ["空山新雨后"])
+
+    def test_builtin_pool_integrity(self):
+        from workbuddy.poems import BUILTIN
+        from workbuddy.profile import _label
+        self.assertGreaterEqual(len(BUILTIN), 20)
+        for entry in BUILTIN:
+            self.assertIn("（", entry)
+            # 设备字库 GB2312 护栏：名句+全角括号署名必须全数可编码
+            self.assertEqual(_label(entry, 60), entry)
+            self.assertLessEqual(len(entry.encode("utf-8")), 60)
+        self.assertEqual(len(set(BUILTIN)), len(BUILTIN))
+
+
 class BreakReminderTests(unittest.TestCase):
     """久坐提醒阈值（pet.break_min，分钟，0=关）。"""
 
