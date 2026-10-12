@@ -1029,13 +1029,18 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
             continue;
         }
         uint8_t t = c.t < 6 ? c.t : 0;
+        // 样式档（竞品「时间样式」）：clock/weather 支持大字（48/28）
+        uint8_t font = FC_FONT[t];
+        uint16_t w = FC_W[t];
+        if (c.big && t == 0) { font = 48; w = 260; }
+        if (c.big && t == 3) { font = 28; w = 240; }
         uint32_t col = t == 0 ? accent : (t == 2 || t == 4) ? sub_color : text_color;
         lv_obj_t* lbl;
         if (t == 5) {   // 短句：可折行（LONG_DOT 会截成一行）
             lbl = label(screen, "", FC_FONT[t], col, c.x, c.y, FC_W[t], 96);
             lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
         } else {
-            lbl = label1(screen, "--", FC_FONT[t], col, c.x, c.y, FC_W[t]);
+            lbl = label1(screen, "--", font, col, c.x, c.y, w);
         }
         page.free_lbl[i] = lbl;
         page.free_t[i] = t;

@@ -1803,6 +1803,10 @@ function renderPalette() {
       b.onclick=()=>{
         const comps=page.components=page.components||[];
         if(comps.length>=8)return notice('自由页最多 8 个组件',true);
+        if(!Array.isArray(page._undo))page._undo=[];
+        page._undo.push(JSON.stringify(comps));
+        if(page._undo.length>50)page._undo.shift();
+        page._redo.length=0;
         comps.push({t,x:8,y:8+(comps.length*36)%400});
         markDirty(); renderInspector();
       };
@@ -1837,8 +1841,19 @@ function renderPalette() {
 function renderFreeEditor(page, root){
   const SCALE=0.85;
   const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120]};
+  const BIG={clock:[260,64],weather:[240,40]};
   const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色'};
   page.components=page.components||[];
+  if(!Array.isArray(page._undo)) page._undo=[];
+  if(!Array.isArray(page._redo)) page._redo=[];
+  const pushUndo=()=>{ page._undo.push(JSON.stringify(page.components));
+    if(page._undo.length>50) page._undo.shift(); page._redo.length=0; };
+  const undo=()=>{ if(!page._undo.length)return notice('没有可撤销的操作',true);
+    page._redo.push(JSON.stringify(page.components));
+    page.components=JSON.parse(page._undo.pop()); sel=-1; markDirty(); renderInspector(); };
+  const redo=()=>{ if(!page._redo.length)return notice('没有可重做的操作',true);
+    page._undo.push(JSON.stringify(page.components));
+    page.components=JSON.parse(page._redo.pop()); sel=-1; markDirty(); renderInspector(); };
   root.replaceChildren();
   const wrap=el('div');
   const canvas=el('div');
@@ -1851,7 +1866,7 @@ function renderFreeEditor(page, root){
     b.style.borderColor = i===sel ? '#57C8F5' : 'rgba(87,200,245,.35)';
   });};
   page.components.forEach((c,i)=>{
-    const [w,h]=SIZE[c.t]||[120,30];
+    const [w,h]=(c.big&&BIG[c.t])?BIG[c.t]:(SIZE[c.t]||[120,30]);
     const b=el('div','', NAME[c.t]||c.t);
     b.style.cssText=`position:absolute;left:${c.x*SCALE}px;top:${c.y*SCALE}px;`+
       `width:${w*SCALE}px;min-height:${Math.max(22,h*SCALE)}px;`+
@@ -1882,12 +1897,34 @@ function renderFreeEditor(page, root){
   const del=el('button','button','删除选中组件');
   del.onclick=()=>{
     if(sel<0)return notice('先在画布上点选一个组件',true);
+    pushUndo();
     page.components.splice(sel,1); sel=-1; markDirty(); renderInspector();
   };
   const clear=el('button','button','清空画布');
-  clear.onclick=()=>{page.components=[];sel=-1;markDirty();renderInspector()};
-  bar.append(del,clear);
-  wrap.append(el('p','hint','拖动组件摆位（对齐设备像素），点选后可删除。改动走「保存草稿 → 应用到设备」。'),bar);
+  clear.onclick=()=>{pushUndo();page.components=[];sel=-1;markDirty();renderInspector()};
+  const style=el('button','button','大字 / 常规');
+  style.onclick=()=>{
+    if(sel<0)return notice('先在画布上点选一个组件',true);
+    const c=page.components[sel];
+    if(!BIG[c.t])return notice('该组件暂无样式档（时间/天气支持大字）',true);
+    pushUndo();
+    c.big=c.big?0:1;
+    const dims=c.big?BIG[c.t]:SIZE[c.t];
+    c.x=Math.max(0,Math.min(320-dims[0],c.x));
+    c.y=Math.max(0,Math.min(480-dims[1],c.y));
+    markDirty(); renderInspector();
+  };
+  const un=el('button','button','撤销');
+  un.onclick=undo;
+  const re=el('button','button','重做');
+  re.onclick=redo;
+  bar.append(del,style,un,re,clear);
+  canvas.tabIndex=0;
+  canvas.addEventListener('keydown',ev=>{
+    if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){ev.preventDefault();undo()}
+    else if((ev.ctrlKey||ev.metaKey)&&(ev.key==='y'||(ev.key==='Z'&&ev.shiftKey))){ev.preventDefault();redo()}
+  });
+  wrap.append(el('p','hint','拖动组件摆位（4px 吸附，对齐设备像素）；点选后可删除或切「大字/常规」样式；Ctrl+Z 撤销、Ctrl+Y 重做。改动走「保存草稿 → 应用到设备」。'),bar);
   root.append(wrap);
 }
 function renderInspector() {
