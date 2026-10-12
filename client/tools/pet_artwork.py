@@ -191,6 +191,91 @@ def _bg_window(d):
                ccy - ch // 2 + 14 * S], fill=(94, 60, 34))
 
 
+def _bg_rain(d):
+    """雨夜街窗（降水包）：青灰雨云天 + 远楼灯火 + 湿漉街面。"""
+    TOP, BOT = (38, 48, 70), (22, 30, 46)
+    for y in range(H):
+        d.line([(0, y), (W, y)], fill=_lerp(TOP, BOT, y / H))
+    import random
+    rnd = random.Random(4242)
+    bx = 0
+    while bx < W:   # 远处楼群剪影 + 暖窗灯
+        bw = rnd.randint(50, 110) * S
+        bh = rnd.randint(90, 220) * S
+        by = int(H * 0.62) - bh
+        d.rectangle([bx, by, bx + bw, int(H * 0.62)],
+                    fill=_lerp((28, 36, 56), (20, 26, 42), rnd.random()))
+        for _ in range(rnd.randint(3, 8)):
+            wx = bx + rnd.randint(6, max(7, bw // S - 6)) * S
+            wy = by + rnd.randint(8, max(9, bh // S - 8)) * S
+            d.rectangle([wx, wy, wx + 6 * S, wy + 8 * S], fill=(250, 214, 140))
+        bx += bw + rnd.randint(6, 18) * S
+    d.rectangle([0, int(H * 0.62), W, H], fill=(30, 38, 56))   # 湿漉街面
+
+
+def _overlay_rain(d):
+    """雨丝斜线 + 地面涟漪（画在角色之上，降水氛围）。"""
+    import random
+    rnd = random.Random(909)
+    for _ in range(140):
+        x, y = rnd.randint(0, W), rnd.randint(0, H)
+        ln = rnd.randint(10, 26) * S
+        d.line([(x, y), (x - ln // 3, y + ln)], fill=(140, 165, 205), width=2 * S)
+    for _ in range(14):
+        x, y = rnd.randint(0, W), rnd.randint(int(H * 0.66), H)
+        r = rnd.randint(6, 16) * S
+        d.arc([x - r, y - r // 2, x + r, y + r // 2], 200, 340,
+              fill=(120, 145, 185), width=2 * S)
+
+
+def _bg_snow(d):
+    """黄昏雪国（雪天包）：淡青灰天 + 雪地 + 松林剪影 + 飘雪。"""
+    TOP, BOT = (150, 168, 195), (96, 110, 138)
+    for y in range(H):
+        d.line([(0, y), (W, y)], fill=_lerp(TOP, BOT, y / H))
+    d.rectangle([0, int(H * 0.66), W, H], fill=(214, 224, 238))
+    d.rectangle([0, int(H * 0.66), W, int(H * 0.66) + 10 * S], fill=(235, 242, 250))
+    import random
+    rnd = random.Random(1212)
+    for _ in range(7):   # 松林剪影
+        tx = rnd.randint(int(W * 0.02), int(W * 0.92))
+        base = int(H * (0.66 + rnd.random() * 0.04))
+        th = rnd.randint(60, 110) * S
+        tw = th // 3
+        for k, wk in enumerate((0.45, 0.7, 1.0)):
+            wt = int(tw * wk)
+            d.polygon([(tx - wt, base - k * th // 3), (tx + wt, base - k * th // 3),
+                       (tx, base - (k + 1) * th // 3 - 8 * S)], fill=(70, 88, 112))
+    rnd = random.Random(1213)
+    for _ in range(120):   # 飘雪
+        x, y = rnd.randint(0, W), rnd.randint(0, H)
+        r = rnd.choice((1, 1, 2, 3)) * S
+        d.ellipse([x - r, y - r, x + r, y + r], fill=(240, 246, 252))
+
+
+def _bg_spring(d):
+    """樱花黄昏（春日包）：粉紫天空 + 樱枝 + 花瓣 + 草地。"""
+    TOP, BOT = (232, 200, 216), (168, 150, 190)
+    for y in range(H):
+        d.line([(0, y), (W, y)], fill=_lerp(TOP, BOT, y / H))
+    d.rectangle([0, int(H * 0.62), W, H], fill=(150, 178, 140))
+    d.rectangle([0, int(H * 0.62), W, int(H * 0.62) + 8 * S], fill=(170, 198, 158))
+    d.arc([-40 * S, -30 * S, int(W * 0.7), int(H * 0.25)], 20, 70,
+          fill=(120, 88, 70), width=10 * S)   # 樱枝
+    import random
+    rnd = random.Random(313)
+    for _ in range(26):   # 花团
+        x = rnd.randint(int(W * 0.05), int(W * 0.62))
+        y = rnd.randint(int(H * 0.02), int(H * 0.14))
+        r = rnd.randint(8, 20) * S
+        d.ellipse([x - r, y - r, x + r, y + r],
+                  fill=_lerp((252, 214, 226), (246, 180, 200), rnd.random()))
+    for _ in range(30):   # 花瓣
+        x, y = rnd.randint(0, W), rnd.randint(0, H)
+        r = rnd.randint(3, 7) * S
+        d.ellipse([x - r, y - r // 2, x + r, y + r // 2], fill=(248, 196, 214))
+
+
 def _zzz(d, x, y, u, n=3):
     """Zzz 气泡文字（画线 Z，避免字体依赖）。"""
     for i in range(n):
@@ -257,6 +342,12 @@ def draw_frame(state, pose=0, scene="night"):
     d = ImageDraw.Draw(img)
     if scene == "window":
         _bg_window(d)
+    elif scene == "rainy":
+        _bg_rain(d)
+    elif scene == "snow":
+        _bg_snow(d)
+    elif scene == "spring":
+        _bg_spring(d)
     else:
         _bg(d)
 
@@ -366,12 +457,26 @@ def draw_frame(state, pose=0, scene="night"):
             d.ellipse([cx + sx * 58 * S - 16 * S, body_cy + 66 * S - 8 * S,
                        cx + sx * 58 * S + 16 * S, body_cy + 66 * S + 16 * S], fill=FUR)
 
-    # 底部压暗（状态条/按钮可读性）：夜空场景压向深蓝；窗边场景压向深木色
+    if scene == "rainy":
+        _overlay_rain(d)   # 雨丝画在角色之上（降水氛围）
+    # 底部压暗（状态条/按钮可读性）：各场景压向自己的暗色
     if scene == "window":
         for y in range(int(H * 0.80), H):
             k = (y - H * 0.80) / (H * 0.20)
             d.line([(0, y), (W, y)],
                    fill=_lerp((168, 138, 100), (120, 94, 66), k))
+    elif scene == "rainy":
+        for y in range(int(H * 0.78), H):
+            k = (y - H * 0.78) / (H * 0.22)
+            d.line([(0, y), (W, y)], fill=_lerp((30, 40, 58), (16, 24, 38), k))
+    elif scene == "snow":
+        for y in range(int(H * 0.78), H):
+            k = (y - H * 0.78) / (H * 0.22)
+            d.line([(0, y), (W, y)], fill=_lerp((120, 132, 158), (70, 82, 108), k))
+    elif scene == "spring":
+        for y in range(int(H * 0.78), H):
+            k = (y - H * 0.78) / (H * 0.22)
+            d.line([(0, y), (W, y)], fill=_lerp((120, 150, 120), (60, 80, 78), k))
     else:
         for y in range(int(H * 0.78), H):
             k = (y - H * 0.78) / (H * 0.22)

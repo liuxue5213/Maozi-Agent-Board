@@ -1118,7 +1118,9 @@ class App:
         if st.get("pack") == desired and now - st.get("at", 0) < 600:
             return
         if not (self.link and self.link.status.startswith("connected:")):
+            print(f"[PACK] skip: link not connected", flush=True)
             return
+        print(f"[PACK] apply {desired} (st={st.get('pack')})", flush=True)
         result = self.apply_petpack(desired)
         self.health.event("petpack_auto", pack=desired, sent=result["sent"])
         # 失败也记 ok=False：at 提供 10 分钟重试退避，成功后永不再发
