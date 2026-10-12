@@ -2640,7 +2640,8 @@ function renderSelfcheck(){
   const tempOk=!!lcaps.cpu_temp;
 
   rows.push({ok:tempOk, warn:!tempOk, label:'温度数据',
-    value: tempOk ? (srcNames[live.thermal_hint]||'可用')
+    value: tempOk ? ((srcNames[live.thermal_hint]||'可用') +
+                     '（芯片结温，比表面/近似类工具读数高 10-20℃ 属正常）')
       : '未获取——Windows 装 LibreHardwareMonitor 并以管理员运行一次即可；macOS 需授权 smcpriv 采样器'});
   rows.push({ok: !!(live.syscal_enabled && (live.syscal||{}).ok),
     warn: !!live.syscal_enabled && !(live.syscal||{}).ok,

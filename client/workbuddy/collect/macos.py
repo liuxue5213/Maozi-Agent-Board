@@ -8,6 +8,8 @@ import threading
 from .. import smcpriv
 from .common import Collector
 
+# TC0P = CPU 封装近似温度（表面键，比结温低）；主链路 smcpriv 走
+# powermetrics 的 CPU die temperature（芯片结温，更准），两者测点不同属正常。
 SMC_KEYS = {"cputemp": "TC0P", "gputemp": "TG0D", "fan": "F0Ac", "fan2": "F1Ac"}
 
 
