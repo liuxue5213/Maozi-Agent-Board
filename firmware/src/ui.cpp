@@ -72,6 +72,7 @@ struct PageView {
     // 自由布局页组件标签（竞品拖拽编辑器 v1）
     lv_obj_t* free_lbl[8] = {};
     uint8_t free_t[8] = {};
+    uint8_t free_city[8] = {};
     uint8_t free_n = 0;
     WidgetView widgets[4];
 };
@@ -1058,6 +1059,7 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
         }
         page.free_lbl[i] = lbl;
         page.free_t[i] = t;
+        page.free_city[i] = c.city < 3 ? c.city : 0;
         page.free_n = i + 1;
     }
 }
@@ -1110,14 +1112,16 @@ void render_free_page(PageView& page, const char* tb) {
         case 2:
             set_text(lbl, latest.lunar);
             break;
-        case 3:
-            // 读多城市 W0（城市列表第一个），旧全局 WX 已退役
-            if (latest.cities[0].used)
-                snprintf(buf, sizeof(buf), "%.1f℃ %s", latest.cities[0].temp,
-                         weather_text(latest.cities[0].code));
+        case 3: {
+            // 数据绑定（竞品#59）：weather 组件可绑定城市列表下标
+            uint8_t ci = page.free_city[i] < 3 ? page.free_city[i] : 0;
+            if (latest.cities[ci].used)
+                snprintf(buf, sizeof(buf), "%.1f℃ %s", latest.cities[ci].temp,
+                         weather_text(latest.cities[ci].code));
             else strcpy(buf, "天气未配置");
             set_text(lbl, buf);
             break;
+        }
         case 4:
             snprintf(buf, sizeof(buf), "CPU %d%% · 内存 %d%%", latest.cpu, latest.mem);
             set_text(lbl, buf);

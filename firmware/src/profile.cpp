@@ -209,6 +209,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
                     dst.comps[cn].big = (c["big"] | 0) ? 1 : 0;
                     dst.comps[cn].hidden = (c["hidden"] | 0) ? 1 : 0;
                     dst.comps[cn].color = (uint8_t)constrain((int)(c["color"] | 0), 0, 3);
+                    dst.comps[cn].city = (uint8_t)constrain((int)(c["city"] | 0), 0, 2);
                     copy_text(dst.comps[cn].text, sizeof(dst.comps[cn].text),
                               c["text"] | "");
                     dst.comps[cn].x = (uint16_t)constrain((int)(c["x"] | 0), 0, 319);

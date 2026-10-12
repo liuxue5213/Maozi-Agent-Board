@@ -849,7 +849,8 @@ class App:
             self.health.event("city_migrate_fail", err=str(exc)[:32])
 
     def save_profile(self, draft):
-        self.weather.kick()   # 城市列表可能变了：立刻拉一轮
+        # 注意：kick 必须在 profile 赋值之后——先唤醒线程会读到旧城市表
+        #（新城市 30 分钟内不会被拉取，实测：加北京后 W1 迟迟不出）
         with self.profile_lock:
             candidate = validate_profile(draft)
             candidate["version"] = self.profile["version"] + 1
@@ -857,7 +858,8 @@ class App:
             self.profile_status = "待同步"
             self.profile_error = ""
             self.sync_requested = False
-            return self.profile
+        self.weather.kick()   # 城市列表可能变了：立刻按新表拉一轮
+        return self.profile
 
     def request_sync(self):
         with self.profile_lock:

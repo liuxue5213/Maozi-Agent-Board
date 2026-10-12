@@ -1307,6 +1307,13 @@ function devFreePage(screen, ctx, page){
   (page.components||[]).forEach(c=>{
     if(c.hidden)return;
     const [w,h]=SIZE[c.t]||[120,30];
+    if(c.t==='weather'){
+      const ci=c.city||0, wd=t['w'+ci];
+      const parts=wd?String(wd).split(','):[];
+      devLabel(screen, c.x, c.y, 240, wd?`${parts[0]}℃ ${weatherText(+parts[1])}`:'天气未配置',
+               26, null, ctx.text);
+      return;
+    }
     if(c.t==='text'){
       const cols=[ctx.text,ctx.accent,ctx.sub,'#F59E0B'];
       devLabel(screen, c.x, c.y, 200, c.text||'自定义文字', 20, null, cols[c.color||0]);
@@ -1941,6 +1948,18 @@ function renderFreeEditor(page, root){
     form.replaceChildren();
     if(sel.length!==1)return;
     const c=page.components[sel[0]];
+    if(c&&c.t==='weather'){
+      // 数据绑定（竞品#59）：weather 组件选城市
+      const cities=(draft.weather&&draft.weather.cities)||[];
+      if(!cities.length)return;
+      const row=el('div','btn-row');
+      cities.forEach((ct,ci)=>{
+        const b=el('button','button'+((c.city||0)===ci?' primary':''),ct.name);
+        b.onclick=()=>{c.city=ci;markDirty();syncForm()};
+        row.append(b);
+      });
+      form.append(el('p','hint','天气组件绑定城市（多城市各绑一个可同屏对比）：'),row);
+    }
     if(!c||c.t!=='text')return;
     const ti=el('input','text-input'); ti.value=c.text||''; ti.maxLength=8;
     ti.placeholder='自定义文字（≤8 汉字）';

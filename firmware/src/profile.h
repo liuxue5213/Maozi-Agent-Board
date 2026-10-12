@@ -14,6 +14,7 @@ struct FreeComp {
     uint8_t big = 0;      // 样式档：0=常规 1=大字（clock/weather 支持，竞品「时间样式」）
     uint8_t hidden = 0;   // 隐藏：配置保留但不渲染（竞品「锁定/隐藏」）
     uint8_t color = 0;    // 自定义文字颜色：0=正文 1=强调 2=次要 3=警示
+    uint8_t city = 0;     // t=weather 的数据源城市下标（竞品#59 数据绑定）
     uint16_t x = 0, y = 0;
     char text[25] = "";   // t=text 时的自定义文字（≤8 汉字）
 };
