@@ -2667,6 +2667,7 @@ function renderSelfcheck(){
   const quietBox=$('push-quiet');
   if(quietBox&&document.activeElement!==quietBox) quietBox.value=live.push_quiet||'';
   renderSyscalView();
+  renderPetImgSlots();
 }
 // 趋势视图：每 60s 重画（新桶会推进曲线）；范围切换立即重画
 setInterval(()=>{if(currentView==='history')drawTrendChart()},60000);
@@ -3429,6 +3430,22 @@ function bind(){
 
   // ---- 彩色角色图（图集管线）：文件名映射状态，逐张走 IMG 通道 ----
   const PET_STATES=['working','thinking','sleeping','greeting','happy','error','idle','sleepy'];
+  const PET_IMG_KEY='workbuddy-petimg';
+  const petImgSet=()=>{ try{ return new Set(JSON.parse(localStorage.getItem(PET_IMG_KEY)||'[]')); }catch(e){ return new Set() } };
+  const petImgMark=names=>{ const st=petImgSet(); names.forEach(n=>st.add(n));
+    try{ localStorage.setItem(PET_IMG_KEY, JSON.stringify([...st])) }catch(e){} renderPetImgSlots(); };
+  const petImgClearLocal=()=>{ try{ localStorage.removeItem(PET_IMG_KEY) }catch(e){} renderPetImgSlots(); };
+  function renderPetImgSlots(){
+    const box=$('pet-img-slots'); if(!box)return;
+    const st=petImgSet();
+    box.replaceChildren();
+    PET_STATES.forEach(stt=>{
+      const has=st.has(`pet_${stt}.jpg`);
+      const c=el('div','pet-slot'+(has?' on':''));
+      c.append(el('small','',stt));
+      box.append(c);
+    });
+  }
   const petNote=t=>{ const n=$('pet-img-note'); if(n)n.textContent=t; };
   $('pet-img-file').onchange=async e=>{
     const files=[...e.target.files||[]]; e.target.value='';
@@ -3447,6 +3464,7 @@ function bind(){
         const d=await rq.json();
         if(!rq.ok)throw new Error(d.error||'上传失败');
         ok++;
+        petImgMark([f.name.replace(/\.jpe?g$/i,'')]);
         logHist('bg',`角色图 ${f.name} 已上传`);
       }catch(err){notice(`${f.name} 上传失败：${err.message}`,true)}
     }
@@ -3460,6 +3478,7 @@ function bind(){
       try{const r=await fetch(`/api/bgimg-delete?target=pet_${st}`,{method:'POST'});
           await r.json()}catch(e){}
     }
+    petImgClearLocal();
     petNote('已发送清空指令，像素宠物恢复显示');
     notice('已清空角色图');
   };
