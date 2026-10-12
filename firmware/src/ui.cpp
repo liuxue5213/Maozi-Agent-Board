@@ -43,8 +43,8 @@ struct WidgetView {
     char filter[13] = "";               // 本页工具过滤（空 = 全部）
     // 天气城市页（PageConfig.city 非空的 W_WEATHER）
     char city[13] = "";
-    // 宠物页（W_PET）：三条状态条的填充与数值
-    lv_obj_t *pm_fill[3] = {}, *pm_val[3] = {};
+    // 宠物页（W_PET）：三项数值文本（用户反馈：不要数值条，直接显示数字）
+    lv_obj_t *pm_val[3] = {};
     lv_obj_t *wcur_tmp = nullptr, *wcur_cond = nullptr, *wcur_hilo = nullptr;
     lv_obj_t *wday_lbl[5] = {}, *wcond_lbl[5] = {}, *wtmp_lbl[5] = {};
     uint16_t card_w = 0;              // 卡片实际宽度：窄卡需换用短文案（见 render_generic）
@@ -1006,15 +1006,13 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    // 三条状态条（饱食/水分/活力），PS 遥测实时驱动。
-    // 布局压实到底部（y352-476）：角色图/像素宠物的主体在中上部完整展示，
-    // 状态条与按钮不再切断宠物（用户反馈「宠物会被数值切断」）。
+    // 三项宠物数值（饱食/水分/活力），PS 遥测实时驱动。
+    // 用户反馈：不要数值条，直接显示数字。行距 24（cn_20 行高）×3 行
+    // 恰好放进 y354..426，不压 y428 的按钮行（cn_24 三行 84px 会溢出）。
     static const char* names[3] = {"饱食", "水分", "活力"};
     for (int i = 0; i < 3; ++i) {
-        label1(screen, names[i], 20, sub_color, 12, 352 + i * 28, 70);
-        lv_obj_t* track = pet_rect(screen, 84, 356 + i * 28, 150, 10, 5, 0x0E1B26);
-        view.pm_fill[i] = pet_rect(track, 0, 0, 150, 10, 5, accent);
-        view.pm_val[i] = label(screen, "--", 20, text_color, 240, 352 + i * 28, 70);
+        label1(screen, names[i], 14, sub_color, 20, 354 + i * 24, 70);
+        view.pm_val[i] = label1(screen, "--", 14, text_color, 92, 354 + i * 24, 70);
     }
     button(screen, "喂食", 12, 428, 96, 44, pet_action_cb, (void*)"feed");
     button(screen, "喝水", 112, 428, 96, 44, pet_action_cb, (void*)"water");
@@ -1072,11 +1070,9 @@ static void work_anim_flip(lv_timer_t* t) {
 }
 
 void render_pet_page(WidgetView& view) {
-    if (!view.pm_fill[0]) return;
+    if (!view.pm_val[0]) return;
     int vals[3] = {latest.pet_h, latest.pet_t, latest.pet_e};
     for (int i = 0; i < 3; ++i) {
-        if (view.pm_fill[i])
-            lv_obj_set_width(view.pm_fill[i], 170 * constrain(vals[i], 0, 100) / 100);
         if (view.pm_val[i]) {
             char line[8];
             snprintf(line, sizeof(line), "%d", vals[i]);

@@ -142,6 +142,55 @@ def _cat_head(d, cx, cy, scale, eye="open", brow_worry=False):
                   fill=_lerp(FUR, BLUSH, 0.55))
 
 
+SKY_TOP = (168, 205, 235)
+SKY_BOT = (215, 228, 210)
+GRASS = (120, 168, 96)
+TREE = (86, 138, 74)
+WOOD = (172, 128, 84)
+WOOD_DARK = (140, 100, 62)
+SKY_GLOW = (250, 226, 170)
+
+
+def _bg_window(d):
+    """窗边小院（白天）：暖天空 + 窗外草地树影 + 木窗框 + 宽窗台桌面。"""
+    for y in range(H):
+        d.line([(0, y), (W, y)], fill=_lerp(SKY_TOP, SKY_BOT, y / H))
+    # 太阳光晕（左上）
+    d.ellipse([-60 * S, -60 * S, 140 * S, 140 * S], fill=SKY_GLOW)
+    # 窗外草地（下半）
+    d.rectangle([0, int(H * 0.52), W, int(H * 0.78)], fill=GRASS)
+    # 窗外树冠（几团圆形）
+    import random
+    rnd = random.Random(77)
+    for _ in range(6):
+        tx = rnd.randint(int(W * 0.05), int(W * 0.9))
+        ty = int(H * (0.44 + rnd.random() * 0.1))
+        tr = rnd.randint(30, 55) * S
+        d.ellipse([tx - tr, ty - tr, tx + tr, ty + tr], fill=TREE)
+    # 远处小屋剪影
+    d.rectangle([int(W * 0.62), int(H * 0.40), int(W * 0.78), int(H * 0.52)],
+                fill=(210, 190, 160))
+    d.polygon([(int(W * 0.60), int(H * 0.40)), (int(W * 0.70), int(H * 0.33)),
+               (int(W * 0.80), int(H * 0.40))], fill=(150, 90, 70))
+    # 木窗框（十字）
+    fw = 16 * S
+    d.rectangle([0, int(H * 0.30), W, int(H * 0.30) + fw], fill=WOOD)
+    d.rectangle([0, int(H * 0.76), W, int(H * 0.76) + fw], fill=WOOD)
+    d.rectangle([int(W * 0.47), 0, int(W * 0.47) + fw, int(H * 0.78)], fill=WOOD)
+    # 窗台桌面（猫坐的平台，占下部）
+    d.rectangle([0, int(H * 0.80), W, H], fill=(196, 168, 128))
+    d.rectangle([0, int(H * 0.80), W, int(H * 0.80) + 8 * S], fill=(224, 200, 158))
+    # 桌上咖啡杯（右侧小物）
+    cw, ch = 26 * S, 30 * S
+    ccx, ccy = int(W * 0.87), int(H * 0.80) - ch
+    d.rounded_rectangle([ccx - cw // 2, ccy - ch // 2, ccx + cw // 2, ccy + ch // 2],
+                        radius=6 * S, fill=(240, 240, 238))
+    d.arc([ccx + cw // 2 - 4 * S, ccy - 6 * S, ccx + cw // 2 + 14 * S, ccy + 10 * S],
+          270, 90, fill=(180, 150, 120), width=3 * S)
+    d.ellipse([ccx - 10 * S, ccy - ch // 2 + 4 * S, ccx + 10 * S,
+               ccy - ch // 2 + 14 * S], fill=(94, 60, 34))
+
+
 def _zzz(d, x, y, u, n=3):
     """Zzz 气泡文字（画线 Z，避免字体依赖）。"""
     for i in range(n):
@@ -202,10 +251,14 @@ def _laptop(d, cx, cy, u):
                             radius=2 * u // 2, fill=LAPTOP_GLOW)
 
 
-def draw_frame(state):
+def draw_frame(state, pose=0, scene="night"):
+    """scene: night=夜空科技(默认) / window=窗边小院(白天暖色)。"""
     img = Image.new("RGB", (W, H))
     d = ImageDraw.Draw(img)
-    _bg(d)
+    if scene == "window":
+        _bg_window(d)
+    else:
+        _bg(d)
 
     cx = W // 2
     if state == "working":
@@ -223,10 +276,13 @@ def draw_frame(state):
               250, 20, fill=FUR_DARK, width=14 * S)
         _laptop(d, cx, int(H * 0.72), S)
         _cat_head(d, cx, int(H * 0.36), 2, eye="open")
-        # 前爪搭键盘
+        # 前爪搭键盘（pose=1 时右爪抬起 6px：打字起伏的第二帧）
+        lift = 6 * S if pose else 0
         for sx in (-1, 1):
-            d.ellipse([cx + sx * 24 * S - 16 * S, int(H * 0.70) - 8 * S,
-                       cx + sx * 24 * S + 16 * S, int(H * 0.70) + 12 * S], fill=FUR)
+            oy = lift if sx == 1 else 0
+            d.ellipse([cx + sx * 24 * S - 16 * S, int(H * 0.70) - 8 * S - oy,
+                       cx + sx * 24 * S + 16 * S, int(H * 0.70) + 12 * S - oy],
+                      fill=FUR)
     elif state == "thinking":
         body_cy = int(H * 0.54)
         d.polygon([(cx - 26 * S, int(H * 0.42)), (cx + 22 * S, int(H * 0.42)),
@@ -310,21 +366,34 @@ def draw_frame(state):
             d.ellipse([cx + sx * 58 * S - 16 * S, body_cy + 66 * S - 8 * S,
                        cx + sx * 58 * S + 16 * S, body_cy + 66 * S + 16 * S], fill=FUR)
 
-    # 底部压暗（状态条/按钮可读性）
-    for y in range(int(H * 0.78), H):
-        k = (y - H * 0.78) / (H * 0.22)
-        d.line([(0, y), (W, y)], fill=_lerp((6, 12, 28), (3, 7, 16), k))
+    # 底部压暗（状态条/按钮可读性）：夜空场景压向深蓝；窗边场景压向深木色
+    if scene == "window":
+        for y in range(int(H * 0.80), H):
+            k = (y - H * 0.80) / (H * 0.20)
+            d.line([(0, y), (W, y)],
+                   fill=_lerp((168, 138, 100), (120, 94, 66), k))
+    else:
+        for y in range(int(H * 0.78), H):
+            k = (y - H * 0.78) / (H * 0.22)
+            d.line([(0, y), (W, y)], fill=_lerp((6, 12, 28), (3, 7, 16), k))
     return img
 
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else OUT_DEFAULT
+    scene = "night"
+    if "--scene" in sys.argv:
+        scene = sys.argv[sys.argv.index("--scene") + 1]
+    pack = None
+    if "--pack" in sys.argv:
+        pack = sys.argv[sys.argv.index("--pack") + 1]
+        out = os.path.join(os.path.dirname(OUT_DEFAULT), f"petpack_{pack}")
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     states = ["working", "thinking", "sleeping", "greeting",
               "happy", "error", "idle", "sleepy"]
     for st in states:
-        img = draw_frame(st).resize((320, 480), Image.LANCZOS)
+        img = draw_frame(st, 0, scene).resize((320, 480), Image.LANCZOS)
         path = os.path.join(out, f"pet_{st}.jpg")
         q = 88
         while True:
@@ -333,6 +402,16 @@ def main():
                 break
             q -= 8
         print(f"{path}  {os.path.getsize(path)} bytes (q={q})")
+        if st == "working":                   # 动态版：B 帧（右爪抬起）
+            img_b = draw_frame(st, pose=1, scene=scene).resize((320, 480), Image.LANCZOS)
+            path_b = os.path.join(out, "pet_working_b.jpg")
+            q = 88
+            while True:
+                img_b.save(path_b, "JPEG", quality=q)
+                if os.path.getsize(path_b) <= 118_000 or q <= 40:
+                    break
+                q -= 8
+            print(f"{path_b}  {os.path.getsize(path_b)} bytes (q={q})")
 
 
 if __name__ == "__main__":

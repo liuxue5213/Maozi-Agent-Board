@@ -261,7 +261,7 @@ bool bgimg_receive_cfg(const char* value) {
             return true;   // 新背景已应用，调用方触发 ui_rebuild
         }
         if (!strncmp(target, "pet_", 4)) pet_loaded[0] = 0;   // 同名重传也要换新图
-        Serial.printf("ACK=IMG,%s\n", target);
+        Serial.printf("ACK=IMG,%s,%u\n", target, (unsigned)staging.length());
         return true;       // 相册/角色图落盘即可，显示时按需解码
     }
     return false;
@@ -297,6 +297,7 @@ bool petimg_decode_name(const char* name) {
     if (pet_dsc && !strcmp(pet_loaded, name)) return true;   // 已在缓冲
     char path[36];
     snprintf(path, sizeof(path), "/%s.jpg", name);
+    Serial.printf("[PETD] decode %s exists=%d\n", path, (int)LittleFS.exists(path));
     if (!LittleFS.exists(path)) return false;
     File f = LittleFS.open(path, "r");
     if (!f) return false;

@@ -1075,17 +1075,11 @@ function devPetPage(screen, ctx){
   const ps=(live.telemetry||{}).ps||'80,75,90';
   const vals=ps.split(',').map(Number);
   const names=['饱食','水分','活力'];
+  // 用户反馈：不要数值条，直接显示数字（与固件 make_pet_page 同步，
+  // 行距 24 ×3 行卡在按钮行上方）
   names.forEach((label,i)=>{
-    devLabel(screen, 12, 352+28*i, 70, label, 20, 'dev-dim');
-    const track=devAbs(el('div','dev-el'), 84, 356+28*i, 150, 10);
-    track.style.borderRadius='5px';
-    track.style.background=panelHex(draft.theme.bg);
-    track.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
-    screen.append(track);
-    const fill=devAbs(el('div','dev-el'), 0, 0, Math.max(0,Math.min(100,vals[i]||0))*1.5, 10);
-    fill.style.background=ctx.accent; fill.style.borderRadius='5px';
-    track.append(fill);
-    devLabel(screen, 240, 352+28*i, 70, String(vals[i]||0), 20, 'dev-ink');
+    devLabel(screen, 20, 354+24*i, 70, label, 18, 'dev-dim');
+    devLabel(screen, 92, 354+24*i, 70, String(vals[i]||0), 18, 'dev-ink');
   });
   ['喂食','喝水','运动'].forEach((t,i)=>{
     const btn=devAbs(el('div','dev-el'), 12+100*i, 428, 96, 44);
@@ -3433,6 +3427,34 @@ function bind(){
       await poll(); renderSyscalView();
     }catch(e){notice(e.message,true)}
   });
+
+  // ---- 场景包：列出 outputs/petpack_*/ 并整套应用（重传 8 张） ----
+  async function refreshPetPacks(){
+    const sel=$('pet-pack-select'); if(!sel)return;
+    try{
+      const d=await request('/api/petpacks');
+      sel.replaceChildren();
+      const packs=d.packs||[];
+      packs.forEach(p=>{
+        const o=el('option','',`${p.name}（${p.frames} 帧）`); o.value=p.name; sel.append(o);
+      });
+      if(!packs.length){
+        const o=el('option','','（无包——pet_artwork.py --pack 生成）'); o.value=''; sel.append(o);
+      }
+    }catch(e){}
+  }
+  $('pet-pack-apply').onclick=async()=>{
+    const name=$('pet-pack-select').value;
+    if(!name){notice('先选择场景包',true);return}
+    if(!isConnected()){notice('设备未连接',true);return}
+    notice(`正在应用场景包「${name}」…（约 20 秒）`);
+    try{
+      const r=await request('/api/petpack-apply',{name});
+      notice(r.status||`已下发 ${r.sent} 张`);
+      logHist('bg',`场景包「${name}」已应用（${r.sent} 张）`);
+    }catch(e){notice('应用失败：'+e.message,true)}
+  };
+  refreshPetPacks();
 
   // ---- 彩色角色图（图集管线）：文件名映射状态，逐张走 IMG 通道 ----
   const PET_STATES=['working','thinking','sleeping','greeting','happy','error','idle','sleepy'];

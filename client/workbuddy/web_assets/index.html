@@ -751,6 +751,14 @@
             <button type="button" class="button primary" id="pet-save">保存形象</button>
             <button type="button" class="button" id="pet-page-gen">生成「宠物」小屏页面</button>
           </div>
+          <div class="field-heading"><span>场景包（整套切换）</span></div>
+          <div class="btn-row">
+            <select id="pet-pack-select" class="text-input" style="flex:1">
+              <option value="">扫描中…</option>
+            </select>
+            <button type="button" class="button primary" id="pet-pack-apply">应用此包</button>
+          </div>
+          <p class="hint" id="pet-pack-note">包目录在 outputs/petpack_&lt;名称&gt;/（pet_artwork.py 生成），应用时整套 8 张重传设备（约 20 秒）；应用包会替换设备上的自定义形象（以包为准，想恢复自定义图重新上传即可）。</p>
           <div class="field-heading"><span>彩色角色图（图集管线）</span></div>
           <p class="hint">选 1-8 张 320×480 竖版 JPG，按文件名映射状态：
             pet_working / pet_thinking / pet_sleeping / pet_greeting / pet_happy /

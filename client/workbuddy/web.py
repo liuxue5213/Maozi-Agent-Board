@@ -186,6 +186,19 @@ def start_settings_server(app, port):
                 from . import smcpriv
                 self._json(200, smcpriv.status())
                 return
+            if path == "/api/petpacks":
+                # 场景包：列出 outputs/petpack_*/ 目录（8 状态图集，GET）
+                base = Path(__file__).resolve().parents[2] / "outputs"
+                packs = []
+                if base.is_dir():
+                    for d in sorted(base.glob("petpack_*")):
+                        if d.is_dir():
+                            frames = [f.name for f in sorted(d.glob("pet_*.jpg"))
+                                      if not f.name.endswith("_b.jpg")]
+                            packs.append({"name": d.name.replace("petpack_", ""),
+                                          "dir": str(d), "frames": len(frames)})
+                self._json(200, {"packs": packs})
+                return
             if path == "/api/snapshot":
                 # 设备实拍 PNG（无图或设备不支持时 404）
                 data = app.snapshot_bytes()
@@ -421,7 +434,47 @@ def start_settings_server(app, port):
                     self._json(200, {"enabled": enable,
                                      "state": syscal_mod.read_state(),
                                      "refreshed": refreshed})
-                elif path == "/api/open-project":
+                elif path == "/api/petpack-apply":
+                    # 应用场景包：整套 pet_<状态>.jpg 经 IMG 通道下发设备。
+                    # 单帧 ACK 偶发超时（设备端 workanim 解码与串口竞争），
+                    # 每帧最多重试 3 次并回报失败原因。
+                    base = Path(__file__).resolve().parents[2] / "outputs"
+                    name = str(data.get("name", ""))
+                    if not re.fullmatch(r"[a-z0-9_]{1,24}", name):
+                        self._json(400, {"error": "包名非法"})
+                        return
+                    d = base / f"petpack_{name}"
+                    if not d.is_dir():
+                        self._json(404, {"error": "包不存在"})
+                        return
+                    # 应用包 = 切换当前形象：清掉设备上的自定义形象，
+                    # 否则 pet_custom 优先级恒高于状态帧，包永远看不到。
+                    app.delete_album_image("pet_custom.jpg")
+                    sent, failed, reasons = 0, [], {}
+                    for st in ("working", "thinking", "sleeping", "greeting",
+                               "happy", "error", "idle", "sleepy"):
+                        f = d / f"pet_{st}.jpg"
+                        if not f.is_file():
+                            failed.append(st)
+                            reasons[st] = "包内缺帧"
+                            continue
+                        ok = False
+                        for _ in range(3):
+                            if app.send_bg_image(f.read_bytes(), f"pet_{st}.jpg"):
+                                ok = True
+                                break
+                            reasons[st] = str(getattr(app, "_last_bg_result", {})
+                                              .get("reason", "未知"))
+                            time.sleep(0.4)
+                        if ok:
+                            sent += 1
+                        else:
+                            failed.append(st)
+                    self._json(200, {"sent": sent, "failed": failed,
+                                     "reasons": reasons,
+                                     "status": f"已下发 {sent} 张（{name} 包）"})
+                    return
+                if path == "/api/inbox-open":
                     # 收件箱「打开项目」：mode=finder(默认) / terminal
                     result = app.open_task_project(str(data.get("id", "")),
                                                    str(data.get("mode", "finder")))
