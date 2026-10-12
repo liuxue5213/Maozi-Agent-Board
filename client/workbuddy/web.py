@@ -504,7 +504,8 @@ def start_settings_server(app, port):
                         "autopack": 1 if data.get("autopack", old_pet.get("autopack", 0)) else 0,
                         "break_min": break_min,
                         "day_pack": str(data.get("day_pack", old_pet.get("day_pack", "")) or ""),
-                        "night_pack": str(data.get("night_pack", old_pet.get("night_pack", "")) or "")}
+                        "night_pack": str(data.get("night_pack", old_pet.get("night_pack", "")) or ""),
+                        "weather_pack": str(data.get("weather_pack", old_pet.get("weather_pack", "")) or "")}
                     result = app.save_profile(candidate)
                     self._json(200, {"status": "已保存，待同步",
                                      "version": result["version"]})

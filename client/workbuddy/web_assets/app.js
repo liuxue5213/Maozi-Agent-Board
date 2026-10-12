@@ -2129,8 +2129,9 @@ function renderPetTab(){
   if(bo) bo.checked=!!(draft.pet?.break_min);
   if(bm){const v=draft.pet?.break_min||45;bm.value=v;
     const ov=$('pet-break-val');if(ov)ov.textContent=v+' 分钟';}
-  ['pet-pack-day','pet-pack-night'].forEach((id,i)=>{
-    const sel=$(id), v=draft.pet?.[i?'night_pack':'day_pack'];
+  ['pet-pack-day','pet-pack-night','pet-pack-weather'].forEach((id,i)=>{
+    const keys=['day_pack','night_pack','weather_pack'];
+    const sel=$(id), v=draft.pet?.[keys[i]];
     if(sel && v && [...sel.options].some(o=>o.value===v)) sel.value=v;
   });
   renderPetStats();
@@ -3507,14 +3508,16 @@ function bind(){
         autopack:$('pet-autopack')?.checked?1:0,
         break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         day_pack:$('pet-pack-day')?.value||'',
-        night_pack:$('pet-pack-night')?.value||''});
+        night_pack:$('pet-pack-night')?.value||'',
+        weather_pack:$('pet-pack-weather')?.value||''});
       draft.pet={...(draft.pet||{}), type:petCache?.type||'robot',
         name:$('pet-name').value.trim()||'帽子',
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
         autopack:$('pet-autopack')?.checked?1:0,
         break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         day_pack:$('pet-pack-day')?.value||'',
-        night_pack:$('pet-pack-night')?.value||''};
+        night_pack:$('pet-pack-night')?.value||'',
+        weather_pack:$('pet-pack-weather')?.value||''};
       notice(`宠物形象已保存（v${r.version}），同步后设备换新装`);
       poll();
     }catch(e){notice(e.message,true)}
@@ -3760,10 +3763,13 @@ function bind(){
       fillPackSelect(sel, packs, '（无包——pet_artwork.py --pack 生成）');
       fillPackSelect($('pet-pack-day'), packs, '（未设置白天包）');
       fillPackSelect($('pet-pack-night'), packs, '（未设置夜晚包）');
+      fillPackSelect($('pet-pack-weather'), packs, '（未设置雨雪包）');
       // 恢复 profile 里存的选择（draft.pet.day_pack/night_pack）
       const day=$('pet-pack-day'), night=$('pet-pack-night');
       if(day && draft.pet?.day_pack) day.value=draft.pet.day_pack;
       if(night && draft.pet?.night_pack) night.value=draft.pet.night_pack;
+      if($('pet-pack-weather') && draft.pet?.weather_pack)
+        $('pet-pack-weather').value=draft.pet.weather_pack;
       if($('pet-autopack')) $('pet-autopack').checked=!!draft.pet?.autopack;
       updatePackThumb();
     }catch(e){}

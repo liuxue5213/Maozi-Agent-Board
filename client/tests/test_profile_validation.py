@@ -323,6 +323,28 @@ class PetPackTests(unittest.TestCase):
         self.assertEqual(out["pet"]["day_pack"], "")
         self.assertEqual(out["pet"]["night_pack"], "")
 
+    def test_weather_pack_roundtrip_and_bad_name(self):
+        out = validate_profile(base(pet={"type": "cat", "name": "x",
+                                         "autopack": 1,
+                                         "weather_pack": "rainy"}))
+        self.assertEqual(out["pet"]["weather_pack"], "rainy")
+        out2 = validate_profile(base(pet={"type": "cat", "name": "x",
+                                          "weather_pack": "../x"}))
+        self.assertEqual(out2["pet"]["weather_pack"], "")
+
+    def test_precip_code_ranges(self):
+        from workbuddy.app import App
+        f = App._is_precip_code
+        self.assertTrue(f(53))    # 毛毛雨
+        self.assertTrue(f(63))    # 雨
+        self.assertTrue(f(71))    # 雪
+        self.assertTrue(f(95))    # 雷暴
+        self.assertFalse(f(0))    # 晴
+        self.assertFalse(f(2))    # 多云
+        self.assertFalse(f(45))   # 雾
+        self.assertFalse(f(None))
+        self.assertFalse(f("abc"))
+
     def test_pack_period_matches_ambient_tint_boundary(self):
         from workbuddy.app import App
         # 与固件氛围层同界：夜 22-6（本地时区构造，避免依赖机器当前时钟）

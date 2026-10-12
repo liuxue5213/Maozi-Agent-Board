@@ -816,7 +816,11 @@
             <select id="pet-pack-day" class="text-input" style="flex:1"></select>
             <select id="pet-pack-night" class="text-input" style="flex:1"></select>
           </div>
-          <p class="hint">左=白天包　右=夜晚包；到点自动整套切换（切换检查每分钟一次，断连时跳过、连上后补切）。开启后手动「应用此包」会记为当前时段的包。</p>
+          <label class="field">
+            <span>雨雪包（下雨/下雪时优先于昼夜包，可留空）</span>
+            <select id="pet-pack-weather" class="text-input"></select>
+          </label>
+          <p class="hint">左=白天包　右=夜晚包；到点自动整套切换（切换检查每分钟一次，断连时跳过、连上后补切）。配置了雨雪包时，降水天气优先用它。开启后手动「应用此包」会记为当前时段的包。</p>
           <div class="field-heading"><span>彩色角色图（图集管线）</span></div>
           <p class="hint">选 1-8 张 320×480 竖版 JPG，按文件名映射状态：
             pet_working / pet_thinking / pet_sleeping / pet_greeting / pet_happy /

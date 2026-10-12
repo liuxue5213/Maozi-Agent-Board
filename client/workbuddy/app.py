@@ -742,6 +742,27 @@ class App:
         except Exception as exc:
             self.health.event("push_fail", err=str(exc)[:32])
 
+    @staticmethod
+    def _is_precip_code(code) -> bool:
+        """Open-Meteo 天气码是否降水（雨 51-67/80-82/95-99，雪 71-77/85-86）。"""
+        try:
+            c = int(code)
+        except (TypeError, ValueError):
+            return False
+        return (51 <= c <= 67) or (71 <= c <= 77) or (80 <= c <= 82) or (c >= 95)
+
+    def _raining_now(self) -> bool:
+        """第一城市的当前天气码是否降水（无数据=False）。"""
+        try:
+            with self.weather._lock:
+                data = dict(self.weather.data)
+            cities = (self.profile.get("weather") or {}).get("cities") or []
+            name = (cities[0] or {}).get("name") if cities else ""
+            entry = data.get(name) or {}
+            return self._is_precip_code(entry.get("code"))
+        except Exception:
+            return False
+
     def _input_idle_secs(self) -> float:
         """键鼠空闲秒数。macOS 走 ioreg HIDIdleTime（纳秒）；其他平台 -1
         （不启用提醒）。结果缓存 5s，避免每秒拉一次子进程。"""
@@ -1084,13 +1105,18 @@ class App:
         period = self.pack_period(now)
         desired = str(pet.get("night_pack" if period == "night"
                               else "day_pack") or "")
+        # 跟随天气（竞品「天气氛围」）：降水时优先用雨雪包
+        if pet.get("weather_pack") and self._raining_now():
+            desired = str(pet.get("weather_pack"))
         if not desired:
             return
         st = self._pack_state()
         if st.get("pack") == desired and st.get("ok"):
             return                     # 已是目标包且完整应用过：绝不再重发
-        if now - st.get("at", 0) < 600:
-            return                     # 失败重试的 10 分钟退避
+        # 10 分钟退避只针对「同包补发」（部分帧失败的重试）；
+        # 换到不同的目标包（昼夜翻转/雨雪起止）立即切，不等退避。
+        if st.get("pack") == desired and now - st.get("at", 0) < 600:
+            return
         if not (self.link and self.link.status.startswith("connected:")):
             return
         result = self.apply_petpack(desired)
