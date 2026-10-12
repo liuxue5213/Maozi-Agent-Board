@@ -260,7 +260,13 @@ bool bgimg_receive_cfg(const char* value) {
             if (!bgimg_decode()) { reject("DECODE"); return false; }
             return true;   // 新背景已应用，调用方触发 ui_rebuild
         }
-        if (!strncmp(target, "pet_", 4)) pet_loaded[0] = 0;   // 同名重传也要换新图
+        if (!strncmp(target, "pet_", 4)) {
+            pet_loaded[0] = 0;   // 同名重传也要换新图
+            // workanim 的槽按「名字没变」跳过重解码——文件内容已被覆盖，
+            // 必须作废并原位重解码，否则 A/B 帧一新一旧来回闪（真机实况：
+            // 白天窗景与旧夜空 B 帧每 900ms 交替）。
+            workanim_invalidate();
+        }
         Serial.printf("ACK=IMG,%s,%u\n", target, (unsigned)staging.length());
         return true;       // 相册/角色图落盘即可，显示时按需解码
     }
@@ -390,3 +396,14 @@ bool workanim_decode(int slot, const char* name) {
 
 const lv_img_dsc_t* workanim_source(int slot) { return wa_dsc[slot]; }
 bool workanim_ready(int slot) { return wa_dsc[slot] != nullptr; }
+
+void workanim_invalidate() {
+    // 只摘 dsc 让 prepare 语义失效；px 缓冲保留复用，decode 原地重画。
+    // 立即重解码（文件刚落盘）：翻页计时器下一拍显示的就是新帧。
+    for (int s = 0; s < 2; ++s) {
+        wa_name[s][0] = 0;
+        wa_dsc[s] = nullptr;
+    }
+    workanim_decode(0, "pet_working.jpg");
+    workanim_decode(1, "pet_working_b.jpg");
+}

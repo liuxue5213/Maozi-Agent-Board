@@ -32,6 +32,7 @@ struct WidgetView {
     WidgetKind kind = W_INVALID;
     lv_obj_t *root = nullptr, *main = nullptr, *sub = nullptr;
     lv_obj_t* extra[8] = {};
+    lv_obj_t* ac_rows[5] = {};        // AI 用量卡列表模式的行（多模型同屏）
     lv_obj_t* rows[5] = {};
     uint8_t row_slot[5] = {};
     // 工具页（filter 非空）的行文本：5 行 × (工具名 + 项目·用时)。
@@ -1177,6 +1178,15 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
         lv_obj_set_style_text_align(view.extra[7], LV_TEXT_ALIGN_RIGHT, 0);
         return;
     }
+    if (view.kind == W_AI_COST && !compact) {
+        // 数据看板列表模式：多行同屏（用户反馈「要同时显示多个模型，
+        // 而不是一次只轮到一个 GLM」）。行数随卡高放，放不下的指标顺延。
+        uint8_t rows = (uint8_t)constrain((h - 56) / 30, 1, 5);
+        for (uint8_t i = 0; i < rows; ++i)
+            view.ac_rows[i] = label1(view.root, "", 20, text_color,
+                                     12, 44 + i * 30, w - 24);
+        return;
+    }
     view.main = label1(view.root, "--", compact ? 20 : 28, text_color,
                        12, compact ? 44 : 68, w - 24);
     if (!compact) view.sub = label1(view.root, "", 20, sub_color, 12, h - 40, w - 24);
@@ -1871,15 +1881,58 @@ void render_generic(WidgetView& view) {
         else snprintf(sub, sizeof(sub), "高 %.0f°  低 %.0f°", latest.wx_hi, latest.wx_lo);
         break;
     case W_AI_COST: {
+        // 列表模式（非紧凑卡）：多行同屏——今日+本轮一行、模型一行、
+        // 每模型一行（勾选序即行序，无数据的行跳过），一次看全。
+        if (view.ac_rows[0]) {
+            char rows[5][48] = {};
+            uint8_t n = 0;
+            bool want[4] = {};               // 按勾选槽展开
+            for (uint8_t i = 0; i < g_profile.ac_slot_n && i < 4; ++i)
+                want[g_profile.ac_slots[i] & 3] = true;
+            long k = latest.day_tok_total / 1000;
+            if (latest.day_tok_total < 0) {
+                strcpy(rows[n++], "今日暂无用量");
+            } else {
+                char row0[48] = "";
+                if (want[0]) {
+                    if (k >= 1000) snprintf(row0, sizeof(row0), "今日 %.1fM", k / 1000.0);
+                    else snprintf(row0, sizeof(row0), "今日 %ldk", k);
+                }
+                if (want[1] && latest.ai_tok_out > 0) {
+                    char t2[24];
+                    snprintf(t2, sizeof(t2), "%s本轮 %.1fk",
+                             row0[0] ? " · " : "", latest.ai_tok_out / 1000.0);
+                    strncat(row0, t2, sizeof(row0) - strlen(row0) - 1);
+                }
+                if (row0[0]) strncpy(rows[n++], row0, sizeof(rows[0]) - 1);
+                if (want[2] && latest.ai_model[0] && n < 5)
+                    snprintf(rows[n++], sizeof(rows[0]), "模型 %s", latest.ai_model);
+                if (want[3])
+                    for (uint8_t m = 0; m < 3 && n < 5; ++m) {
+                        if (latest.ai_by_tok[m] <= 0 || !latest.ai_by_model[m][0]) continue;
+                        const char* full = latest.ai_by_model[m];
+                        const char* dash = strchr(full, '-');
+                        char short_name[9];
+                        snprintf(short_name, sizeof(short_name), "%.*s",
+                                 dash ? (int)(dash - full) : 8, full);
+                        long mt = latest.ai_by_tok[m];
+                        if (mt >= 1000000) snprintf(rows[n++], sizeof(rows[0]), "%s %.1fM", short_name, mt / 1e6);
+                        else snprintf(rows[n++], sizeof(rows[0]), "%s %ldk", short_name, mt / 1000);
+                    }
+                if (!n) strcpy(rows[n++], "今日 0k");
+            }
+            for (uint8_t i = 0; i < 5; ++i)
+                set_text(view.ac_rows[i], rows[i][0] ? rows[i] : "");
+            line[0] = 0;
+            break;
+        }
         if (latest.day_tok_total < 0) {
             strcpy(line, "今日暂无用量");
             strcpy(sub, "AI 会话活动后显示");
             break;
         }
-        // 竞品看板「内容组合/显示指标」：勾选槽位按用户勾选序 + 自动轮换/
-        // 固定第一项。槽位可用性还受运行时数据约束（无本轮/无模型名时该槽
-        // 跳过，固定模式顺延到下一个可用槽）；槽 3=分模型消耗，展开成每
-        // 模型一槽（AIB0..2 降序，最多 3 槽）。
+        // 紧凑小卡保留 3 秒轮换（竞品看板的滚动指标）：槽位按勾选序，
+        // 无数据的槽运行时跳过；槽 3=分模型消耗展开为每模型一槽。
         uint8_t avail[6] = {};
         uint8_t n_avail = 0;
         long k = latest.day_tok_total / 1000;

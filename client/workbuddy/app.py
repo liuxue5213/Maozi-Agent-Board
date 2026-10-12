@@ -971,13 +971,33 @@ class App:
                 sent += 1
             else:
                 failed.append(st)
-        return {"sent": sent, "failed": failed, "reasons": reasons}
+        # 动画 B 帧：包里有就一并下发——workanim 每 900ms 交替 working/
+        # working_b，只更新 A 帧会让 B 帧残留旧画风（白天包配夜空 B 帧 =
+        # 用户看到的「白天夜晚不断闪烁」）
+        b = d / "pet_working_b.jpg"
+        if b.is_file():
+            okb = False
+            for _ in range(3):
+                if self.send_bg_image(b.read_bytes(), "pet_working_b.jpg"):
+                    okb = True
+                    break
+                reasons["working_b"] = str(getattr(self, "_last_bg_result", {})
+                                           .get("reason", "未知"))
+                time.sleep(0.4)
+            if okb:
+                sent += 1
+            else:
+                failed.append("working_b")   # B 帧失败必须计入，否则 ok=true 永不重发
+        return {"sent": sent, "failed": failed, "reasons": reasons,
+                "ok": not failed}
 
-    def mark_pack_applied(self, name: str, period: str) -> None:
+    def mark_pack_applied(self, name: str, period: str,
+                          ok: bool = True) -> None:
         try:
             PACK_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
             PACK_STATE_PATH.write_text(json.dumps(
-                {"pack": name, "period": period, "at": time.time()}),
+                {"pack": name, "period": period, "ok": bool(ok),
+                 "at": time.time()}),
                 encoding="utf-8")
         except OSError:
             pass
@@ -1004,13 +1024,16 @@ class App:
         if not desired:
             return
         st = self._pack_state()
-        if st.get("pack") == desired and now - st.get("at", 0) < 600:
-            return
+        if st.get("pack") == desired and st.get("ok"):
+            return                     # 已是目标包且完整应用过：绝不再重发
+        if now - st.get("at", 0) < 600:
+            return                     # 失败重试的 10 分钟退避
         if not (self.link and self.link.status.startswith("connected:")):
             return
         result = self.apply_petpack(desired)
         self.health.event("petpack_auto", pack=desired, sent=result["sent"])
-        self.mark_pack_applied(desired, period)   # 失败也记：at 提供重试退避
+        # 失败也记 ok=False：at 提供 10 分钟重试退避，成功后永不再发
+        self.mark_pack_applied(desired, period, ok=result.get("ok", False))
 
     def delete_album_image(self, name: str) -> bool:
         """删除相册/角色图（name = sv1..sv8.jpg 或 pet_<状态>.jpg，白名单同上传）。"""

@@ -34,4 +34,5 @@ const char* petimg_loaded();   // 当前缓冲对应的帧名（空=无）
 // working 动画双缓冲：pet_working.jpg(A) + pet_working_b.jpg(B) 交替
 bool workanim_decode(int slot, const char* name);
 bool workanim_ready(int slot);
+void workanim_invalidate();   // pet_ 帧文件被覆盖后作废缓冲并原位重解码
 const lv_img_dsc_t* workanim_source(int slot);
