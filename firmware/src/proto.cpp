@@ -276,6 +276,13 @@ void Proto::handle(const char* line) {
         // 走 5 万多行、限速下要 10 分钟。上限取 default_16MB.csv 的
         // app0 槽 0x640000=6.25MB——3MB 旧上限比槽小，实际固件 4.3MB 被拒。
         if (!strncmp(v, "BEGIN,", 6)) {
+            // 上一次传输若因客户端退出/串口断开停在半途，Update 仍占用目标
+            // 分区；新的 BEGIN 必须先中止旧事务，否则会永久 NAK=BEGIN，
+            // 直到设备被人工复位。
+            if (ota_active) {
+                Update.abort();
+                ota_active = false;
+            }
             ota_size = strtoul(strchr(v, ',') + 1, nullptr, 10);
             if (!ota_size || ota_size > 0x640000 || !Update.begin(ota_size)) {
                 Serial.println("NAK=OTA,BEGIN"); return;
@@ -287,9 +294,12 @@ void Proto::handle(const char* line) {
         if (!strncmp(v, "DATA,", 5) && ota_active) {
             const char* b64_start = v + 5;
             while (*b64_start == ',') ++b64_start;
-            if (strtoul(b64_start, (char**)&b64_start, 10) != ota_seq) {
+            uint32_t received_seq = strtoul(b64_start, (char**)&b64_start, 10);
+            if (received_seq != ota_seq) {
                 Update.abort(); ota_active = false;
-                Serial.println("NAK=OTA,SEQ"); return;
+                Serial.printf("NAK=OTA,SEQ:%lu/%lu\n",
+                              (unsigned long)received_seq, (unsigned long)ota_seq);
+                return;
             }
             while (*b64_start == ',') ++b64_start;
             uint8_t bin[516]; size_t bin_len = 0;
@@ -298,8 +308,14 @@ void Proto::handle(const char* line) {
                 Update.abort(); ota_active = false;
                 Serial.println("NAK=OTA,DECODE"); return;
             }
-            Update.write(bin, bin_len);
+            if (Update.write(bin, bin_len) != bin_len) {
+                Update.abort(); ota_active = false;
+                Serial.println("NAK=OTA,WRITE"); return;
+            }
             ++ota_seq;
+            // Flash 擦除会偶发阻塞数百毫秒，连 8KB UART 缓冲也可能在此时
+            // 丢行。逐片确认形成严格背压，可靠性优先于升级速度。
+            Serial.printf("ACK=OTA,DATA:%lu\n", (unsigned long)ota_seq);
             return;
         }
         if (!strncmp(v, "END", 3) && ota_active) {
@@ -341,6 +357,11 @@ void Proto::handle(const char* line) {
     else if (!strcmp(key, "UPTIME"))   t.uptime = (uint32_t)atol(v);
     else if (!strcmp(key, "VOL"))      t.vol = atoi(v);
     else if (!strcmp(key, "MUT"))      t.mut = atoi(v);
+    else if (!strcmp(key, "AIOUT")) {
+        t.ai_tok_out = atol(v);
+        dirty = true;
+        return;
+    }
     else if (!strcmp(key, "INBOX")) {
         int n = atoi(v);
         if (n != t.inbox) { t.inbox = n; t.inbox_changed = true; }

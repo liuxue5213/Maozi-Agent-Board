@@ -17,14 +17,15 @@ def _day_of(iso: str) -> str:
 
 
 def _zcode_record_usage(d: dict):
-    """从一条 rollout 记录提取 (date, total_tokens, model) 或 None。"""
+    """从一条 rollout 记录提取 (date, total_tokens, out_tokens, model) 或 None。"""
     resp = d.get("response") or {}
     usage = resp.get("usage") or {}
     total = int(usage.get("totalTokens") or 0)
     if not total:
         return None
+    out = int(usage.get("outputTokens") or 0)
     model = ((d.get("model") or {}).get("modelId")) or ""
-    return _day_of(d.get("completedAt", "")), total, model
+    return _day_of(d.get("completedAt", "")), total, out, model
 
 
 def _claude_record_usage(d: dict):
@@ -36,7 +37,8 @@ def _claude_record_usage(d: dict):
              + int(usage.get("cache_read_input_tokens") or 0) + int(usage.get("output_tokens") or 0))
     if not total:
         return None
-    return _day_of(d.get("timestamp", "")), total, msg.get("model") or ""
+    out = int(usage.get("output_tokens") or 0)
+    return _day_of(d.get("timestamp", "")), total, out, msg.get("model") or ""
 
 
 class _IncFile:
@@ -83,6 +85,9 @@ class UsageScanner:
         self._lock = threading.Lock()
         self.today = {"total": 0}
         self.models: dict[str, str] = {}      # tool -> 最近模型名
+        # 会话级今日累计（客户端启动后增量；sid -> {"total","out"}）——
+        # 供「本轮 Token」显示。重启清零：语义 = 本次运行期间该会话的用量。
+        self.by_sid: dict[str, dict] = {}
         self._thread = None
         self._stop = False
         self.last_error = ""
@@ -96,7 +101,8 @@ class UsageScanner:
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"today": dict(self.today), "models": dict(self.models)}
+            return {"today": dict(self.today), "models": dict(self.models),
+                    "by_sid": {k: dict(v) for k, v in self.by_sid.items()}}
 
     def _loop(self):
         time.sleep(3)
@@ -125,9 +131,14 @@ class UsageScanner:
                         continue
                     if not rec:
                         continue
-                    day, r_total, model = rec
+                    day, r_total, r_out, model = rec
                     if day == today:
                         total += r_total
+                        sid = f.stem.replace("model-io-", "")
+                        acc = self.by_sid.setdefault(
+                            sid, {"total": 0, "out": 0})
+                        acc["total"] += r_total
+                        acc["out"] += r_out
                     if model:
                         models["zcode"] = model
 
@@ -148,9 +159,14 @@ class UsageScanner:
                         continue
                     if not rec:
                         continue
-                    day, r_total, model = rec
+                    day, r_total, r_out, model = rec
                     if day == today:
                         total += r_total
+                        sid = f.stem
+                        acc = self.by_sid.setdefault(
+                            sid, {"total": 0, "out": 0})
+                        acc["total"] += r_total
+                        acc["out"] += r_out
                     if model:
                         models["claude"] = model
 

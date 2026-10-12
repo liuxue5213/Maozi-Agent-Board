@@ -216,6 +216,7 @@ class AIWatcher:
                 "project": sanitize_project(a.project),
                 "err": a.err or "",
                 "path": getattr(a, "path", "") or "",
+                "sid": a.sid,
             })
         # 清理过期的 burst / trace 记录（_last_state 随会话消失自然失活）
         for k in [k for k, v in self._bursts.items() if now - v > 3600]:

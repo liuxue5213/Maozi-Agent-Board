@@ -1080,6 +1080,11 @@ class App:
                 model = (snap["models"].get(focus["tool"]) or "")[:15]
                 if model:
                     t["aiu"] = f"{focus['tool']},{model},{focus['elapsed']}"
+                # 焦点会话本轮 token（ai_cost 卡「本轮 X.Xk」，AIOUT= 下行）：
+                # usage 按会话文件累计，sid 与 aiwatch 会话 id 同源
+                acc = (snap.get("by_sid") or {}).get(focus.get("sid") or "")
+                if acc and acc.get("out"):
+                    t["aiout"] = str(acc["out"])
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
         t["remind"] = self._next_remind(now)

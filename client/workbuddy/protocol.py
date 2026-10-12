@@ -14,7 +14,7 @@ _ORDER = [
     "disk", "diskfree", "disktotal", "bat",
     "netrx", "nettx", "uptime", "wx",
     "vol", "mut",
-    "inbox",
+    "inbox", "aiout",
     # 单任务镜像字段（aistate/aitool/aitask/aiprog/aitime/aierr）已下线：
     # 固件从未渲染它们（grep 证实），内容与 ai0 完全重复，白占约 70 字节/帧。
     "temp", "hum",
@@ -101,6 +101,8 @@ def parse_uplink(line: str):
         if len(fields) == 3:
             return {"config_reply": {"ok": key == "ACK", "version": fields[1],
                                      "reason": fields[2]}}
+    if key in ("ACK", "NAK") and value.startswith("OTA,"):
+        return {"ota_reply": {"ok": key == "ACK", "reason": value[4:]}}
     if key == "FW":
         return {"firmware": value}
     if key == "SNAP":

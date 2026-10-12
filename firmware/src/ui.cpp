@@ -1778,9 +1778,9 @@ void render_generic(WidgetView& view) {
         long k = latest.day_tok_total / 1000;
         if (k >= 1000) snprintf(line, sizeof(line), "今日 %.1fM", k / 1000.0);
         else snprintf(line, sizeof(line), "今日 %ldk", k);
-        if (latest.ai_model[0] && latest.ai_tok_out > 0)
-            snprintf(sub, sizeof(sub), "%s · 本轮 %.1fk", latest.ai_model,
-                     latest.ai_tok_out / 1000.0);
+        if (latest.ai_tok_out > 0)
+            snprintf(sub, sizeof(sub), "本轮 %.1fk · %s",
+                     latest.ai_tok_out / 1000.0, latest.ai_model);
         else if (latest.ai_model[0])
             snprintf(sub, sizeof(sub), "%s", latest.ai_model);
         else
