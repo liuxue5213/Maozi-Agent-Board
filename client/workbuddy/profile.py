@@ -250,7 +250,12 @@ def validate_profile(raw):
                     y = max(0, min(480 - h, int(c.get("y", 0))))
                 except (TypeError, ValueError):
                     x = y = 0
-                entry = {"t": t, "x": x, "y": y, "big": big, "hidden": hidden}
+                try:
+                    group = max(0, min(99, int(c.get("group", 0) or 0)))
+                except (TypeError, ValueError):
+                    group = 0
+                entry = {"t": t, "x": x, "y": y, "big": big, "hidden": hidden,
+                         "group": group}
                 if t == "text":
                     # 自定义文字：≤24 字节（8 汉字）；color 0=正文 1=强调
                     # 2=次要 3=警示（固件按主题色解析）

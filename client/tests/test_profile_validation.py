@@ -221,6 +221,16 @@ class PoemsTests(unittest.TestCase):
         out = validate_profile(base(poems=["空山新雨后"]))
         self.assertEqual(out["poems"], ["空山新雨后"])
 
+    def test_free_comp_group_passthrough(self):
+        out = validate_profile(base(pages=[
+            {"id": "f", "title": "自由", "layout": "free", "widgets": [],
+             "components": [
+                 {"t": "clock", "x": 0, "y": 0, "group": 3},
+                 {"t": "date", "x": 0, "y": 70, "group": 3},
+                 {"t": "sys", "x": 0, "y": 140, "group": 999}]}]))
+        comps = out["pages"][0]["components"]
+        self.assertEqual([c["group"] for c in comps], [3, 3, 99])  # 钳位 99
+
     def test_builtin_pool_integrity(self):
         from workbuddy.poems import BUILTIN
         from workbuddy.profile import _label

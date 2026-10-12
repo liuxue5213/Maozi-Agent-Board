@@ -1864,10 +1864,10 @@ function renderFreeEditor(page, root){
     if(page._undo.length>50) page._undo.shift(); page._redo.length=0; };
   const undo=()=>{ if(!page._undo.length)return notice('没有可撤销的操作',true);
     page._redo.push(JSON.stringify(page.components));
-    page.components=JSON.parse(page._undo.pop()); sel=-1; markDirty(); renderInspector(); };
+    page.components=JSON.parse(page._undo.pop()); setSel([]); markDirty(); renderInspector(); };
   const redo=()=>{ if(!page._redo.length)return notice('没有可重做的操作',true);
     page._undo.push(JSON.stringify(page.components));
-    page.components=JSON.parse(page._redo.pop()); sel=-1; markDirty(); renderInspector(); };
+    page.components=JSON.parse(page._redo.pop()); setSel([]); markDirty(); renderInspector(); };
   root.replaceChildren();
   const wrap=el('div');
   const canvas=el('div');
@@ -1875,9 +1875,18 @@ function renderFreeEditor(page, root){
     `height:${Math.round(480*SCALE)}px;background:linear-gradient(180deg,#0b1322,#0d1730);`+
     `border-radius:10px;border:1px solid #2a3a52;overflow:hidden;touch-action:none;user-select:none`;
   wrap.append(canvas);
-  let sel=-1;
+  // 多选状态挂 page._sel：markDirty 每次都同步重建画布，
+  // 不持久化的选择会在第一次拖拽/改动后丢失（真实用户多选必坏）
+  let sel = Array.isArray(page._sel) ? [...page._sel] : [];
+  const setSel = v => { sel = [...v]; page._sel = [...v]; paintSel(); };
+  const membersOf=i=>{                 // 点组成员（含自身）
+    const g=page.components[i]?.group;
+    if(!g)return [i];
+    const m=[]; page.components.forEach((c,j)=>{if(c.group===g)m.push(j)});
+    return m;
+  };
   let paintSel=()=>{[...canvas.children].forEach((b,i)=>{
-    b.style.borderColor = i===sel ? '#57C8F5' : 'rgba(87,200,245,.35)';
+    b.style.borderColor = sel.includes(i) ? '#57C8F5' : 'rgba(87,200,245,.35)';
   });};
   page.components.forEach((c,i)=>{
     const [w,h]=(c.big&&BIG[c.t])?BIG[c.t]:(SIZE[c.t]||[120,30]);
@@ -1888,20 +1897,38 @@ function renderFreeEditor(page, root){
       `font-size:12px;color:#cfe3ff;background:rgba(20,34,56,.72);`+
       `cursor:${c.lock?'not-allowed':'grab'};${c.hidden?'opacity:.4;':''}`;
     b.addEventListener('pointerdown', ev=>{
-      ev.preventDefault(); sel=i; paintSel();
+      ev.preventDefault();
+      if(ev.shiftKey){                       // Shift 点击：加入/移出多选
+        setSel(sel.includes(i) ? sel.filter(k=>k!==i) : [...sel, i]);
+        return;
+      }
+      setSel(membersOf(i));                  // 点组员=整组选中
       if(c.lock){ notice('组件已锁定，先解锁再拖动', true); return; }
-      const sx=ev.clientX, sy=ev.clientY, ox=c.x, oy=c.y;
+      const moving=[...new Set([...sel, i])].filter(k=>!page.components[k].lock);
+      const origins=moving.map(k=>({k, x:page.components[k].x, y:page.components[k].y}));
+      const sx=ev.clientX, sy=ev.clientY;
       const snap=v=>Math.round(v/4)*4;   // 4px 网格吸附（竞品「吸附/网格」）
+      const dims=k=>(page.components[k].big&&BIG[page.components[k].t])?BIG[page.components[k].t]:(SIZE[page.components[k].t]||[120,30]);
       const move=ev2=>{
-        c.x=Math.max(0,Math.min(320-SIZE[c.t][0], snap(ox+Math.round((ev2.clientX-sx)/SCALE))));
-        c.y=Math.max(0,Math.min(480-SIZE[c.t][1], snap(oy+Math.round((ev2.clientY-sy)/SCALE))));
-        b.style.left=c.x*SCALE+'px'; b.style.top=c.y*SCALE+'px';
-        b.textContent=`${NAME[c.t]} ${c.x},${c.y}`;
+        const dx=snap(Math.round((ev2.clientX-sx)/SCALE));
+        const dy=snap(Math.round((ev2.clientY-sy)/SCALE));
+        origins.forEach(o=>{
+          const cc=page.components[o.k], [w,h]=dims(o.k);
+          cc.x=Math.max(0,Math.min(320-w, o.x+dx));
+          cc.y=Math.max(0,Math.min(480-h, o.y+dy));
+        });
+        moving.forEach((k,j)=>{
+          const bb=canvas.children[j];
+          bb.style.left=page.components[k].x*SCALE+'px';
+          bb.style.top=page.components[k].y*SCALE+'px';
+          bb.textContent=`${NAME[page.components[k].t]} ${page.components[k].x},${page.components[k].y}`;
+        });
       };
       const up=()=>{
         document.removeEventListener('pointermove',move);
         document.removeEventListener('pointerup',up);
-        b.textContent=NAME[c.t]; markDirty();
+        moving.forEach(k=>{canvas.children[k].textContent=NAME[page.components[k].t]});
+        if(moving.length>1)markDirty(); else markDirty();
       };
       document.addEventListener('pointermove',move);
       document.addEventListener('pointerup',up);
@@ -1912,7 +1939,8 @@ function renderFreeEditor(page, root){
   const form=el('div');
   const syncForm=()=>{
     form.replaceChildren();
-    const c=page.components[sel];
+    if(sel.length!==1)return;
+    const c=page.components[sel[0]];
     if(!c||c.t!=='text')return;
     const ti=el('input','text-input'); ti.value=c.text||''; ti.maxLength=8;
     ti.placeholder='自定义文字（≤8 汉字）';
@@ -1928,58 +1956,79 @@ function renderFreeEditor(page, root){
   const origPaint=paintSel;
   paintSel=()=>{origPaint();syncForm();};
   paintSel();
-  const bar=el('div','btn-row');
-  const del=el('button','button','删除选中组件');
+  const bar=el('div','btn-row'); bar.style.flexWrap='wrap';
+  const need=()=>{ if(!sel.length){notice('先在画布上点选组件（Shift+点击可多选）',true);return true} return false };
+  const del=el('button','button','删除');
   del.onclick=()=>{
-    if(sel<0)return notice('先在画布上点选一个组件',true);
+    if(need())return;
     pushUndo();
-    page.components.splice(sel,1); sel=-1; markDirty(); renderInspector();
+    page.components=page.components.filter((_,i)=>!sel.includes(i));
+    setSel([]); markDirty(); renderInspector();
   };
   const clear=el('button','button','清空画布');
-  clear.onclick=()=>{pushUndo();page.components=[];sel=-1;markDirty();renderInspector()};
+  clear.onclick=()=>{pushUndo();page.components=[];setSel([]);markDirty();renderInspector()};
   const style=el('button','button','大字 / 常规');
   style.onclick=()=>{
-    if(sel<0)return notice('先在画布上点选一个组件',true);
-    const c=page.components[sel];
-    if(!BIG[c.t])return notice('该组件暂无样式档（时间/天气支持大字）',true);
+    if(need())return;
+    const targets=sel.map(i=>page.components[i]).filter(c=>BIG[c.t]);
+    if(!targets.length)return notice('选中组件无样式档（时间/天气支持大字）',true);
     pushUndo();
-    c.big=c.big?0:1;
-    const dims=c.big?BIG[c.t]:SIZE[c.t];
-    c.x=Math.max(0,Math.min(320-dims[0],c.x));
-    c.y=Math.max(0,Math.min(480-dims[1],c.y));
+    const on=targets.some(c=>!c.big);
+    targets.forEach(c=>{ if(!BIG[c.t])return; c.big=on?1:0;
+      const dims=c.big?BIG[c.t]:SIZE[c.t];
+      c.x=Math.max(0,Math.min(320-dims[0],c.x));
+      c.y=Math.max(0,Math.min(480-dims[1],c.y)); });
     markDirty(); renderInspector();
   };
   const dup=el('button','button','复制');
   dup.onclick=()=>{
-    if(sel<0)return notice('先在画布上点选一个组件',true);
-    if(page.components.length>=8)return notice('自由页最多 8 个组件',true);
+    if(need())return;
+    const room=8-page.components.length;
+    if(sel.length>room)return notice(`自由页最多 8 个组件（剩 ${room} 个位置）`,true);
     pushUndo();
-    const src=page.components[sel];
-    const copy={...src, x:Math.min(319-SIZE[src.t][0], src.x+12),
-                y:Math.min(479-SIZE[src.t][1], src.y+12)};
-    page.components.splice(sel+1,0,copy); sel++; markDirty(); renderInspector();
+    const copies=sel.map(i=>{ const src=page.components[i];
+      return {...src, x:Math.min(319-SIZE[src.t][0], src.x+12),
+              y:Math.min(479-SIZE[src.t][1], src.y+12)}; });
+    page.components.push(...copies); setSel([]); markDirty(); renderInspector();
   };
   const hide=el('button','button','隐藏/显示');
   hide.onclick=()=>{
-    if(sel<0)return notice('先在画布上点选一个组件',true);
+    if(need())return;
     pushUndo();
-    const c=page.components[sel]; c.hidden=c.hidden?0:1;
+    const on=sel.some(i=>!page.components[i].hidden);
+    sel.forEach(i=>{page.components[i].hidden=on?1:0});
     markDirty(); renderInspector();
   };
   const lock=el('button','button','锁定/解锁');
   lock.onclick=()=>{
-    if(sel<0)return notice('先在画布上点选一个组件',true);
+    if(need())return;
     pushUndo();
-    const c=page.components[sel]; c.lock=c.lock?0:1;
+    const on=sel.some(i=>!page.components[i].lock);
+    sel.forEach(i=>{page.components[i].lock=on?1:0});
+    markDirty(); renderInspector();
+  };
+  const group=el('button','button','群组');
+  group.onclick=()=>{
+    if(sel.length<2)return notice('Shift+点击选中 ≥2 个组件再群组',true);
+    pushUndo();
+    const gid=Math.max(0,...page.components.map(c=>c.group||0))+1;
+    sel.forEach(i=>{page.components[i].group=gid});
+    markDirty(); renderInspector();
+  };
+  const ungroup=el('button','button','拆开');
+  ungroup.onclick=()=>{
+    if(need())return;
+    pushUndo();
+    sel.forEach(i=>{page.components[i].group=0});
     markDirty(); renderInspector();
   };
   const mv=(d)=>{
-    if(sel<0)return notice('先在画布上点选一个组件',true);
-    const j=sel+d;
+    if(sel.length!==1)return notice('上移/下移需要恰好选中一个组件',true);
+    const j=sel[0]+d;
     if(j<0||j>=page.components.length)return notice('已到边界',true);
     pushUndo();
-    [page.components[sel],page.components[j]]=[page.components[j],page.components[sel]];
-    sel=j; markDirty(); renderInspector();
+    [page.components[sel[0]],page.components[j]]=[page.components[j],page.components[sel[0]]];
+    setSel([j]); markDirty(); renderInspector();
   };
   const up1=el('button','button','上移');
   up1.onclick=()=>mv(-1);
@@ -1989,14 +2038,14 @@ function renderFreeEditor(page, root){
   un.onclick=undo;
   const re=el('button','button','重做');
   re.onclick=redo;
-  bar.append(del,dup,hide,lock,up1,down1,un,re,clear);
+  bar.append(del,dup,hide,lock,group,ungroup,up1,down1,un,re,clear);
   wrap.append(form);
   canvas.tabIndex=0;
   canvas.addEventListener('keydown',ev=>{
     if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){ev.preventDefault();undo()}
     else if((ev.ctrlKey||ev.metaKey)&&(ev.key==='y'||(ev.key==='Z'&&ev.shiftKey))){ev.preventDefault();redo()}
   });
-  wrap.append(el('p','hint','拖动组件摆位（4px 吸附，对齐设备像素）；点选后可删除或切「大字/常规」样式；Ctrl+Z 撤销、Ctrl+Y 重做。改动走「保存草稿 → 应用到设备」。'),bar);
+  wrap.append(el('p','hint','拖动摆位（4px 吸附）；Shift+点击多选，点组成员整组选中，可群组/拆开；选中后删除/隐藏/锁定/大字批量生效；Ctrl+Z 撤销、Ctrl+Y 重做。改动走「保存草稿 → 应用到设备」。'),bar);
   root.append(wrap);
 }
 function renderInspector() {
@@ -3299,7 +3348,7 @@ function bind(){
                    {t:'lunar',x:8,y:166},{t:'sys',x:20,y:240});
       }
     }
-    markDirty();
+    markDirty(); renderPalette(); renderInspector();
   };
   $('duplicate-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);const copy=structuredClone(current());copy.id=uniqueId('p');copy.title+=' 副本';draft.pages.splice(selected+1,0,copy);selected++;markDirty()};
   $('delete-page').onclick=()=>{if(draft.pages.length===1)return notice('至少保留 1 页',true);draft.pages.splice(selected,1);selected=Math.max(0,selected-1);markDirty()};
