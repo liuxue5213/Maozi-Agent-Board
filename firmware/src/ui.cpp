@@ -970,18 +970,19 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    // 三条状态条（饱食/水分/活力），PS 遥测实时驱动
+    // 三条状态条（饱食/水分/活力），PS 遥测实时驱动。
+    // 布局压实到底部（y352-476）：角色图/像素宠物的主体在中上部完整展示，
+    // 状态条与按钮不再切断宠物（用户反馈「宠物会被数值切断」）。
     static const char* names[3] = {"饱食", "水分", "活力"};
     for (int i = 0; i < 3; ++i) {
-        label1(screen, names[i], 20, sub_color, 24, 240 + i * 30, 60);
-        lv_obj_t* track = pet_rect(screen, 84, 244 + i * 30, 170, 10, 5, 0x0E1B26);
-        view.pm_fill[i] = pet_rect(track, 0, 0, 170, 10, 5, accent);
-        view.pm_val[i] = label(screen, "--", 20, text_color, 262, 240 + i * 30, 44);
+        label1(screen, names[i], 20, sub_color, 12, 352 + i * 28, 70);
+        lv_obj_t* track = pet_rect(screen, 84, 356 + i * 28, 150, 10, 5, 0x0E1B26);
+        view.pm_fill[i] = pet_rect(track, 0, 0, 150, 10, 5, accent);
+        view.pm_val[i] = label(screen, "--", 20, text_color, 240, 352 + i * 28, 70);
     }
-    button(screen, "喂食", 12, 344, 92, 44, pet_action_cb, (void*)"feed");
-    button(screen, "喝水", 114, 344, 92, 44, pet_action_cb, (void*)"water");
-    button(screen, "运动", 216, 344, 92, 44, pet_action_cb, (void*)"play");
-    label1(screen, "状态保存在电脑，互动立即生效", 20, sub_color, 10, 396, 300);
+    button(screen, "喂食", 12, 428, 96, 44, pet_action_cb, (void*)"feed");
+    button(screen, "喝水", 112, 428, 96, 44, pet_action_cb, (void*)"water");
+    button(screen, "运动", 212, 428, 96, 44, pet_action_cb, (void*)"play");
 }
 
 /* 氛围层：按时段与天气给角色场景叠色，让静态图有"活"的气息。
