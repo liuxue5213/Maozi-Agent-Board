@@ -234,13 +234,15 @@ def validate_profile(raw):
                     big = 0
                 if big and t not in big_sizes:
                     big = 0
+                hidden = 1 if int(c.get("hidden", 0) or 0) else 0
                 w, h = big_sizes[t] if big else sizes[t]
                 try:
                     x = max(0, min(320 - w, int(c.get("x", 0))))
                     y = max(0, min(480 - h, int(c.get("y", 0))))
                 except (TypeError, ValueError):
                     x = y = 0
-                out_comps.append({"t": t, "x": x, "y": y, "big": big})
+                out_comps.append({"t": t, "x": x, "y": y, "big": big,
+                                  "hidden": hidden})
             out["pages"].append({"id": pid, "title": _label(page.get("title", ""), 24),
                                  "layout": "free", "widgets": [],
                                  "filter": "", "city": "",

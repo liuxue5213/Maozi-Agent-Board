@@ -196,6 +196,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
                     else continue;
                     dst.comps[cn].t = code;
                     dst.comps[cn].big = (c["big"] | 0) ? 1 : 0;
+                    dst.comps[cn].hidden = (c["hidden"] | 0) ? 1 : 0;
                     dst.comps[cn].x = (uint16_t)constrain((int)(c["x"] | 0), 0, 319);
                     dst.comps[cn].y = (uint16_t)constrain((int)(c["y"] | 0), 0, 479);
                     ++cn;

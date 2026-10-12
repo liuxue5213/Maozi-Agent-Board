@@ -997,6 +997,7 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
     pet_free_used = 0;
     for (uint8_t i = 0; i < config.comp_n && i < 8; ++i) {
         const FreeComp& c = config.comps[i];
+        if (c.hidden) { page.free_t[i] = 255; page.free_n = i + 1; continue; }
         if (c.t == 6) {
             // AI 用量：透明容器内 3 行指标 + 1 行收件箱摘要
             lv_obj_t* box = lv_obj_create(screen);
@@ -1054,6 +1055,7 @@ void render_free_page(PageView& page, const char* tb) {
     const char* st = latest.tasks[0].used ? latest.tasks[0].state : "IDLE";
     for (uint8_t i = 0; i < page.free_n && i < 8; ++i) {
         char buf[96];
+        if (page.free_t[i] == 255) continue;   // 隐藏组件
         if (page.free_t[i] == 6) {
             // AI 用量容器：3 行指标 + 底行收件箱摘要（子序 0..3）
             lv_obj_t* box = page.free_lbl[i];

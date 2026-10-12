@@ -12,6 +12,7 @@ enum WidgetKind : uint8_t {
 struct FreeComp {
     uint8_t t = 0;
     uint8_t big = 0;      // 样式档：0=常规 1=大字（clock/weather 支持，竞品「时间样式」）
+    uint8_t hidden = 0;   // 隐藏：配置保留但不渲染（竞品「锁定/隐藏」）
     uint16_t x = 0, y = 0;
 };
 

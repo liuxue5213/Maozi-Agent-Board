@@ -1299,6 +1299,7 @@ function devFreePage(screen, ctx, page){
     quote: (draft.theme&&draft.theme.savermsg)||'代码写完了吗？\n起来喝口水吧',
   };
   (page.components||[]).forEach(c=>{
+    if(c.hidden)return;
     const [w,h]=SIZE[c.t]||[120,30];
     if(c.t==='ai_cost'){
       // 预览：三行指标 + 摘要（值从 live 摊平，缺省占位）
@@ -1867,13 +1868,15 @@ function renderFreeEditor(page, root){
   });};
   page.components.forEach((c,i)=>{
     const [w,h]=(c.big&&BIG[c.t])?BIG[c.t]:(SIZE[c.t]||[120,30]);
-    const b=el('div','', NAME[c.t]||c.t);
+    const b=el('div','', (NAME[c.t]||c.t)+(c.hidden?'（隐）':'')+(c.lock?' 🔒':''));
     b.style.cssText=`position:absolute;left:${c.x*SCALE}px;top:${c.y*SCALE}px;`+
       `width:${w*SCALE}px;min-height:${Math.max(22,h*SCALE)}px;`+
       `border:1px dashed rgba(87,200,245,.35);border-radius:6px;padding:2px 6px;`+
-      `font-size:12px;color:#cfe3ff;background:rgba(20,34,56,.72);cursor:grab`;
+      `font-size:12px;color:#cfe3ff;background:rgba(20,34,56,.72);`+
+      `cursor:${c.lock?'not-allowed':'grab'};${c.hidden?'opacity:.4;':''}`;
     b.addEventListener('pointerdown', ev=>{
       ev.preventDefault(); sel=i; paintSel();
+      if(c.lock){ notice('组件已锁定，先解锁再拖动', true); return; }
       const sx=ev.clientX, sy=ev.clientY, ox=c.x, oy=c.y;
       const snap=v=>Math.round(v/4)*4;   // 4px 网格吸附（竞品「吸附/网格」）
       const move=ev2=>{
@@ -1914,11 +1917,47 @@ function renderFreeEditor(page, root){
     c.y=Math.max(0,Math.min(480-dims[1],c.y));
     markDirty(); renderInspector();
   };
+  const dup=el('button','button','复制');
+  dup.onclick=()=>{
+    if(sel<0)return notice('先在画布上点选一个组件',true);
+    if(page.components.length>=8)return notice('自由页最多 8 个组件',true);
+    pushUndo();
+    const src=page.components[sel];
+    const copy={...src, x:Math.min(319-SIZE[src.t][0], src.x+12),
+                y:Math.min(479-SIZE[src.t][1], src.y+12)};
+    page.components.splice(sel+1,0,copy); sel++; markDirty(); renderInspector();
+  };
+  const hide=el('button','button','隐藏/显示');
+  hide.onclick=()=>{
+    if(sel<0)return notice('先在画布上点选一个组件',true);
+    pushUndo();
+    const c=page.components[sel]; c.hidden=c.hidden?0:1;
+    markDirty(); renderInspector();
+  };
+  const lock=el('button','button','锁定/解锁');
+  lock.onclick=()=>{
+    if(sel<0)return notice('先在画布上点选一个组件',true);
+    pushUndo();
+    const c=page.components[sel]; c.lock=c.lock?0:1;
+    markDirty(); renderInspector();
+  };
+  const mv=(d)=>{
+    if(sel<0)return notice('先在画布上点选一个组件',true);
+    const j=sel+d;
+    if(j<0||j>=page.components.length)return notice('已到边界',true);
+    pushUndo();
+    [page.components[sel],page.components[j]]=[page.components[j],page.components[sel]];
+    sel=j; markDirty(); renderInspector();
+  };
+  const up1=el('button','button','上移');
+  up1.onclick=()=>mv(-1);
+  const down1=el('button','button','下移');
+  down1.onclick=()=>mv(1);
   const un=el('button','button','撤销');
   un.onclick=undo;
   const re=el('button','button','重做');
   re.onclick=redo;
-  bar.append(del,style,un,re,clear);
+  bar.append(del,dup,hide,lock,up1,down1,un,re,clear);
   canvas.tabIndex=0;
   canvas.addEventListener('keydown',ev=>{
     if((ev.ctrlKey||ev.metaKey)&&ev.key==='z'){ev.preventDefault();undo()}
