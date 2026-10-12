@@ -1076,26 +1076,25 @@ function devPetPage(screen, ctx){
   const vals=ps.split(',').map(Number);
   const names=['饱食','水分','活力'];
   names.forEach((label,i)=>{
-    devLabel(screen, 24, 240+30*i, 60, label, 20, 'dev-dim');
-    const track=devAbs(el('div','dev-el'), 84, 244+30*i, 170, 10);
+    devLabel(screen, 12, 352+28*i, 70, label, 20, 'dev-dim');
+    const track=devAbs(el('div','dev-el'), 84, 356+28*i, 150, 10);
     track.style.borderRadius='5px';
     track.style.background=panelHex(draft.theme.bg);
     track.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
     screen.append(track);
-    const fill=devAbs(el('div','dev-el'), 0, 0, Math.max(0,Math.min(100,vals[i]||0))*1.7, 10);
+    const fill=devAbs(el('div','dev-el'), 0, 0, Math.max(0,Math.min(100,vals[i]||0))*1.5, 10);
     fill.style.background=ctx.accent; fill.style.borderRadius='5px';
     track.append(fill);
-    devLabel(screen, 262, 240+30*i, 44, String(vals[i]||0), 20, 'dev-ink');
+    devLabel(screen, 240, 352+28*i, 70, String(vals[i]||0), 20, 'dev-ink');
   });
   ['喂食','喝水','运动'].forEach((t,i)=>{
-    const btn=devAbs(el('div','dev-el'), 12+102*i, 344, 92, 44);
+    const btn=devAbs(el('div','dev-el'), 12+100*i, 428, 96, 44);
     btn.style.background=panelHex(draft.theme.card);
     btn.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
     btn.style.borderRadius='10px';
     screen.append(btn);
-    devLabel(btn, 0, 0, 92, t, 20, null, ctx.text, 'center');
+    devLabel(btn, 0, 0, 96, t, 20, null, ctx.text, 'center');
   });
-  devLabel(screen, 10, 396, 300, '状态保存在电脑，互动立即生效', 20, 'dev-dim');
 }
 /* 工具页（页面带 filter）：顶部完成带 30px + 5 行会话（66px、间隔 4、y=94 起）。/* 工具页（页面带 filter）：顶部完成带 30px + 5 行会话（66px、间隔 4、y=94 起）。
    与固件 make_ai_tool_page / render_ai_filtered 同源；完成带高亮 = 有 10 秒内
