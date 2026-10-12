@@ -329,3 +329,63 @@ bool petimg_decode_name(const char* name) {
 
 const lv_img_dsc_t* petimg_source() { return pet_dsc; }
 const char* petimg_loaded() { return pet_loaded; }
+
+
+// ---- working 动画双缓冲：pet_working.jpg(A) + pet_working_b.jpg(B) 交替 ----
+static uint16_t *wa_px[2] = {};
+static lv_img_dsc_t *wa_dsc[2] = {};
+static char wa_name[2][28] = {};
+
+static int wa_cur = 0;
+int draw_mcu_wa(JPEGDRAW* draw) {
+    uint16_t* px = wa_px[wa_cur];
+    if (!px) return 0;
+    int x = draw->x, y = draw->y, w = draw->iWidth, h = draw->iHeight;
+    if (x + w > 320) w = 320 - x;
+    if (y + h > 480) h = 480 - y;
+    if (w <= 0 || h <= 0) return 1;
+    for (int row = 0; row < h; ++row) {
+        memcpy(px + (size_t)(y + row) * 320 + x,
+               draw->pPixels + (size_t)row * draw->iWidth, w * 2);
+    }
+    return 1;
+}
+
+bool workanim_decode(int slot, const char* name) {
+    if (!fs_ready || slot < 0 || slot > 1) return false;
+    char path[36];
+    snprintf(path, sizeof(path), "/%s", name);
+    if (!LittleFS.exists(path)) return false;
+    File f = LittleFS.open(path, "r");
+    if (!f) return false;
+    size_t size = f.size();
+    if (size == 0 || size > MAX_IMG) { f.close(); return false; }
+    uint8_t* jpg = (uint8_t*)malloc(size);
+    if (!jpg) { f.close(); return false; }
+    f.read(jpg, size);
+    f.close();
+    if (!wa_px[slot]) {
+        wa_px[slot] = (uint16_t*)heap_caps_calloc(320 * 480, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    if (!wa_px[slot]) { free(jpg); return false; }
+    // draw_mcu_wa 通过全局 wa_cur 定位 slot（JPEGDEC 回调无法传参）
+    wa_cur = slot;
+    static JPEGDEC jwa;
+    if (!jwa.openFLASH(jpg, size, draw_mcu_wa)) { free(jpg); return false; }
+    bool ok = (jwa.decode(0, 0, 0) == 1);
+    jwa.close();
+    free(jpg);
+    if (!ok) return false;
+    if (!wa_dsc[slot]) wa_dsc[slot] = new lv_img_dsc_t();
+    wa_dsc[slot]->header.always_zero = 0;
+    wa_dsc[slot]->header.w = 320;
+    wa_dsc[slot]->header.h = 480;
+    wa_dsc[slot]->header.cf = LV_IMG_CF_TRUE_COLOR;
+    wa_dsc[slot]->data = (const uint8_t*)wa_px[slot];
+    wa_dsc[slot]->data_size = 320 * 480 * 2;
+    snprintf(wa_name[slot], sizeof(wa_name[slot]), "%s", name);
+    return true;
+}
+
+const lv_img_dsc_t* workanim_source(int slot) { return wa_dsc[slot]; }
+bool workanim_ready(int slot) { return wa_dsc[slot] != nullptr; }

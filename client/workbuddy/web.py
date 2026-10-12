@@ -133,7 +133,7 @@ def start_settings_server(app, port):
                 data = self.rfile.read(length)
                 # ?target=svN → 屏保相册第 N 张；缺省 bg.jpg（页面背景）
                 target = parse_qs(urlsplit(self.path).query).get("target", ["bg"])[0]
-                name = (f"{target}.jpg" if re.fullmatch(r"(bg|sv[1-8]|pet_[a-z0-9_]{2,12})", target)
+                name = (f"{target}.jpg" if re.fullmatch(r"(bg|sv[1-8]|pet_[a-z0-9_]{2,14})", target)
                         else "bg.jpg")
                 if app.send_bg_image(data, name):
                     self._json(200, {"status": f"已应用（{name}）"})
@@ -148,7 +148,7 @@ def start_settings_server(app, port):
             if path == "/api/bgimg-delete":
                 # ?target=svN → 删除屏保相册第 N 张（无 body 的 POST，须在 JSON 门槛前放行）
                 target = parse_qs(urlsplit(self.path).query).get("target", [""])[0]
-                if not re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,12})", target):
+                if not re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,14})", target):
                     self._json(400, {"error": "相册槽位无效"})
                     return
                 app.delete_album_image(f"{target}.jpg")
@@ -304,7 +304,7 @@ def start_settings_server(app, port):
             if path == "/api/bgimg-delete":
                 # ?target=svN → 删除屏保相册第 N 张（同上须在 JSON 门槛前放行）
                 target = parse_qs(urlsplit(self.path).query).get("target", [""])[0]
-                if not re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,12})", target):
+                if not re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,14})", target):
                     self._json(400, {"error": "相册槽位无效"})
                     return
                 app.delete_album_image(f"{target}.jpg")
@@ -321,7 +321,7 @@ def start_settings_server(app, port):
                     return
                 data = self.rfile.read(length)
                 target = parse_qs(urlsplit(self.path).query).get("target", ["bg"])[0]
-                name = (f"{target}.jpg" if re.fullmatch(r"(bg|sv[1-8]|pet_[a-z0-9_]{2,12})", target)
+                name = (f"{target}.jpg" if re.fullmatch(r"(bg|sv[1-8]|pet_[a-z0-9_]{2,14})", target)
                         else "bg.jpg")
                 if app.send_bg_image(data, name):
                     self._json(200, {"status": f"已应用（{name}）"})

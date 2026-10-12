@@ -889,7 +889,7 @@ class App:
         name 白名单限定 bg.jpg（页面背景）与 sv1..8.jpg（屏保相册轮播），
         防止经串口通道写任意路径。
         """
-        if not re.fullmatch(r"(bg|sv[1-8]|pet_[a-z0-9_]{2,12})\.jpg", name):
+        if not re.fullmatch(r"(bg|sv[1-8]|pet_[a-z0-9_]{2,14})\.jpg", name):
             return False
         if not self.link or not self.link.status.startswith("connected:"):
             return False
@@ -926,7 +926,7 @@ class App:
     def delete_album_image(self, name: str) -> bool:
         """删除相册/角色图（name = sv1..sv8.jpg 或 pet_<状态>.jpg，白名单同上传）。"""
         import re as _re
-        if not _re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,12})\.jpg", name):
+        if not _re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,14})\.jpg", name):
             return False
         if not self.link or not self.link.status.startswith("connected:"):
             return False

@@ -1,5 +1,7 @@
 psutil>=5.9
 pyserial>=3.5
+# macOS 独立 Python 的 OpenSSL 常未绑定系统钥匙串；天气 HTTPS 使用此 CA 包。
+certifi>=2024.2.2
 # 托盘常驻（--tray）：pystray 提供通知区域/菜单栏图标，Pillow 生成图标位图。
 # 两者都是纯依赖，缺失时客户端会自动退回控制台常驻模式，不会启动失败。
 pystray>=0.19

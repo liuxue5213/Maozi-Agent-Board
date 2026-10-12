@@ -116,6 +116,10 @@ struct PetParts {
 static PetParts pet_ai, pet_page;
 static lv_obj_t* pet_photo = nullptr;    // 宠物页角色图层（图片资源包）
 static lv_obj_t* pet_tint = nullptr;     // 氛围层：昼夜/雨天色罩（盖图、低于控件）
+static lv_timer_t* work_timer = nullptr; // working 动画交替 timer（A/B 双帧）
+static bool work_alt = false;
+static void work_anim_flip(lv_timer_t* t);
+static void workanim_prepare(void);      // 解码 A/B 帧（各一次）
 static char pet_photo_frame[24] = "";    // 当前显示的帧名（pet_<x>.jpg）
 // 相册轮播：当前文件序号 / 上次轮换时刻
 static uint8_t sv_idx = 1, sv_count = 0;
@@ -954,6 +958,7 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     lv_obj_set_size(pet_photo, 320, 480);
     if (petimg_loaded()[0]) lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+    workanim_prepare();
     draw_pet(pet_page, screen, g_profile.pet_type, 96, 66, 2);
     // 氛围层：夜间压暗 / 傍晚暖色 / 雨天淡蓝（点击穿透，不影响触控）
     pet_tint = lv_obj_create(screen);
@@ -1004,6 +1009,29 @@ void pet_ambient_tick() {
     } else {
         lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+/* working 动画：A/B 两帧各解码一次到独立缓冲，900ms 交替 src（打字起伏）。
+   只在 make_pet_page 时解码——动画期间的切换只是指针切换，零解码开销。 */
+static void workanim_prepare(void) {
+    if (!workanim_ready(0))
+        workanim_decode(0, "pet_working.jpg");
+    if (!workanim_ready(1))
+        workanim_decode(1, "pet_working_b.jpg");
+    if (workanim_ready(0) && workanim_ready(1) && !work_timer)
+        work_timer = lv_timer_create(work_anim_flip, 900, nullptr);
+}
+
+static void work_anim_flip(lv_timer_t* t) {
+    if (!pet_photo || lv_obj_has_flag(pet_photo, LV_OBJ_FLAG_HIDDEN)) return;
+    if (!workanim_ready(0) || !workanim_ready(1)) {
+        Serial.printf("[WA] flip skip: ready0=%d ready1=%d\n",
+                      (int)workanim_ready(0), (int)workanim_ready(1));
+        return;
+    }
+    work_alt = !work_alt;
+    Serial.printf("[WA] flip alt=%d\n", (int)work_alt);
+    lv_img_set_src(pet_photo, (const void*)workanim_source(work_alt ? 1 : 0));
 }
 
 void render_pet_page(WidgetView& view) {
@@ -1814,16 +1842,25 @@ void render_generic(WidgetView& view) {
             strcpy(sub, "AI 会话活动后显示");
             break;
         }
+        // 大字每 3 秒轮换：今日累计 → 本轮输出 → 模型名（竞品看板的滚动指标）
+        static uint8_t rot = 0;
+        static uint32_t rot_ms = 0;
+        bool has_out = latest.ai_tok_out > 0;
+        uint8_t slots = has_out ? 3 : 2;
+        if (millis() - rot_ms >= 3000) { rot_ms = millis(); rot = (rot + 1) % slots; }
         long k = latest.day_tok_total / 1000;
-        if (k >= 1000) snprintf(line, sizeof(line), "今日 %.1fM", k / 1000.0);
-        else snprintf(line, sizeof(line), "今日 %ldk", k);
-        if (latest.ai_tok_out > 0)
-            snprintf(sub, sizeof(sub), "本轮 %.1fk · %s",
-                     latest.ai_tok_out / 1000.0, latest.ai_model);
-        else if (latest.ai_model[0])
-            snprintf(sub, sizeof(sub), "%s", latest.ai_model);
-        else
-            sub[0] = 0;
+        if (rot == 1 && has_out) {
+            snprintf(line, sizeof(line), "本轮 %.1fk", latest.ai_tok_out / 1000.0);
+            snprintf(sub, sizeof(sub), "本轮输出 token");
+        } else if ((rot == 2 && has_out) || (rot == 1 && !has_out)) {
+            strncpy(line, latest.ai_model, sizeof(line) - 1);
+            line[sizeof(line) - 1] = 0;
+            snprintf(sub, sizeof(sub), "当前模型");
+        } else {
+            if (k >= 1000) snprintf(line, sizeof(line), "今日 %.1fM", k / 1000.0);
+            else snprintf(line, sizeof(line), "今日 %ldk", k);
+            snprintf(sub, sizeof(sub), "今日累计 token");
+        }
         break;
     }
     case W_COUNTDOWN: {

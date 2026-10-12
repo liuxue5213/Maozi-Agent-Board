@@ -2583,6 +2583,12 @@ function renderTaskView(){
   if($('tv-tl-mode')) $('tv-tl-mode').value=String((draft.tv||{}).tl_mode ?? 0);
   if($('tv-tl-time')) $('tv-tl-time').value=String((draft.tv||{}).tl_time ?? 0);
   renderTvIdleOptions();
+  // tv.* 参数回填
+  if($('tv-other-tasks')) $('tv-other-tasks').value=String((draft.tv||{}).other_tasks ?? 1);
+  if($('tv-task-value')) $('tv-task-value').value=String((draft.tv||{}).task_value ?? 0);
+  if($('tv-tl-mode')) $('tv-tl-mode').value=String((draft.tv||{}).tl_mode ?? 0);
+  if($('tv-tl-time')) $('tv-tl-time').value=String((draft.tv||{}).tl_time ?? 0);
+  renderTvIdleOptions();
   renderPageSelect(); renderTaskPages(); renderTaskPreview(); renderThemeGrid();
   if(taskTab==='pages'){renderPages();renderPalette();renderInspector()}
   if(taskTab==='look')renderInspector();
@@ -3470,7 +3476,12 @@ function bind(){
       }catch(err){notice(`${f.name} 上传失败：${err.message}`,true)}
     }
     petNote(ok?`已上传 ${ok} 张${skip?`，跳过 ${skip} 张`:''}——小屏宠物页按状态自动显示`:'没有可上传的图');
-    if(ok)notice(`已上传 ${ok} 张角色图`);
+    if(ok){
+      notice(`已上传 ${ok} 张角色图`);
+      // 触发一次保存+同步：设备 ui_rebuild 后 make_pet_page 重跑，
+      // workanim 才会解码 A/B 并启动交替动画（B 帧上传后无 rebuild 不会动）
+      try{ await save(true); await request('/api/sync',{}); }catch(e){}
+    }
   };
   $('pet-img-clear').onclick=async()=>{
     if(!isConnected()){notice('设备未连接',true);return}
