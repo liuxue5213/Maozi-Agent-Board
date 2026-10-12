@@ -86,6 +86,7 @@ struct Telemetry {
     // 服务端收件箱待处理数（页脚琥珀角标「N件」；-1 = 尚未收到）
     int inbox = -1;
     bool inbox_changed = false;
+    uint8_t pb = 0;                            // 久坐提醒（客户端输入空闲超阈值）
     // 天气（客户端 30 分钟刷新）
     float wx_temp = NAN, wx_hi = NAN, wx_lo = NAN;
     int wx_code = -1;

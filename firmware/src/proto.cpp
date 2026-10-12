@@ -339,6 +339,11 @@ void Proto::handle(const char* line) {
         dirty = true;
         return;
     }
+    if (!strcmp(key, "PB")) {
+        t.pb = atoi(v) ? 1 : 0;
+        dirty = true;
+        return;
+    }
     if (!strcmp(key, "AIT")) {
         t.day_tok_total = atol(v) * 1000;   // 客户端单位 K → tokens
         dirty = true;

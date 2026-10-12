@@ -761,6 +761,14 @@
             <input type="checkbox" id="pet-greet">
             <span>整点/半点问候（凌晨保持安静）</span>
           </label>
+          <label class="field toggle">
+            <input type="checkbox" id="pet-break-on">
+            <span>久坐提醒（键鼠空闲超阈值 → 手机推送 + 宠物犯困姿态，凌晨不扰）</span>
+          </label>
+          <label class="field">
+            <span>提醒阈值 <output class="field-value" id="pet-break-val">45 分钟</output></span>
+            <input type="range" id="pet-break-min" min="5" max="120" step="5" value="45">
+          </label>
           <div class="btn-row">
             <button type="button" class="button primary" id="pet-save">保存形象</button>
             <button type="button" class="button" id="pet-page-gen">生成「宠物」小屏页面</button>

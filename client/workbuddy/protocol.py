@@ -8,6 +8,7 @@ _ORDER = [
     "ai0", "ai1", "ai2", "ai3", "ai4", "ai5", "ai6", "ai7",
     "dn0", "dn1", "dn2",
     "w0", "w1", "w2", "wf0", "wf1", "wf2", "ps", "aiu", "ait", "remind",
+    "pb",   # 久坐提醒标志（输入空闲超阈值；0/1）
     "aib0", "aib1", "aib2",   # 分模型今日消耗（模型名,token；无值自动省略）
     "cpu", "cpufreq", "cputemp", "fan",
     "mem", "memused", "memtotal",

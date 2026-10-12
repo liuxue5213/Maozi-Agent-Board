@@ -2,6 +2,8 @@
 import json
 import math
 import re
+import subprocess
+import sys
 import time
 import threading
 from copy import deepcopy
@@ -708,11 +710,22 @@ class App:
         threading.Thread(target=self._push_send,
                          args=(url, name, state), daemon=True).start()
 
+    def _push_message(self, title: str, text: str):
+        """通用文案推送（不经过 push_states 过滤；安静时段由调用方把关）。"""
+        url = str(getattr(self.cfg, "push_url", "") or "").strip()
+        if not url:
+            return
+        threading.Thread(target=self._push_post,
+                         args=(url, title, text), daemon=True).start()
+
     def _push_send(self, url: str, name: str, state: str):
-        from urllib.parse import quote
-        from urllib.request import Request, urlopen
         title = f"WorkBuddy · {_PUSH_STATE_NAMES.get(state, state)}"
         text = f"{name} {title.split('·')[-1].strip()}"
+        self._push_post(url, title, text)
+
+    def _push_post(self, url: str, title: str, text: str):
+        from urllib.parse import quote
+        from urllib.request import Request, urlopen
         try:
             if "{title}" in url or "{body}" in url:
                 req = Request(url.replace("{title}", quote(title))
@@ -728,6 +741,56 @@ class App:
             self.health.event("push_ok", state=state)
         except Exception as exc:
             self.health.event("push_fail", err=str(exc)[:32])
+
+    def _input_idle_secs(self) -> float:
+        """键鼠空闲秒数。macOS 走 ioreg HIDIdleTime（纳秒）；其他平台 -1
+        （不启用提醒）。结果缓存 5s，避免每秒拉一次子进程。"""
+        if not sys.platform.startswith("darwin"):
+            return -1.0
+        now = time.monotonic()
+        cached, at = getattr(self, "_idle_cache", (-1.0, 0.0))
+        if now - at < 5.0:
+            return cached
+        try:
+            out = subprocess.run(["ioreg", "-c", "IOHIDSystem"],
+                                 capture_output=True, text=True,
+                                 timeout=3).stdout
+            cached = -1.0
+            for line in out.splitlines():
+                if "HIDIdleTime" in line and "=" in line:
+                    cached = int(line.split("=")[-1].strip()) / 1e9
+                    break
+        except Exception:
+            cached = -1.0
+        self._idle_cache = (cached, now)
+        return cached
+
+    def _break_tick(self, now: float) -> int:
+        """久坐提醒（竞品「偶尔提醒休息」）：键鼠空闲超过 pet.break_min
+        分钟且非凌晨 → pb=1（宠物犯困姿态）+ 一次性推送；用户回来
+        （空闲 <60s）复位，同一轮不重复打扰。"""
+        pet = self.profile.get("pet") or {}
+        try:
+            limit = int(pet.get("break_min", 0) or 0)
+        except (TypeError, ValueError):
+            limit = 0
+        idle = self._input_idle_secs() if limit > 0 else -1.0
+        if 0 <= idle < 60:
+            self._break_notified = False
+        if limit <= 0 or idle < limit * 60:
+            return 0
+        hh = time.localtime(now).tm_hour
+        if 1 <= hh < 6:
+            return 0                        # 凌晨保持安静
+        if not getattr(self, "_break_notified", False):
+            self._break_notified = True
+            mins = max(1, int(idle // 60))
+            if not _in_quiet_hours(str(getattr(self.cfg, "push_quiet", "") or "")):
+                self._push_message("WorkBuddy · 久坐提醒",
+                                   f"已经 {mins} 分钟没有活动了，"
+                                   "起来喝口水、活动一下吧")
+            self.health.event("break_remind", mins=mins)
+        return 1
 
     def _migrate_legacy_city(self):
         """旧档案只有 weather.city 单字段：地理编码补坐标后迁入 cities[]。
@@ -1209,6 +1272,11 @@ class App:
         try:
             from .lunar import today_line
             t["lunar"] = today_line(now)
+        except Exception:
+            pass
+        # 久坐提醒：输入空闲超阈值 → pb=1（宠物犯困）+ 一次性推送
+        try:
+            t["pb"] = self._break_tick(now)
         except Exception:
             pass
         t["remind"] = self._next_remind(now)

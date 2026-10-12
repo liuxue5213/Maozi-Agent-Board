@@ -1890,6 +1890,11 @@ function renderPetTab(){
   // 昼夜自动切包：仅在选项已填充时回填（refreshPetPacks 填充后也会再对一次）
   const ap=$('pet-autopack');
   if(ap) ap.checked=!!draft.pet?.autopack;
+  // 久坐提醒
+  const bo=$('pet-break-on'), bm=$('pet-break-min');
+  if(bo) bo.checked=!!(draft.pet?.break_min);
+  if(bm){const v=draft.pet?.break_min||45;bm.value=v;
+    const ov=$('pet-break-val');if(ov)ov.textContent=v+' 分钟';}
   ['pet-pack-day','pet-pack-night'].forEach((id,i)=>{
     const sel=$(id), v=draft.pet?.[i?'night_pack':'day_pack'];
     if(sel && v && [...sel.options].some(o=>o.value===v)) sel.value=v;
@@ -3120,6 +3125,7 @@ function bind(){
     draft.ai_cost={mode:$('ac-auto').checked?0:1,metrics:mets};
     markDirty();
   }
+  $('pet-break-min').oninput=e=>{const ov=$('pet-break-val');if(ov)ov.textContent=e.target.value+' 分钟';};
   $('ac-auto').onchange=collectAiCost;
   ['ac-met-today','ac-met-turn','ac-met-model','ac-met-models'].forEach(id=>{$(id).onchange=collectAiCost;});
   $('bright-auto').onchange=e=>{draft.theme.bright_auto=e.target.checked?1:0;markDirty();notice(e.target.checked?'已开启自动亮度（白天亮/夜间暗）':'已切回手动亮度')};
@@ -3231,12 +3237,14 @@ function bind(){
         name:$('pet-name').value.trim()||'帽子',
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
         autopack:$('pet-autopack')?.checked?1:0,
+        break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         day_pack:$('pet-pack-day')?.value||'',
         night_pack:$('pet-pack-night')?.value||''});
       draft.pet={...(draft.pet||{}), type:petCache?.type||'robot',
         name:$('pet-name').value.trim()||'帽子',
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
         autopack:$('pet-autopack')?.checked?1:0,
+        break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         day_pack:$('pet-pack-day')?.value||'',
         night_pack:$('pet-pack-night')?.value||''};
       notice(`宠物形象已保存（v${r.version}），同步后设备换新装`);

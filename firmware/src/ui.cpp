@@ -825,6 +825,10 @@ static PetLayer pet_arbitrate(const char* st, uint32_t now) {
         } else pet_calm_since = 0;
     } else pet_calm_since = 0;
 
+    // 久坐提醒（竞品「偶尔提醒休息」）：客户端检测键鼠空闲超阈值置 pb，
+    // 犯困姿态提示休息；任务运行中不打扰（working 保持工作姿态）。
+    if (latest.pb && !working) return PL_SLEEPY;
+
     // 活动层（场景过期后的 ERROR/DONE 仍以活动层形式兜底显示）
     if (!strcmp(st, "ERROR")) return PL_ALERT;
     if (!strcmp(st, "DONE")) return PL_CELEBRATE;
@@ -1050,6 +1054,8 @@ void pet_ambient_tick() {
 
 /* working 动画：A/B 两帧各解码一次到独立缓冲，900ms 交替 src（打字起伏）。
    只在 make_pet_page 时解码——动画期间的切换只是指针切换，零解码开销。 */
+static PetLayer pet_layer_now = PL_IDLE;   // 当前仲裁层（workanim 翻页让位用）
+
 static void workanim_prepare(void) {
     if (!workanim_ready(0))
         workanim_decode(0, "pet_working.jpg");
@@ -1061,6 +1067,9 @@ static void workanim_prepare(void) {
 
 static void work_anim_flip(lv_timer_t* t) {
     if (!pet_photo || lv_obj_has_flag(pet_photo, LV_OBJ_FLAG_HIDDEN)) return;
+    // 非工作层（犯困/睡觉/问候/出错…）显示的是状态帧，翻页会让位：
+    // 否则 900ms 后又被 A/B 工作帧盖回去（久坐提醒姿态曾被盖掉）。
+    if (pet_layer_now != PL_WORKING) return;
     if (!workanim_ready(0) || !workanim_ready(1)) {
         Serial.printf("[WA] flip skip: ready0=%d ready1=%d\n",
                       (int)workanim_ready(0), (int)workanim_ready(1));
@@ -1084,6 +1093,7 @@ void render_pet_page(WidgetView& view) {
     pet_ambient_tick();
     const char* st = latest.tasks[0].used ? latest.tasks[0].state : "IDLE";
     PetLayer layer = pet_arbitrate(st, millis());
+    pet_layer_now = layer;
     static const char* frame_of[] = {
         "pet_idle", "pet_thinking", "pet_working", "pet_sleepy",
         "pet_sleeping", "pet_greeting", "pet_happy", "pet_working",
@@ -1185,6 +1195,7 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
         for (uint8_t i = 0; i < rows; ++i)
             view.ac_rows[i] = label1(view.root, "", 20, text_color,
                                      12, 44 + i * 30, w - 24);
+        view.sub = label1(view.root, "", 20, sub_color, 12, h - 40, w - 24);
         return;
     }
     view.main = label1(view.root, "--", compact ? 20 : 28, text_color,
@@ -1923,6 +1934,12 @@ void render_generic(WidgetView& view) {
             }
             for (uint8_t i = 0; i < 5; ++i)
                 set_text(view.ac_rows[i], rows[i][0] ? rows[i] : "");
+            // 卡底收件箱摘要（竞品看板内通知摘要）：有待处理才显示
+            if (view.sub) {
+                if (latest.inbox > 0) snprintf(sub, sizeof(sub), "待处理 %d 件", latest.inbox);
+                else sub[0] = 0;
+                set_text(view.sub, sub);
+            }
             line[0] = 0;
             break;
         }

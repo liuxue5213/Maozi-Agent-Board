@@ -209,6 +209,25 @@ class PetFlagTests(unittest.TestCase):
         self.assertEqual((out["pet"]["sleep"], out["pet"]["greet"]), (1, 1))
 
 
+class BreakReminderTests(unittest.TestCase):
+    """久坐提醒阈值（pet.break_min，分钟，0=关）。"""
+
+    def test_default_off(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(out["pet"]["break_min"], 0)
+
+    def test_roundtrip_and_clamp(self):
+        out = validate_profile(base(pet={"type": "cat", "name": "x",
+                                         "break_min": 45}))
+        self.assertEqual(out["pet"]["break_min"], 45)
+        out2 = validate_profile(base(pet={"type": "cat", "name": "x",
+                                          "break_min": 999}))
+        self.assertEqual(out2["pet"]["break_min"], 240)
+        out3 = validate_profile(base(pet={"type": "cat", "name": "x",
+                                          "break_min": "abc"}))
+        self.assertEqual(out3["pet"]["break_min"], 0)
+
+
 class AiCostBoardTests(unittest.TestCase):
     """AI 用量卡看板参数（竞品图4 内容组合/显示指标）。"""
 

@@ -403,12 +403,18 @@ def start_settings_server(app, port):
                     # 类型/名字改动 → 走标准保存（校验+版本递增），设备重建宠物形象
                     candidate = dict(app.profile)
                     old_pet = (app.profile.get("pet") or {})
+                    try:
+                        break_min = max(0, min(240, int(
+                            data.get("break_min", old_pet.get("break_min", 0))) or 0))
+                    except (TypeError, ValueError):
+                        break_min = 0
                     candidate["pet"] = {
                         "type": str(data.get("type", "robot")),
                         "name": str(data.get("name", "帽子")),
                         "sleep": 1 if data.get("sleep", old_pet.get("sleep", 1)) else 0,
                         "greet": 1 if data.get("greet", old_pet.get("greet", 0)) else 0,
                         "autopack": 1 if data.get("autopack", old_pet.get("autopack", 0)) else 0,
+                        "break_min": break_min,
                         "day_pack": str(data.get("day_pack", old_pet.get("day_pack", "")) or ""),
                         "night_pack": str(data.get("night_pack", old_pet.get("night_pack", "")) or "")}
                     result = app.save_profile(candidate)
