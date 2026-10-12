@@ -97,6 +97,9 @@ struct Telemetry {
     // 分模型今日消耗（AIB0..2 = 模型名,token；按消耗降序）
     char ai_by_model[3][20] = {};
     long ai_by_tok[3] = {-1, -1, -1};
+    // 农历+节气倒计时（屏保日期行；lunar[0]=0 表示未同步）
+    char lunar[42] = {};   // 「农历九月初三·距霜降还有11天」UTF-8 ≤ 40 字节
+    uint32_t lunar_at = 0;
     // 主题色推送（CFG=bg:xxxxxx,card:...,accent:...,text:...,sub:...）
     uint32_t theme_bg = 0, theme_grad = 0, theme_card = 0, theme_accent = 0, theme_text = 0, theme_sub = 0;
     bool theme_changed = false;

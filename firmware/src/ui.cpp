@@ -100,6 +100,7 @@ int idle_dim_secs = 60;              // 0=关闭；无触摸超时后进入息�
 bool saver_active = false;
 lv_obj_t* scr_saver = nullptr;
 lv_obj_t* saver_time_lbl = nullptr, *saver_date_lbl = nullptr;
+static lv_obj_t* saver_lunar_lbl = nullptr;   // 农历+节气倒计时行（竞品图2）
 uint8_t saver_style = 0;
 // 像素宠物（AI 卡右侧小只 + 宠物页大只），形象/表情/动作联动 AI 状态
 struct PetParts {
@@ -2268,7 +2269,7 @@ void build_saver() {
     }
     // 每次进入都按当前样式重建（样式/短句可能被 CFG 更新过）
     lv_obj_clean(scr_saver);
-    saver_time_lbl = saver_date_lbl = nullptr;
+    saver_time_lbl = saver_date_lbl = saver_lunar_lbl = nullptr;
 
     int secs = clock_seconds();
     char hm[8];
@@ -2285,10 +2286,11 @@ void build_saver() {
         lv_obj_set_style_radius(frame, 14, 0);
         saver_time_lbl = label(frame, hm, 32, 0x22D3EE, 30, 30, 220);
         saver_date_lbl = label(frame, "", 20, 0x8CA3C7, 30, 80, 220);
+        saver_lunar_lbl = label1(frame, "", 14, 0x6B7A8F, 30, 116, 220);
         char envs[40] = "传感离线";
         if (!isnan(g_temp)) snprintf(envs, sizeof(envs), "%.1f℃  %.0f%%", g_temp, g_hum);
-        label(frame, envs, 20, 0x6B7A8F, 30, 120, 220);
-        label(frame, saver_weekday(), 20, 0x6B7A8F, 30, 156, 220);
+        label(frame, envs, 20, 0x6B7A8F, 30, 148, 220);
+        label(frame, saver_weekday(), 20, 0x6B7A8F, 30, 184, 220);
         label(scr_saver, "方寸仪表", 16, 0x3A4A5F, 10, 8, 120);
     } else if (saver_style == 2) {
         // 像素夜色：强调色时间带 + 大日期
@@ -2302,6 +2304,8 @@ void build_saver() {
         lv_obj_set_style_text_align(saver_time_lbl, LV_TEXT_ALIGN_CENTER, 0);
         saver_date_lbl = label(scr_saver, "", 24, 0x6B7A8F, 0, 300, 320);
         lv_obj_set_style_text_align(saver_date_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        saver_lunar_lbl = label1(scr_saver, "", 14, 0x6B7A8F, 0, 338, 320);
+        lv_obj_set_style_text_align(saver_lunar_lbl, LV_TEXT_ALIGN_CENTER, 0);
         label(scr_saver, "PIXEL NIGHT", 16, 0x3A4A5F, 10, 8, 200);
     } else if (saver_style == 3) {
         // 诗词短句：小时间 + 自定义短句 + 底部日期
@@ -2314,7 +2318,7 @@ void build_saver() {
         lv_obj_set_style_text_color(saver_quote, lv_color_hex(0x8CA3C7), 0);
         lv_label_set_text(saver_quote, saver_msg[0] ? saver_msg : "代码写完了吗？\n起来喝口水吧");
         saver_date_lbl = label(scr_saver, "", 20, 0x3A4A5F, 10, 430, 300);
-        label(scr_saver, "", 16, sub_color, 0, 0, 0);
+        saver_lunar_lbl = label1(scr_saver, "", 14, 0x3A4A5F, 10, 400, 300);
     } else if (saver_style == 4) {
         // 相册轮播：全屏图片，svint 秒轮换，淡入/滑入入场（见 rotate_album）
         if (album_decode_index(1)) {
@@ -2337,6 +2341,8 @@ void build_saver() {
         lv_obj_set_style_text_align(saver_time_lbl, LV_TEXT_ALIGN_CENTER, 0);
         saver_date_lbl = label(scr_saver, "", 24, 0x3A4A5F, 0, 262, 320);
         lv_obj_set_style_text_align(saver_date_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        saver_lunar_lbl = label1(scr_saver, "", 14, 0x6B7A8F, 0, 304, 320);
+        lv_obj_set_style_text_align(saver_lunar_lbl, LV_TEXT_ALIGN_CENTER, 0);
     }
 }
 
@@ -2407,6 +2413,13 @@ void update_saver() {
     }
     snprintf(sd, sizeof(sd), "%s 星期%s", current_date, weekday_name(wd));
     lv_label_set_text(saver_date_lbl, sd);
+    // 农历+节气倒计时（客户端算好整串下发；未同步/已销毁则隐藏）
+    if (saver_lunar_lbl) {
+        if (latest.lunar[0])
+            set_text(saver_lunar_lbl, latest.lunar);
+        else
+            lv_label_set_text(saver_lunar_lbl, "");
+    }
     // 诗句轮换（样式3）：文本在 poem_advance 切 idx 后由这里对齐显示
     if (saver_style == 3 && saver_quote && g_profile.poem_count) {
         set_text(saver_quote, g_profile.poems[poem_idx % g_profile.poem_count]);

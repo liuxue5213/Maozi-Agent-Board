@@ -1182,6 +1182,12 @@ class App:
                     t["aiout"] = str(acc["out"])
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
+        # 农历+节气倒计时（屏保日期行；计算失败不打扰主循环）
+        try:
+            from .lunar import today_line
+            t["lunar"] = today_line(now)
+        except Exception:
+            pass
         t["remind"] = self._next_remind(now)
         # CPU 高温告警状态机（防抖 60s + 滞回恢复）
         try:

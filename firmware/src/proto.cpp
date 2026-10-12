@@ -332,6 +332,13 @@ void Proto::handle(const char* line) {
         }
         return;
     }
+    if (!strcmp(key, "LUNAR")) {
+        // 农历串按「日」粒度刷新即可，同串不重渲染（set_text 在 ui 层去重）
+        snprintf(t.lunar, sizeof(t.lunar), "%s", v);
+        t.lunar_at = millis();   // millis 已在用（done_at_ms），不引 time.h
+        dirty = true;
+        return;
+    }
     if (!strcmp(key, "AIT")) {
         t.day_tok_total = atol(v) * 1000;   // 客户端单位 K → tokens
         dirty = true;
