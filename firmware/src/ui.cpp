@@ -68,6 +68,10 @@ struct PageView {
     lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
     lv_obj_t *offbar = nullptr;   // 离线状态条（顶部 4px 红条）
     lv_obj_t *inbox_lbl = nullptr;  // 收件箱角标（页脚右下「N件」，琥珀色）
+    // 自由布局页组件标签（竞品拖拽编辑器 v1）
+    lv_obj_t* free_lbl[8] = {};
+    uint8_t free_t[8] = {};
+    uint8_t free_n = 0;
     WidgetView widgets[4];
 };
 
@@ -973,6 +977,74 @@ void make_pet_compact(WidgetView& view, lv_obj_t* screen) {
     draw_pet(pet_ai, view.root, g_profile.pet_type, 229, 42, 1);
 }
 
+// ---------- 自由布局页（竞品拖拽编辑器 v1） ----------
+int weekday(const char* date);           // 定义在文件后部（此处前向引用）
+const char* weekday_name(int day);
+// 组件固定尺寸、坐标自由；数据全走既有遥测，零新数据源。
+static const uint8_t FC_FONT[6] = {48, 20, 20, 28, 20, 24};
+static const uint16_t FC_W[6] = {220, 260, 304, 240, 280, 300};
+static const uint32_t FC_COL[6] = {0, 0, 0, 0, 0, 0};   // 占位；颜色在 make 内定
+
+void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) {
+    static const uint32_t colors[6] = {};
+    (void)colors; (void)FC_COL;
+    page.free_n = 0;
+    for (uint8_t i = 0; i < config.comp_n && i < 8; ++i) {
+        const FreeComp& c = config.comps[i];
+        uint8_t t = c.t < 6 ? c.t : 0;
+        uint32_t col = t == 0 ? accent : (t == 2 || t == 4) ? sub_color : text_color;
+        lv_obj_t* lbl;
+        if (t == 5) {   // 短句：可折行（LONG_DOT 会截成一行）
+            lbl = label(screen, "", FC_FONT[t], col, c.x, c.y, FC_W[t], 96);
+            lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+        } else {
+            lbl = label1(screen, "--", FC_FONT[t], col, c.x, c.y, FC_W[t]);
+        }
+        page.free_lbl[i] = lbl;
+        page.free_t[i] = t;
+        page.free_n = i + 1;
+    }
+}
+
+void render_free_page(PageView& page, const char* tb) {
+    const char* current_date = clock_date();
+    int wd = current_date[0] ? weekday(current_date) : 0;
+    for (uint8_t i = 0; i < page.free_n && i < 8; ++i) {
+        lv_obj_t* lbl = page.free_lbl[i];
+        if (!lbl) continue;
+        char buf[96];
+        switch (page.free_t[i]) {
+        case 0:
+            set_text(lbl, tb);
+            break;
+        case 1:
+            if (wd) snprintf(buf, sizeof(buf), "%s 星期%s", current_date,
+                             weekday_name(wd));
+            else buf[0] = 0;
+            set_text(lbl, buf);
+            break;
+        case 2:
+            set_text(lbl, latest.lunar);
+            break;
+        case 3:
+            // 读多城市 W0（城市列表第一个），旧全局 WX 已退役
+            if (latest.cities[0].used)
+                snprintf(buf, sizeof(buf), "%.1f℃ %s", latest.cities[0].temp,
+                         weather_text(latest.cities[0].code));
+            else strcpy(buf, "天气未配置");
+            set_text(lbl, buf);
+            break;
+        case 4:
+            snprintf(buf, sizeof(buf), "CPU %d%% · 内存 %d%%", latest.cpu, latest.mem);
+            set_text(lbl, buf);
+            break;
+        default:
+            set_text(lbl, saver_msg[0] ? saver_msg : "代码写完了吗？起来喝口水");
+            break;
+        }
+    }
+}
+
 void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     (void)view;
     // 彩色角色图层（/pet_<帧>.jpg 资源包）：存在对应帧时显示图片并隐藏
@@ -1398,6 +1470,9 @@ void build_page(uint8_t index) {
         lv_obj_set_style_text_align(num, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_align(num, LV_ALIGN_CENTER, 0, 0);
     }
+    if (config.free) {
+        make_free_page(page, config, page.screen);
+    } else {
     int cursor = 0;
     // 栅格按本页实际组件数分配高度，消除"2 个组件只占上 halves、下半屏全空"
     // 的死区（原实现恒定190px 高）。行数 = ceil(占用槽位/2)。
@@ -1431,6 +1506,7 @@ void build_page(uint8_t index) {
             make_generic(widget, page.screen, x, y, wide ? 304 : 148, card_h);
             cursor += wide ? 2 : 1;
         }
+    }
     }
     page.alert = box(page.screen, 16, 150, 288, 160);
     lv_obj_set_style_bg_color(page.alert, lv_color_hex(COL_WARN), 0);
@@ -2129,6 +2205,7 @@ void render_all() {
     for (uint8_t p = 0; p < view_count; ++p) {
         PageView& page = views[p];
         if (!page.screen) continue;
+        if (g_profile.pages[p].free) { render_free_page(page, tb); continue; }
         for (uint8_t w = 0; w < g_profile.pages[p].count; ++w) {
             WidgetView& widget = page.widgets[w];
             if (widget.kind == W_AI_LIST) render_ai(widget);

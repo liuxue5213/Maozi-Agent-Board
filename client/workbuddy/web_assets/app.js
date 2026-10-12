@@ -1285,6 +1285,33 @@ function devGenericCard(screen, ctx, kind, x, y, w, h){
 
 /* ---------- 页面组合 → 组件矩形：镜像 firmware build_page 的槽位算法 ---------- */
 function devWidgetUnits(kind){ return (kind === 'reminder_list' || kind === 'today_calendar') ? 2 : 1 }
+/* 自由布局页预览：组件按 (x,y) 直接摆放，值来自 live 遥测（缺省占位）。 */
+function devFreePage(screen, ctx, page){
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96]};
+  const now=new Date();
+  const t=(live.telemetry||{});
+  const vals={
+    clock: clockHMS(),
+    date: `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} 星期${'日一二三四五六'[now.getDay()]}`,
+    lunar: t.lunar||'农历（等客户端下发）',
+    weather: (()=>{const w=devWx();return w?`${(w.temp??'--')}℃ ${weatherText(w.code)}`:'天气未配置'})(),
+    sys: `CPU ${t.cpu??'--'}% · 内存 ${t.mem??'--'}%`,
+    quote: (draft.theme&&draft.theme.savermsg)||'代码写完了吗？\n起来喝口水吧',
+  };
+  (page.components||[]).forEach(c=>{
+    const [w,h]=SIZE[c.t]||[120,30];
+    if(c.t==='quote'){
+      const box=devAbs(el('div','dev-el'), c.x, c.y, w, h);
+      box.style.color=ctx.sub; box.style.fontSize='24px'; box.style.lineHeight='34px';
+      box.style.whiteSpace='pre-wrap'; box.textContent=vals.quote;
+      screen.append(box); return;
+    }
+    const font={clock:44,date:20,lunar:20,weather:26,sys:20}[c.t]||20;
+    devLabel(screen, c.x, c.y, w, vals[c.t]??'', font,
+             c.t==='lunar'||c.t==='sys'?'dev-dim':null,
+             c.t==='clock'?ctx.accent:undefined);
+  });
+}
 function devBodyLayout(page){
   if(page.widgets.includes('ai_list')) return [{kind:'ai_list'}];
   if(page.widgets.includes('hw_cards')) return [{kind:'hw_cards'}];
@@ -1350,7 +1377,8 @@ function devScreen(pageIndex, theme, host){
   else devLabel(screen, 210, DEV.HEAD_Y+2, 100, isConnected() ? '在线' : '电脑离线', 20, null,
                 isConnected() ? devSemantic('status.ok') : devSemantic('status.err'));
   // 内容区
-  for(const slot of devBodyLayout(page)){
+  if(page.layout==='free'){ devFreePage(screen, ctx, page); }
+  else for(const slot of devBodyLayout(page)){
     if(slot.kind === 'ai_list'){ devAiPage(screen, ctx, page); continue }
     if(slot.kind === 'weather' && page.city){ devWeatherCity(screen, ctx, page); continue }
     if(slot.kind === 'pet'){ devPetPage(screen, ctx); continue }
@@ -1735,7 +1763,9 @@ function renderPages() {
   const root=$('pages-list'); if(!root)return; root.replaceChildren();
   draft.pages.forEach((page,i) => {
     const b=el('button',`page-item${i===selected?' active':''}`); b.draggable=true;
-    b.append(el('span','page-grip','⠿'),el('span','page-number',String(i+1).padStart(2,'0')),el('strong','',page.title+(i===0?' · 首页':'')),el('small','',`${page.widgets.length} 组件`));
+    b.append(el('span','page-grip','⠿'),el('span','page-number',String(i+1).padStart(2,'0')),el('strong','',page.title+(i===0?' · 首页':'')),el('small','', page.layout==='free'
+        ? `自由 · ${(page.components||[]).length} 组件`
+        : `${page.widgets.length} 组件`));
     b.onclick=()=>{selected=i;previewPage=i;renderTaskView()};
     b.ondragstart=()=>{dragPage=i;b.classList.add('dragging')};
     b.ondragend=()=>{dragPage=-1;b.classList.remove('dragging')};
@@ -1747,6 +1777,24 @@ function renderPages() {
 function renderPalette() {
   const root=$('widget-palette');root.replaceChildren();
   const page=current();
+  if(page.layout==='free'){
+    const FREE_COMPS=[['clock','时间'],['date','日期'],['lunar','农历节气'],
+                      ['weather','天气'],['sys','CPU/内存'],['quote','短句']];
+    FREE_COMPS.forEach(([t,name])=>{
+      const b=el('button','palette-item');
+      b.append(el('span','palette-symbol','⊞'),document.createTextNode(name));
+      b.onclick=()=>{
+        const comps=page.components=page.components||[];
+        if(comps.length>=8)return notice('自由页最多 8 个组件',true);
+        comps.push({t,x:8,y:8+(comps.length*36)%400});
+        markDirty(); renderInspector();
+      };
+      root.append(b);
+    });
+    const note=$('widget-palette-note');
+    if(note)note.textContent='自由画布：点组件加入页面，在「本页组件」画布里拖拽摆位。';
+    return;
+  }
   const used=page.widgets.reduce((n,w)=>n+widgets[w][2],0);
   const fullWidget=page.widgets.find(key=>widgets[key]?.[2]===4);
   Object.entries(widgets).forEach(([key,[name,icon,units]])=>{
@@ -1767,11 +1815,69 @@ function renderPalette() {
       : `当前已使用 ${used}/4 个槽位；悬停灰色组件可查看不能添加的原因。`;
   }
 }
+/* 自由画布编辑器（竞品拖拽编辑器 v1）：拖拽摆位、点选删除、组件面板加件。
+   画布 0.85 缩放显示 320×480，写回 draft 的仍是设备像素坐标。 */
+function renderFreeEditor(page, root){
+  const SCALE=0.85;
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96]};
+  const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句'};
+  page.components=page.components||[];
+  root.replaceChildren();
+  const wrap=el('div');
+  const canvas=el('div');
+  canvas.style.cssText=`position:relative;width:${Math.round(320*SCALE)}px;`+
+    `height:${Math.round(480*SCALE)}px;background:linear-gradient(180deg,#0b1322,#0d1730);`+
+    `border-radius:10px;border:1px solid #2a3a52;overflow:hidden;touch-action:none;user-select:none`;
+  wrap.append(canvas);
+  let sel=-1;
+  const paintSel=()=>{[...canvas.children].forEach((b,i)=>{
+    b.style.borderColor = i===sel ? '#57C8F5' : 'rgba(87,200,245,.35)';
+  });};
+  page.components.forEach((c,i)=>{
+    const [w,h]=SIZE[c.t]||[120,30];
+    const b=el('div','', NAME[c.t]||c.t);
+    b.style.cssText=`position:absolute;left:${c.x*SCALE}px;top:${c.y*SCALE}px;`+
+      `width:${w*SCALE}px;min-height:${Math.max(22,h*SCALE)}px;`+
+      `border:1px dashed rgba(87,200,245,.35);border-radius:6px;padding:2px 6px;`+
+      `font-size:12px;color:#cfe3ff;background:rgba(20,34,56,.72);cursor:grab`;
+    b.addEventListener('pointerdown', ev=>{
+      ev.preventDefault(); sel=i; paintSel();
+      const sx=ev.clientX, sy=ev.clientY, ox=c.x, oy=c.y;
+      const move=ev2=>{
+        c.x=Math.max(0,Math.min(320-SIZE[c.t][0], ox+Math.round((ev2.clientX-sx)/SCALE)));
+        c.y=Math.max(0,Math.min(480-SIZE[c.t][1], oy+Math.round((ev2.clientY-sy)/SCALE)));
+        b.style.left=c.x*SCALE+'px'; b.style.top=c.y*SCALE+'px';
+        b.textContent=`${NAME[c.t]} ${c.x},${c.y}`;
+      };
+      const up=()=>{
+        document.removeEventListener('pointermove',move);
+        document.removeEventListener('pointerup',up);
+        b.textContent=NAME[c.t]; markDirty();
+      };
+      document.addEventListener('pointermove',move);
+      document.addEventListener('pointerup',up);
+    });
+    canvas.append(b);
+  });
+  paintSel();
+  const bar=el('div','btn-row');
+  const del=el('button','button','删除选中组件');
+  del.onclick=()=>{
+    if(sel<0)return notice('先在画布上点选一个组件',true);
+    page.components.splice(sel,1); sel=-1; markDirty(); renderInspector();
+  };
+  const clear=el('button','button','清空画布');
+  clear.onclick=()=>{page.components=[];sel=-1;markDirty();renderInspector()};
+  bar.append(del,clear);
+  wrap.append(el('p','hint','拖动组件摆位（对齐设备像素），点选后可删除。改动走「保存草稿 → 应用到设备」。'),bar);
+  root.append(wrap);
+}
 function renderInspector() {
   const page=current();
   $('page-title').value=page.title;$('page-layout').value=page.layout;
   const root=$('selected-widgets');root.replaceChildren();
-  page.widgets.forEach((key,i)=>{
+  if(page.layout==='free'){ renderFreeEditor(page, root); }
+  else { page.widgets.forEach((key,i)=>{
     const chip=el('div','widget-chip');chip.draggable=true;
     chip.append(el('span','grip','⠿'),el('span','',widgets[key][0]));
     const remove=el('button','', '×');remove.title='移除组件';remove.onclick=()=>{
@@ -1783,6 +1889,7 @@ function renderInspector() {
     chip.ondragover=e=>e.preventDefault();chip.ondrop=e=>{e.preventDefault();reorder(page.widgets,dragWidget,i)};
     root.append(chip);
   });
+  }
   $('weather-city').value=(draft.weather&&draft.weather.city)||'';
   $('card-opa').value=draft.theme.card_opa??100;$('opa-value').textContent=(draft.theme.card_opa??100)+'%';
   $('bright-auto').checked=!!Number(draft.theme.bright_auto??0);
@@ -2687,7 +2794,8 @@ function renderSelfcheck(){
   const quietBox=$('push-quiet');
   if(quietBox&&document.activeElement!==quietBox) quietBox.value=live.push_quiet||'';
   renderSyscalView();
-  renderPetImgSlots();
+  // renderPetImgSlots 是 bind() 内的局部函数，这里不可达（此前每次状态轮询
+  // 都抛 ReferenceError 打断后续刷新）；槽位显示由上传/清空路径自行刷新。
 }
 // 趋势视图：每 60s 重画（新桶会推进曲线）；范围切换立即重画
 setInterval(()=>{if(currentView==='history')drawTrendChart()},60000);
@@ -3050,7 +3158,17 @@ function bind(){
   // ---- 页面编排 ----
   $('add-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);draft.pages.push({id:uniqueId('p'),title:'新页面',layout:'grid_2x2',widgets:['clock']});selected=draft.pages.length-1;markDirty()};
   $('page-title').onchange=e=>{current().title=e.target.value;markDirty()};
-  $('page-layout').onchange=e=>{current().layout=e.target.value;markDirty()};
+  $('page-layout').onchange=e=>{
+    current().layout=e.target.value;
+    if(e.target.value==='free'){
+      const comps=current().components=current().components||[];
+      if(!comps.length){
+        comps.push({t:'clock',x:40,y:60},{t:'date',x:30,y:130},
+                   {t:'lunar',x:8,y:166},{t:'sys',x:20,y:240});
+      }
+    }
+    markDirty();
+  };
   $('duplicate-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);const copy=structuredClone(current());copy.id=uniqueId('p');copy.title+=' 副本';draft.pages.splice(selected+1,0,copy);selected++;markDirty()};
   $('delete-page').onclick=()=>{if(draft.pages.length===1)return notice('至少保留 1 页',true);draft.pages.splice(selected,1);selected=Math.max(0,selected-1);markDirty()};
   const startTemplates={

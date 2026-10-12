@@ -203,6 +203,34 @@ def validate_profile(raw):
         ids.add(pid)
         layout = page.get("layout")
         widgets = page.get("widgets")
+        if layout == "free":
+            # 自由布局页（竞品拖拽编辑器 v1）：components=[{t,x,y}]，
+            # 组件类型白名单 + 坐标钳位进屏；widgets 弃用存 []。
+            comps = page.get("components")
+            if not isinstance(comps, list) or len(comps) > 8:
+                raise ValueError("自由布局页组件需为 ≤8 项的列表")
+            allowed = ("clock", "date", "lunar", "weather", "sys", "quote")
+            sizes = {"clock": (220, 60), "date": (260, 28), "lunar": (304, 28),
+                     "weather": (240, 36), "sys": (280, 28), "quote": (300, 96)}
+            out_comps = []
+            for c in comps:
+                if not isinstance(c, dict):
+                    raise ValueError("自由布局组件格式无效")
+                t = str(c.get("t", ""))
+                if t not in allowed:
+                    raise ValueError(f"未知自由组件：{t[:20]}")
+                w, h = sizes[t]
+                try:
+                    x = max(0, min(320 - w, int(c.get("x", 0))))
+                    y = max(0, min(480 - h, int(c.get("y", 0))))
+                except (TypeError, ValueError):
+                    x = y = 0
+                out_comps.append({"t": t, "x": x, "y": y})
+            out["pages"].append({"id": pid, "title": _label(page.get("title", ""), 24),
+                                 "layout": "free", "widgets": [],
+                                 "filter": "", "city": "",
+                                 "components": out_comps})
+            continue
         if layout not in ("list", "grid_2x2") or not isinstance(widgets, list):
             raise ValueError("页面布局或组件列表无效")
         if not 1 <= len(widgets) <= 4 or any(w not in WIDGET_UNITS for w in widgets):

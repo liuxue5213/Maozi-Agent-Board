@@ -4,7 +4,14 @@
 enum WidgetKind : uint8_t {
     W_AI_LIST, W_HW_CARDS, W_CLOCK, W_ENVIRONMENT,
     W_REMINDERS, W_CALENDAR, W_ALARM, W_WEATHER, W_COUNTDOWN, W_AI_COST,
-    W_PET, W_INVALID
+    W_PET, W_FREE, W_INVALID
+};
+
+// 自由布局页组件（竞品拖拽编辑器 v1：固定尺寸、坐标自由）
+// t：0=clock 1=date 2=lunar 3=weather 4=sys 5=quote
+struct FreeComp {
+    uint8_t t = 0;
+    uint16_t x = 0, y = 0;
 };
 
 struct PageConfig {
@@ -15,8 +22,11 @@ struct PageConfig {
     // 天气页绑定的城市名（须在 weather.cities 里；空 = 非/默认天气页）
     char city[13] = "";
     bool list = false;
+    bool free = false;
     uint8_t count = 0;
     WidgetKind widgets[4] = {};
+    uint8_t comp_n = 0;
+    FreeComp comps[8] = {};
 };
 
 struct ScheduleItem {

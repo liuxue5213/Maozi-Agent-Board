@@ -161,8 +161,12 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         const char* layout = page["layout"] | "";
         JsonArrayConst widgets = page["widgets"].as<JsonArrayConst>();
         if (!*id || strlen(id) > 16 || !*title || strlen(title) > 24 ||
-            (strcmp(layout, "list") && strcmp(layout, "grid_2x2")) ||
-            widgets.isNull() || widgets.size() < 1 || widgets.size() > 4) return false;
+            widgets.isNull()) return false;
+        bool is_free = !strcmp(layout, "free");
+        // 自由布局页放行（组件校验在后）；常规布局维持原名单与 1-4 组件
+        if (!is_free && (strcmp(layout, "list") && strcmp(layout, "grid_2x2")))
+            return false;
+        if (!is_free && (widgets.size() < 1 || widgets.size() > 4)) return false;
         PageConfig& dst = out.pages[i];
         // 工具过滤（客户端「按工具分页」用；空 = 全部）
         copy_text(dst.filter, sizeof(dst.filter), page["filter"] | "");
@@ -171,6 +175,35 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         copy_text(dst.id, sizeof(dst.id), id);
         copy_text(dst.title, sizeof(dst.title), title);
         dst.list = !strcmp(layout, "list");
+        dst.free = !strcmp(layout, "free");
+        if (dst.free) {
+            // 自由布局：components=[{t,x,y}]，未知组件名跳过（诚实降级）
+            JsonArrayConst comps = page["components"].as<JsonArrayConst>();
+            uint8_t cn = 0;
+            if (!comps.isNull()) {
+                for (JsonObjectConst c : comps) {
+                    if (cn >= 8) break;
+                    const char* t = c["t"] | "";
+                    uint8_t code;
+                    if (!strcmp(t, "clock")) code = 0;
+                    else if (!strcmp(t, "date")) code = 1;
+                    else if (!strcmp(t, "lunar")) code = 2;
+                    else if (!strcmp(t, "weather")) code = 3;
+                    else if (!strcmp(t, "sys")) code = 4;
+                    else if (!strcmp(t, "quote")) code = 5;
+                    else continue;
+                    dst.comps[cn].t = code;
+                    dst.comps[cn].x = (uint16_t)constrain((int)(c["x"] | 0), 0, 319);
+                    dst.comps[cn].y = (uint16_t)constrain((int)(c["y"] | 0), 0, 479);
+                    ++cn;
+                }
+            }
+            dst.comp_n = cn;
+            copy_text(dst.id, sizeof(dst.id), id);
+            copy_text(dst.title, sizeof(dst.title), title);
+            copy_text(dst.city, sizeof(dst.city), page["city"] | "");
+            continue;
+        }
         dst.count = widgets.size();
         uint8_t units = 0;
         for (uint8_t j = 0; j < dst.count; ++j) {
