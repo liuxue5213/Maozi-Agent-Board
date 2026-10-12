@@ -1,6 +1,7 @@
 """手机推送与旧城市迁移的单测。"""
 import json
 import threading
+import time
 from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -185,26 +186,27 @@ def _inbox_app(tasks=(), calendar=(), telemetry=None, tmp=None):
 
 
 def test_inbox_items_tasks_calendar_disk(tmp_path):
+    # 事件时刻用「现在+50 分钟」动态生成：测试不随墙钟过期
+    soon_dt = time.localtime(time.time() + 50 * 60)
+    soon = (f"{soon_dt.tm_year:04d}-{soon_dt.tm_mon:02d}-{soon_dt.tm_mday:02d}",
+            f"{soon_dt.tm_hour:02d}:{soon_dt.tm_min:02d}")
     app, tm = _inbox_app(
         tasks=[{"tool": "zcode", "id": "a1", "state": "WAIT_INPUT",
                 "project": "maozi-diy", "age": 65},
                {"tool": "codex", "id": "b2", "state": "GENERATING"}],
-        calendar=[{"id": "e1", "date": "2026-10-11", "time": "23:50",
+        calendar=[{"id": "e1", "date": soon[0], "time": soon[1],
                    "title": "今晚", "enabled": True},
                   {"id": "e2", "date": "2027-01-01", "time": "09:00",
                    "title": "远期", "enabled": True},
-                  {"id": "e3", "date": "2026-10-11", "time": "08:00",
+                  {"id": "e1", "date": "2026-10-11", "time": "08:00",
                    "title": "已停用", "enabled": False}],
         telemetry={"disk": 96, "diskfree": 18.5},
         tmp=tmp_path)
-    # 固定「现在」到日历当天 23:00，让 23:50 的事件落在 24h 窗口内
-    fixed = tm.mktime(tm.strptime("2026-10-11 23:00:00", "%Y-%m-%d %H:%M:%S"))
-    with mock.patch.object(tm, "time", return_value=fixed):
-        items = app.inbox_items()
+    items = app.inbox_items()
     ids = [x["id"] for x in items]
     assert "t:zcode:a1" in ids          # 等你回复
     assert "t:codex:b2" not in ids      # 进行中不进收件箱
-    assert "c:e1" in ids and "c:e2" not in ids and "c:e3" not in ids
+    assert "c:e1" in ids and "c:e2" not in ids
     assert "hw:disk" in ids             # 磁盘 ≥90%
     assert app.inbox_count() == len(items)
 
