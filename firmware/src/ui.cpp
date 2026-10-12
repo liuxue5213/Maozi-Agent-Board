@@ -1562,18 +1562,23 @@ void build_page(uint8_t index) {
     // 实际偏左且页数越多偏移越大。同时 34x24 的热区远低于 44x44 可触下限。
     // 现改为：视觉 32x22，但热区扩到 44x44（居中放置），间距统一 10px。
     uint8_t n = view_count;
-    const int DOT_W = 32, DOT_H = 22, HIT = 44, GAP = 10;
+    // 页数多时圆点自适应缩小：6 页 ×(32+10)=242px 会顶满并压到左下「设」
+    // 与右下角标；≥5 页缩为 (24+6) 节距 30，6 页总宽 174px 居中留白充足。
+    const int DOT_W = (n >= 5) ? 24 : 32, DOT_H = 22, GAP = (n >= 5) ? 6 : 10;
+    const int PITCH = DOT_W + GAP;
+    const int HIT = (44 < PITCH) ? PITCH : 44;   // 热区不超节距，防互相遮挡
     int total = n * DOT_W + (n - 1) * GAP;
     int x0 = (SCR_W - total) / 2;
     // 左下角单 ⚙：打开设置页（快捷应用 + 音量/媒体 + 亮度 合并）。
     // 原左 ☰ 右 ⚙ 双按钮按需求合并；右侧留白给页码呼吸。
     button(page.screen, "设", 4, FOOT_Y - 2, 40, 28, open_settings_cb, nullptr);
-    // 收件箱角标：页脚右下（6 页时页码点最多到 x≈281，角标 x284 宽 32 不相撞）。
+    // 收件箱角标：页脚右下「信N件」（宽 64 完整显示，不再截成光秃「N」）。
+    // 页数多时圆点自适应缩小，6 页止于 ~247，与角标 x256 不相撞。
     // 文本由 ui_set_inbox 按服务端 INBX= 维护；-1/0 隐藏。
-    page.inbox_lbl = label(page.screen, "", 20, COL_WARN, 284, FOOT_Y - 2, 32, 26);
+    page.inbox_lbl = label(page.screen, "", 20, COL_WARN, 256, FOOT_Y - 2, 64, 26);
     if (inbox_pending > 0) {
-        char t[12];
-        snprintf(t, sizeof(t), "%d件", inbox_pending);
+        char t[16];
+        snprintf(t, sizeof(t), "信%d件", inbox_pending);
         set_text(page.inbox_lbl, t);
     } else {
         lv_obj_add_flag(page.inbox_lbl, LV_OBJ_FLAG_HIDDEN);
@@ -1582,8 +1587,8 @@ void build_page(uint8_t index) {
         int cx = x0 + k * (DOT_W + GAP);
         // 透明外扩热区：保证每颗圆点实际可触面积 >= 44x44。
         lv_obj_t* hit = lv_obj_create(page.screen);
-        lv_obj_set_size(hit, HIT, HIT);
-        lv_obj_set_pos(hit, cx + (DOT_W - HIT) / 2, FOOT_Y - (HIT - DOT_H) / 2);
+        lv_obj_set_size(hit, HIT, 44);
+        lv_obj_set_pos(hit, cx + (DOT_W - HIT) / 2, FOOT_Y - (44 - DOT_H) / 2);
         lv_obj_set_style_bg_opa(hit, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(hit, 0, 0);
         lv_obj_clear_flag(hit, LV_OBJ_FLAG_SCROLLABLE);
@@ -2482,8 +2487,8 @@ void ui_set_inbox(int n) {
     for (uint8_t i = 0; i < view_count; ++i) {
         if (!views[i].inbox_lbl) continue;
         if (n > 0) {
-            char t[12];
-            snprintf(t, sizeof(t), "%d件", n);
+            char t[16];
+            snprintf(t, sizeof(t), "信%d件", n);
             set_text(views[i].inbox_lbl, t);
             lv_obj_clear_flag(views[i].inbox_lbl, LV_OBJ_FLAG_HIDDEN);
         } else {
