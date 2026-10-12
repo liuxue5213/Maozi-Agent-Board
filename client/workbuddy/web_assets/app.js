@@ -2829,12 +2829,16 @@ function renderTaskView(){
   if($('tv-task-value')) $('tv-task-value').value=String((draft.tv||{}).task_value ?? 0);
   if($('tv-tl-mode')) $('tv-tl-mode').value=String((draft.tv||{}).tl_mode ?? 0);
   if($('tv-tl-time')) $('tv-tl-time').value=String((draft.tv||{}).tl_time ?? 0);
+  if($('tv-name-mode')) $('tv-name-mode').value=String((draft.tv||{}).name_mode ?? 0);
+  if($('tv-tl-range')) $('tv-tl-range').value=String((draft.tv||{}).tl_range ?? 0);
   renderTvIdleOptions();
   // tv.* 参数回填
   if($('tv-other-tasks')) $('tv-other-tasks').value=String((draft.tv||{}).other_tasks ?? 1);
   if($('tv-task-value')) $('tv-task-value').value=String((draft.tv||{}).task_value ?? 0);
   if($('tv-tl-mode')) $('tv-tl-mode').value=String((draft.tv||{}).tl_mode ?? 0);
   if($('tv-tl-time')) $('tv-tl-time').value=String((draft.tv||{}).tl_time ?? 0);
+  if($('tv-name-mode')) $('tv-name-mode').value=String((draft.tv||{}).name_mode ?? 0);
+  if($('tv-tl-range')) $('tv-tl-range').value=String((draft.tv||{}).tl_range ?? 0);
   renderTvIdleOptions();
   renderPageSelect(); renderTaskPages(); renderTaskPreview(); renderThemeGrid();
   if(taskTab==='pages'){renderPages();renderPalette();renderInspector()}
@@ -3550,6 +3554,8 @@ function bind(){
     };
   };
   tvSet('other_tasks','tv-other-tasks');
+  tvSet('name_mode','tv-name-mode');
+  tvSet('tl_range','tv-tl-range');
   tvSet('task_value','tv-task-value');
   tvSet('tl_mode','tv-tl-mode');
   tvSet('tl_time','tv-tl-time');

@@ -68,6 +68,7 @@ struct PageView {
     lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
     lv_obj_t *offbar = nullptr;   // 离线状态条（顶部 4px 红条）
     lv_obj_t *inbox_lbl = nullptr;  // 收件箱角标（页脚右下「N件」，琥珀色）
+    lv_obj_t *title_lbl = nullptr;  // 左上冠名（tv.name_mode=1 时渲染期换智能体名）
     // 自由布局页组件标签（竞品拖拽编辑器 v1）
     lv_obj_t* free_lbl[8] = {};
     uint8_t free_t[8] = {};
@@ -571,15 +572,20 @@ void choose_task(lv_event_t* event) {
 void make_weather_city(WidgetView& view, lv_obj_t* screen, const char* city);
 
 void make_ai_tool_page(WidgetView& view, lv_obj_t* screen) {
-    view.done_band = box(screen, 8, BODY_Y, 304, 30);
-    view.root = view.done_band;      // ui_set_online 的离线描边以此为准
-    view.band_lbl = label1(view.done_band, "", 20, sub_color, 10, 0, 284);
+    // 展示范围（竞品#16）：tv_tl_range=1 仅进行中——不建完成带，5 行上移补位
+    if (!g_profile.tv_tl_range) {
+        view.done_band = box(screen, 8, BODY_Y, 304, 30);
+        view.root = view.done_band;      // ui_set_online 的离线描边以此为准
+        view.band_lbl = label1(view.done_band, "", 20, sub_color, 10, 0, 284);
+    }
     for (int i = 0; i < 5; ++i) {
-        lv_obj_t* row = box(screen, 8, 94 + 70 * i, 304, 66);
+        int y = g_profile.tv_tl_range ? 44 + 70 * i : 94 + 70 * i;
+        lv_obj_t* row = box(screen, 8, y, 304, 66);
         lv_obj_set_style_bg_color(row, lv_color_hex(bg), 0);
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, choose_task, LV_EVENT_CLICKED, &view);
         view.rows[i] = row;
+        if (i == 0 && !view.root) view.root = row;   // 离线描边挂首行
         view.row_dot[i] = dot_obj(row, 8, 10, 8);
         view.row_tool[i] = label(row, "", 20, text_color, 22, 4, 104, 26);
         view.row_info[i] = label(row, "", 20, sub_color, 126, 4, 170, 26);
@@ -1522,7 +1528,7 @@ void build_page(uint8_t index) {
     // 标题宽度要能让出时钟的位置。时钟改成 HH:MM:SS 后需要约 96px
     // （cn_24 下 "00:00:00" 实测 96.4px），所以标题从 112 收到 100——
     // 4 个汉字的标题（如「帽子看板」= 96px）仍然完整显示，更长的照旧截断。
-    label1(page.screen, config.title, 20, text_color, 8, HEAD_Y,
+    page.title_lbl = label1(page.screen, config.title, 20, text_color, 8, HEAD_Y,
            top_clock ? 100 : (top_wx ? 174 : 190));
     if (top_clock) {
         // 中置时钟：110..210 居中于屏幕中线，96.4px 的时间串在 100px 盒子里
@@ -2324,10 +2330,18 @@ void render_all() {
     snprintf(tb, sizeof(tb), "%02d:%02d:%02d",
              secs / 3600, (secs / 60) % 60, secs % 60);
     const char* wx_txt = latest.wx_valid ? weather_text(latest.wx_code) : "";
+    const char* focus_tool = latest.tasks[0].used ? latest.tasks[0].tool : "";
     for (uint8_t p = 0; p < view_count; ++p) {
         PageView& page = views[p];
         if (page.topclock) set_text(page.topclock, tb);
         if (page.topwx) set_text(page.topwx, wx_txt);
+        // 冠名自动（竞品「自动显示智能体名称」）：焦点会话的工具名优先
+        if (page.title_lbl) {
+            if (g_profile.tv_name_mode && focus_tool[0])
+                set_text(page.title_lbl, focus_tool);
+            else
+                set_text(page.title_lbl, g_profile.pages[p].title);
+        }
         if (page.topdot)
             lv_obj_set_style_bg_color(page.topdot,
                 lv_color_hex(online ? COL_OK : COL_ERR), 0);

@@ -233,6 +233,23 @@ class PoemsTests(unittest.TestCase):
         self.assertEqual(len(set(BUILTIN)), len(BUILTIN))
 
 
+class TvNameRangeTests(unittest.TestCase):
+    """冠名模式与时间线展示范围（竞品 #19/#16）。"""
+
+    def test_defaults(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(out["tv"]["name_mode"], 0)
+        self.assertEqual(out["tv"]["tl_range"], 0)
+
+    def test_roundtrip(self):
+        out = validate_profile(base(tv={"name_mode": 1, "tl_range": 1}))
+        self.assertEqual((out["tv"]["name_mode"], out["tv"]["tl_range"]), (1, 1))
+
+    def test_clamped(self):
+        out = validate_profile(base(tv={"name_mode": 5, "tl_range": 9}))
+        self.assertEqual((out["tv"]["name_mode"], out["tv"]["tl_range"]), (1, 1))
+
+
 class BreakReminderTests(unittest.TestCase):
     """久坐提醒阈值（pet.break_min，分钟，0=关）。"""
 
