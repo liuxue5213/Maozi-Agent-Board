@@ -115,6 +115,7 @@ struct PetParts {
 };
 static PetParts pet_ai, pet_page;
 static lv_obj_t* pet_photo = nullptr;    // 宠物页角色图层（图片资源包）
+static lv_obj_t* pet_tint = nullptr;     // 氛围层：昼夜/雨天色罩（盖图、低于控件）
 static char pet_photo_frame[24] = "";    // 当前显示的帧名（pet_<x>.jpg）
 // 相册轮播：当前文件序号 / 上次轮换时刻
 static uint8_t sv_idx = 1, sv_count = 0;
@@ -954,6 +955,16 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     if (petimg_loaded()[0]) lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
     draw_pet(pet_page, screen, g_profile.pet_type, 96, 66, 2);
+    // 氛围层：夜间压暗 / 傍晚暖色 / 雨天淡蓝（点击穿透，不影响触控）
+    pet_tint = lv_obj_create(screen);
+    lv_obj_set_pos(pet_tint, 0, 0);
+    lv_obj_set_size(pet_tint, 320, 480);
+    lv_obj_set_style_bg_opa(pet_tint, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(pet_tint, 0, 0);
+    lv_obj_set_style_radius(pet_tint, 0, 0);
+    lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_GESTURE_BUBBLE);
     // 三条状态条（饱食/水分/活力），PS 遥测实时驱动
     static const char* names[3] = {"饱食", "水分", "活力"};
     for (int i = 0; i < 3; ++i) {
@@ -968,6 +979,33 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     label1(screen, "状态保存在电脑，互动立即生效", 20, sub_color, 10, 396, 300);
 }
 
+/* 氛围层：按时段与天气给角色场景叠色，让静态图有"活"的气息。
+   夜间(22-6)深蓝压暗；傍晚(18-22)暖橙；雨天(今日预报为雨系)淡蓝优先。
+   无时钟/无匹配 → 无层（原画直出）。 */
+void pet_ambient_tick() {
+    if (!pet_tint) return;
+    uint32_t col = 0;
+    uint8_t opa = 0;
+    int64_t total = 0; int sod = 0;
+    if (local_clock_now(total, nullptr, &sod)) {
+        int h = sod / 3600;
+        if (h >= 22 || h < 6) { col = 0x0A1428; opa = 110; }
+        else if (h >= 18)     { col = 0x58341A; opa = 45; }
+        else if (h < 7)       { col = 0x2E405E; opa = 40; }
+    }
+    int wcode = latest.cities[0].days[0].code;
+    if ((wcode >= 51 && wcode < 90) || wcode >= 95) {   // 雨系：优先于时段
+        col = 0x24344E; opa = 80;
+    }
+    if (opa) {
+        lv_obj_set_style_bg_color(pet_tint, lv_color_hex(col), 0);
+        lv_obj_set_style_bg_opa(pet_tint, opa, 0);
+        lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void render_pet_page(WidgetView& view) {
     if (!view.pm_fill[0]) return;
     int vals[3] = {latest.pet_h, latest.pet_t, latest.pet_e};
@@ -980,6 +1018,7 @@ void render_pet_page(WidgetView& view) {
             set_text(view.pm_val[i], line);
         }
     }
+    pet_ambient_tick();
     const char* st = latest.tasks[0].used ? latest.tasks[0].state : "IDLE";
     PetLayer layer = pet_arbitrate(st, millis());
     static const char* frame_of[] = {
