@@ -943,8 +943,27 @@ static void pet_apply_expression(PetParts& p, const char* st,
     }
 }
 
+static lv_obj_t* pet_img_ai = nullptr;   // AI 卡角落的角色图缩略
+
 void make_pet_compact(WidgetView& view, lv_obj_t* screen) {
     (void)screen;
+    workanim_prepare();
+    // 图片优先：自定义形象 > 状态帧 > 像素降级（缩略盖 AI 卡右上角）
+    const char* pick = petimg_exists("pet_custom") ? "pet_custom"
+                     : (petimg_exists("pet_working") ? "pet_working" : nullptr);
+    if (pick && petimg_decode_name(pick)) {
+        if (!pet_img_ai) {
+            pet_img_ai = lv_img_create(view.root);
+            lv_obj_set_pos(pet_img_ai, 226, 36);
+            lv_obj_set_size(pet_img_ai, 72, 108);
+        }
+        lv_img_set_src(pet_img_ai, (const void*)petimg_source());
+        lv_img_set_zoom(pet_img_ai, 56);            // 320 宽 → 70px
+        lv_obj_clear_flag(pet_img_ai, LV_OBJ_FLAG_HIDDEN);
+        if (pet_ai.root) lv_obj_add_flag(pet_ai.root, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    if (pet_img_ai) lv_obj_add_flag(pet_img_ai, LV_OBJ_FLAG_HIDDEN);
     draw_pet(pet_ai, view.root, g_profile.pet_type, 229, 42, 1);
 }
 
@@ -953,13 +972,30 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     // 彩色角色图层（/pet_<帧>.jpg 资源包）：存在对应帧时显示图片并隐藏
     // 像素宠物；无资源包保持像素绘制（诚实降级）。
     pet_photo = lv_img_create(screen);
-    lv_img_set_src(pet_photo, (const void*)petimg_source());
     lv_obj_set_pos(pet_photo, 0, 0);
     lv_obj_set_size(pet_photo, 320, 480);
-    if (petimg_loaded()[0]) lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
-    workanim_prepare();
+    // 图源优先级：用户上传的 custom 形象 > 状态帧图集 > 无（像素降级）。
+    // 统一走 photo_ok 路径：custom 分支不提前 return（否则跳过 tint/状态条
+    // 的创建，首次 rebuild 时 pet_tint 悬空 → lv_obj_add_flag(NULL) panic）。
+    bool photo_ok = false;
+    if (petimg_exists("pet_custom") && petimg_decode_name("pet_custom")) {
+        photo_ok = true;
+    } else if (petimg_exists("pet_working")) {
+        workanim_prepare();
+        photo_ok = petimg_decode_name("pet_working");
+    }
+    if (photo_ok) {
+        lv_img_set_src(pet_photo, (const void*)petimg_source());
+        lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+    }
     draw_pet(pet_page, screen, g_profile.pet_type, 96, 66, 2);
+    if (photo_ok) {
+        if (pet_page.root) lv_obj_add_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
+    } else if (pet_page.root) {
+        lv_obj_clear_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
+    }
     // 氛围层：夜间压暗 / 傍晚暖色 / 雨天淡蓝（点击穿透，不影响触控）
     pet_tint = lv_obj_create(screen);
     lv_obj_set_pos(pet_tint, 0, 0);
