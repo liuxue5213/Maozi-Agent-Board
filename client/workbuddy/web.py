@@ -199,6 +199,28 @@ def start_settings_server(app, port):
                                           "dir": str(d), "frames": len(frames)})
                 self._json(200, {"packs": packs})
                 return
+            if path == "/api/petpack-thumb":
+                # 场景包缩略图（取包内 pet_idle.jpg）；name 白名单防路径穿越
+                try:
+                    name = urlsplit(self.path).query.split("name=")[1].split("&")[0]
+                except IndexError:
+                    name = ""
+                if not re.fullmatch(r"[a-z0-9_]{1,24}", name):
+                    self._json(400, {"error": "包名非法"})
+                    return
+                f = (Path(__file__).resolve().parents[2]
+                     / "outputs" / f"petpack_{name}" / "pet_idle.jpg")
+                if not f.is_file():
+                    self.send_error(404)
+                    return
+                data = f.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path == "/api/snapshot":
                 # 设备实拍 PNG（无图或设备不支持时 404）
                 data = app.snapshot_bytes()
@@ -385,7 +407,10 @@ def start_settings_server(app, port):
                         "type": str(data.get("type", "robot")),
                         "name": str(data.get("name", "帽子")),
                         "sleep": 1 if data.get("sleep", old_pet.get("sleep", 1)) else 0,
-                        "greet": 1 if data.get("greet", old_pet.get("greet", 0)) else 0}
+                        "greet": 1 if data.get("greet", old_pet.get("greet", 0)) else 0,
+                        "autopack": 1 if data.get("autopack", old_pet.get("autopack", 0)) else 0,
+                        "day_pack": str(data.get("day_pack", old_pet.get("day_pack", "")) or ""),
+                        "night_pack": str(data.get("night_pack", old_pet.get("night_pack", "")) or "")}
                     result = app.save_profile(candidate)
                     self._json(200, {"status": "已保存，待同步",
                                      "version": result["version"]})
@@ -435,44 +460,30 @@ def start_settings_server(app, port):
                                      "state": syscal_mod.read_state(),
                                      "refreshed": refreshed})
                 elif path == "/api/petpack-apply":
-                    # 应用场景包：整套 pet_<状态>.jpg 经 IMG 通道下发设备。
-                    # 单帧 ACK 偶发超时（设备端 workanim 解码与串口竞争），
-                    # 每帧最多重试 3 次并回报失败原因。
-                    base = Path(__file__).resolve().parents[2] / "outputs"
+                    # 应用场景包：整套下发（重试/原因在 app.apply_petpack）。
+                    # 手动应用记为当前时段的选择——昼夜自动切换开启时，
+                    # 同步进 profile 对应时段的包位，10 分钟后不会被自动切走。
                     name = str(data.get("name", ""))
                     if not re.fullmatch(r"[a-z0-9_]{1,24}", name):
                         self._json(400, {"error": "包名非法"})
                         return
-                    d = base / f"petpack_{name}"
-                    if not d.is_dir():
+                    if not (app.petpack_base() / f"petpack_{name}").is_dir():
                         self._json(404, {"error": "包不存在"})
                         return
-                    # 应用包 = 切换当前形象：清掉设备上的自定义形象，
-                    # 否则 pet_custom 优先级恒高于状态帧，包永远看不到。
-                    app.delete_album_image("pet_custom.jpg")
-                    sent, failed, reasons = 0, [], {}
-                    for st in ("working", "thinking", "sleeping", "greeting",
-                               "happy", "error", "idle", "sleepy"):
-                        f = d / f"pet_{st}.jpg"
-                        if not f.is_file():
-                            failed.append(st)
-                            reasons[st] = "包内缺帧"
-                            continue
-                        ok = False
-                        for _ in range(3):
-                            if app.send_bg_image(f.read_bytes(), f"pet_{st}.jpg"):
-                                ok = True
-                                break
-                            reasons[st] = str(getattr(app, "_last_bg_result", {})
-                                              .get("reason", "未知"))
-                            time.sleep(0.4)
-                        if ok:
-                            sent += 1
-                        else:
-                            failed.append(st)
-                    self._json(200, {"sent": sent, "failed": failed,
-                                     "reasons": reasons,
-                                     "status": f"已下发 {sent} 张（{name} 包）"})
+                    result = app.apply_petpack(name)
+                    period = app.pack_period()
+                    app.mark_pack_applied(name, period)
+                    pet = dict(app.profile.get("pet") or {})
+                    if pet.get("autopack"):
+                        candidate = dict(app.profile)
+                        candidate["pet"] = {**pet,
+                                            "night_pack" if period == "night"
+                                            else "day_pack": name}
+                        app.save_profile(candidate)
+                    self._json(200, {"sent": result["sent"],
+                                     "failed": result["failed"],
+                                     "reasons": result["reasons"],
+                                     "status": f"已下发 {result['sent']} 张（{name} 包）"})
                     return
                 if path == "/api/inbox-open":
                     # 收件箱「打开项目」：mode=finder(默认) / terminal

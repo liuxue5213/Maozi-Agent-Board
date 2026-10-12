@@ -1879,6 +1879,13 @@ function renderPetTab(){
   const sleepT=$('pet-sleep'), greetT=$('pet-greet');
   if(sleepT) sleepT.checked=!(draft.pet?.sleep===0);
   if(greetT) greetT.checked=!!draft.pet?.greet;
+  // 昼夜自动切包：仅在选项已填充时回填（refreshPetPacks 填充后也会再对一次）
+  const ap=$('pet-autopack');
+  if(ap) ap.checked=!!draft.pet?.autopack;
+  ['pet-pack-day','pet-pack-night'].forEach((id,i)=>{
+    const sel=$(id), v=draft.pet?.[i?'night_pack':'day_pack'];
+    if(sel && v && [...sel.options].some(o=>o.value===v)) sel.value=v;
+  });
   renderPetStats();
 }
 function renderPetStats(){
@@ -3201,10 +3208,16 @@ function bind(){
     try{
       const r=await request('/api/pet-config',{type:petCache?.type||'robot',
         name:$('pet-name').value.trim()||'帽子',
-        sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0});
+        sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
+        autopack:$('pet-autopack')?.checked?1:0,
+        day_pack:$('pet-pack-day')?.value||'',
+        night_pack:$('pet-pack-night')?.value||''});
       draft.pet={...(draft.pet||{}), type:petCache?.type||'robot',
         name:$('pet-name').value.trim()||'帽子',
-        sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0};
+        sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
+        autopack:$('pet-autopack')?.checked?1:0,
+        day_pack:$('pet-pack-day')?.value||'',
+        night_pack:$('pet-pack-night')?.value||''};
       notice(`宠物形象已保存（v${r.version}），同步后设备换新装`);
       poll();
     }catch(e){notice(e.message,true)}
@@ -3428,21 +3441,42 @@ function bind(){
     }catch(e){notice(e.message,true)}
   });
 
-  // ---- 场景包：列出 outputs/petpack_*/ 并整套应用（重传 8 张） ----
+  // ---- 场景包：列出 outputs/petpack_*/，手动应用 + 昼夜双包配置 ----
+  function fillPackSelect(sel, packs, empty){
+    if(!sel) return;
+    sel.replaceChildren();
+    if(!packs.length){
+      const o=el('option','',empty); o.value=''; sel.append(o);
+      return;
+    }
+    packs.forEach(p=>{
+      const o=el('option','',`${p.name}（${p.frames} 帧）`); o.value=p.name; sel.append(o);
+    });
+  }
   async function refreshPetPacks(){
     const sel=$('pet-pack-select'); if(!sel)return;
     try{
       const d=await request('/api/petpacks');
-      sel.replaceChildren();
       const packs=d.packs||[];
-      packs.forEach(p=>{
-        const o=el('option','',`${p.name}（${p.frames} 帧）`); o.value=p.name; sel.append(o);
-      });
-      if(!packs.length){
-        const o=el('option','','（无包——pet_artwork.py --pack 生成）'); o.value=''; sel.append(o);
-      }
+      fillPackSelect(sel, packs, '（无包——pet_artwork.py --pack 生成）');
+      fillPackSelect($('pet-pack-day'), packs, '（未设置白天包）');
+      fillPackSelect($('pet-pack-night'), packs, '（未设置夜晚包）');
+      // 恢复 profile 里存的选择（draft.pet.day_pack/night_pack）
+      const day=$('pet-pack-day'), night=$('pet-pack-night');
+      if(day && draft.pet?.day_pack) day.value=draft.pet.day_pack;
+      if(night && draft.pet?.night_pack) night.value=draft.pet.night_pack;
+      if($('pet-autopack')) $('pet-autopack').checked=!!draft.pet?.autopack;
+      updatePackThumb();
     }catch(e){}
   }
+  function updatePackThumb(){
+    const img=$('pet-pack-thumb'); if(!img)return;
+    const name=$('pet-pack-select')?.value;
+    if(!name){ img.style.display='none'; return; }
+    img.style.display='';
+    img.src=`/api/petpack-thumb?name=${encodeURIComponent(name)}&t=${Date.now()}`;
+  }
+  $('pet-pack-select').onchange=updatePackThumb;
   $('pet-pack-apply').onclick=async()=>{
     const name=$('pet-pack-select').value;
     if(!name){notice('先选择场景包',true);return}

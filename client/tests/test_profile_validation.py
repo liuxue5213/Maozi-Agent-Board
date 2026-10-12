@@ -209,6 +209,45 @@ class PetFlagTests(unittest.TestCase):
         self.assertEqual((out["pet"]["sleep"], out["pet"]["greet"]), (1, 1))
 
 
+class PetPackTests(unittest.TestCase):
+    """昼夜自动切包的 profile 字段与切换判定。"""
+
+    def test_pack_fields_default_empty(self):
+        out = validate_profile(default_profile())
+        self.assertEqual(out["pet"]["autopack"], 0)
+        self.assertEqual(out["pet"]["day_pack"], "")
+        self.assertEqual(out["pet"]["night_pack"], "")
+
+    def test_pack_fields_roundtrip(self):
+        out = validate_profile(base(pet={"type": "cat", "name": "x",
+                                         "autopack": 1,
+                                         "day_pack": "window",
+                                         "night_pack": "night"}))
+        self.assertEqual((out["pet"]["autopack"],
+                          out["pet"]["day_pack"],
+                          out["pet"]["night_pack"]), (1, "window", "night"))
+
+    def test_pack_name_bad_chars_dropped(self):
+        # 包名只引用 outputs/petpack_<名>/，白名单外的直接清空（不放行不报错）
+        out = validate_profile(base(pet={"type": "robot", "name": "x",
+                                         "day_pack": "../etc",
+                                         "night_pack": "夜包"}))
+        self.assertEqual(out["pet"]["day_pack"], "")
+        self.assertEqual(out["pet"]["night_pack"], "")
+
+    def test_pack_period_matches_ambient_tint_boundary(self):
+        from workbuddy.app import App
+        # 与固件氛围层同界：夜 22-6（本地时区构造，避免依赖机器当前时钟）
+        import time as _t
+        def mk(h):
+            return _t.mktime(_t.strptime(f"2026-10-12 {h:02d}:30", "%Y-%m-%d %H:%M"))
+        self.assertEqual(App.pack_period(None, mk(14)), "day")
+        self.assertEqual(App.pack_period(None, mk(6)), "day")
+        self.assertEqual(App.pack_period(None, mk(23)), "night")
+        self.assertEqual(App.pack_period(None, mk(5)), "night")
+        self.assertEqual(App.pack_period(None, mk(22)), "night")
+
+
 class SmcIntervalTests(unittest.TestCase):
     def test_default_interval_is_20(self):
         out = validate_profile(default_profile())

@@ -43,6 +43,10 @@ _PUSH_STATE_NAMES = {"DONE": "已完成", "ERROR": "出错",
 # 一个事实源。文件很小且每秒最多写一次，mtime 校验懒加载足够。
 INBOX_STATE_PATH = Path.home() / ".workbuddy" / "inbox-state.json"
 
+# 场景包昼夜自动切换的「当前已应用包」落盘：客户端重启后不重复下发，
+# 部分失败时靠 at 时间戳做 ≥10 分钟的重试退避。
+PACK_STATE_PATH = Path.home() / ".workbuddy" / "petpack-state.json"
+
 
 def _fmt_mmss(seconds: int) -> str:
     seconds = max(0, int(seconds))
@@ -160,6 +164,7 @@ class App:
                              daemon=True).start()
         self.profile_status = "待同步"
         self.profile_error = ""
+        self._pack_next = 0.0         # 昼夜切包检查的节流闸（_pack_tick）
         self.applied_version = None
         # 设备最近一次成功应用的内容快照：「回到设备版本」的数据源。
         # 新版本应用失败时用户可以把客户端配置退回去，而不是卡在失败态。
@@ -923,6 +928,90 @@ class App:
         self.health.event("bgimg_cleared")
         return True
 
+    # ---- 场景包（outputs/petpack_<名>/）：整套应用 + 昼夜自动切换 ----
+
+    PACK_STATES = ("working", "thinking", "sleeping", "greeting",
+                   "happy", "error", "idle", "sleepy")
+
+    def petpack_base(self) -> Path:
+        return Path(__file__).resolve().parents[2] / "outputs"
+
+    def pack_period(self, now: float | None = None) -> str:
+        """昼夜分界与固件氛围层同界（夜 22-6），体验一致。"""
+        t = time.localtime(now if now is not None else time.time())
+        return "night" if (t.tm_hour >= 22 or t.tm_hour < 6) else "day"
+
+    def apply_petpack(self, name: str) -> dict:
+        """整套下发 pet_<状态>.jpg。单帧 ACK 偶发超时（设备端 workanim
+        解码与串口竞争），每帧最多重试 3 次并回报原因。不写状态文件——
+        由调用方（手动路由/自动切换）决定语义。"""
+        d = self.petpack_base() / f"petpack_{name}"
+        sent, failed, reasons = 0, [], {}
+        if not d.is_dir():
+            return {"sent": 0,
+                    "failed": list(self.PACK_STATES),
+                    "reasons": {"pack": "包不存在"}}
+        # 应用包 = 切换当前形象：清自定义形象（pet_custom 优先级恒高于状态帧）
+        self.delete_album_image("pet_custom.jpg")
+        for st in self.PACK_STATES:
+            f = d / f"pet_{st}.jpg"
+            if not f.is_file():
+                failed.append(st)
+                reasons[st] = "包内缺帧"
+                continue
+            ok = False
+            for _ in range(3):
+                if self.send_bg_image(f.read_bytes(), f"pet_{st}.jpg"):
+                    ok = True
+                    break
+                reasons[st] = str(getattr(self, "_last_bg_result", {})
+                                  .get("reason", "未知"))
+                time.sleep(0.4)
+            if ok:
+                sent += 1
+            else:
+                failed.append(st)
+        return {"sent": sent, "failed": failed, "reasons": reasons}
+
+    def mark_pack_applied(self, name: str, period: str) -> None:
+        try:
+            PACK_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            PACK_STATE_PATH.write_text(json.dumps(
+                {"pack": name, "period": period, "at": time.time()}),
+                encoding="utf-8")
+        except OSError:
+            pass
+
+    def _pack_state(self) -> dict:
+        try:
+            return json.loads(PACK_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _pack_tick(self, now: float) -> None:
+        """昼夜自动切包：每 60s 检查一次；同包 10 分钟内不重发（部分帧
+        失败时靠这个退避自动补齐，不会每分钟轰一遍串口）。"""
+        # 未开启即返回；getattr 兜底测试用 __new__ 构造的轻量实例
+        pet = (getattr(self, "profile", None) or {}).get("pet") or {}
+        if not pet.get("autopack"):
+            return
+        if now < getattr(self, "_pack_next", 0.0):
+            return
+        self._pack_next = now + 60
+        period = self.pack_period(now)
+        desired = str(pet.get("night_pack" if period == "night"
+                              else "day_pack") or "")
+        if not desired:
+            return
+        st = self._pack_state()
+        if st.get("pack") == desired and now - st.get("at", 0) < 600:
+            return
+        if not (self.link and self.link.status.startswith("connected:")):
+            return
+        result = self.apply_petpack(desired)
+        self.health.event("petpack_auto", pack=desired, sent=result["sent"])
+        self.mark_pack_applied(desired, period)   # 失败也记：at 提供重试退避
+
     def delete_album_image(self, name: str) -> bool:
         """删除相册/角色图（name = sv1..sv8.jpg 或 pet_<状态>.jpg，白名单同上传）。"""
         import re as _re
@@ -1039,6 +1128,7 @@ class App:
         return ""
 
     def tick(self, now: float) -> dict:
+        self._pack_tick(now)   # 自带 60s 节流，每秒进一次无负担
         t = self.collector.sample(now)
         # 每帧显式清空空槽，避免任务结束后固件继续显示旧任务。
         for i in range(4):

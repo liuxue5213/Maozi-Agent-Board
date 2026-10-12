@@ -753,12 +753,22 @@
           </div>
           <div class="field-heading"><span>场景包（整套切换）</span></div>
           <div class="btn-row">
+            <img id="pet-pack-thumb" alt="" style="width:54px;height:81px;border-radius:8px;border:1px solid var(--edge,#4B6685);object-fit:cover;display:none">
             <select id="pet-pack-select" class="text-input" style="flex:1">
               <option value="">扫描中…</option>
             </select>
             <button type="button" class="button primary" id="pet-pack-apply">应用此包</button>
           </div>
           <p class="hint" id="pet-pack-note">包目录在 outputs/petpack_&lt;名称&gt;/（pet_artwork.py 生成），应用时整套 8 张重传设备（约 20 秒）；应用包会替换设备上的自定义形象（以包为准，想恢复自定义图重新上传即可）。</p>
+          <label class="field toggle">
+            <input type="checkbox" id="pet-autopack">
+            <span>跟随昼夜自动切换（白天用「白天包」，22:00–06:00 用「夜晚包」，与屏幕氛围层同步）</span>
+          </label>
+          <div class="btn-row">
+            <select id="pet-pack-day" class="text-input" style="flex:1"></select>
+            <select id="pet-pack-night" class="text-input" style="flex:1"></select>
+          </div>
+          <p class="hint">左=白天包　右=夜晚包；到点自动整套切换（切换检查每分钟一次，断连时跳过、连上后补切）。开启后手动「应用此包」会记为当前时段的包。</p>
           <div class="field-heading"><span>彩色角色图（图集管线）</span></div>
           <p class="hint">选 1-8 张 320×480 竖版 JPG，按文件名映射状态：
             pet_working / pet_thinking / pet_sleeping / pet_greeting / pet_happy /

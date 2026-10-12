@@ -114,11 +114,20 @@ def validate_profile(raw):
             return default
     pet_sleep = _pet_flag("sleep", 1)   # 凌晨自动睡觉（0=仅犯困提示）
     pet_greet = _pet_flag("greet", 0)   # 整点/半点问候
+    # 昼夜自动切包：包名只作 outputs/petpack_<名>/ 目录引用，白名单字符集
+    pet_day = str(pet.get("day_pack", "") or "")
+    pet_night = str(pet.get("night_pack", "") or "")
+    if not re.fullmatch(r"[a-z0-9_]{0,24}", pet_day):
+        pet_day = ""
+    if not re.fullmatch(r"[a-z0-9_]{0,24}", pet_night):
+        pet_night = ""
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
     "weather": {"city": ""}, "theme": {}, "smc": {"interval": 20},
     "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
-            "sleep": pet_sleep, "greet": pet_greet}}
+            "sleep": pet_sleep, "greet": pet_greet,
+            "autopack": _pet_flag("autopack", 0),
+            "day_pack": pet_day, "night_pack": pet_night}}
     # 自动分页：开启时由客户端按活跃工具重排 AI 页（全部 + 每工具一页）。
     # 设备不认识这个键（未知 JSON 键被忽略），它只是客户端重排的授权开关。
     try:
