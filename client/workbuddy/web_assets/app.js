@@ -1320,6 +1320,7 @@ function devFreePage(screen, ctx, page){
       const lines=String(vals[c.t==='music'?'music':'ai_focus']).split('\n');
       devLabel(box, 0, 0, 304, lines[0]||'', 20, null, ctx.text);
       if(lines[1])devLabel(box, 0, 30, 304, lines[1], 20, 'dev-dim');
+      if(c.t==='music')devLabel(box, 304-46, 0, 46, '⏯ 可点', 20, null, ctx.accent, 'right');
       screen.append(box); return;
     }
     if(c.t==='weather'){

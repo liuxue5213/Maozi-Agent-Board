@@ -1042,13 +1042,17 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
             continue;
         }
         if (c.t == 15) {
-            // 正在播放：透明容器两行（歌名 / 歌手 · 进度）
+            // 正在播放：透明容器两行（歌名 / 歌手 · 进度）；触摸=播放/暂停
+            // （uplink_key PLAY → 客户端 _handle_key：有会话 toggle，无会话
+            // 启动用户选定的默认音乐软件）
             lv_obj_t* box = lv_obj_create(screen);
             lv_obj_set_pos(box, c.x, c.y);
             lv_obj_set_size(box, 304, 64);
             lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
             lv_obj_set_style_border_width(box, 0, 0);
             lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(box, send_key_cb, LV_EVENT_CLICKED, (void*)"PLAY");
             label1(box, "未在播放", 20, text_color, 0, 0, 304);
             label1(box, "", 20, sub_color, 0, 30, 304);
             page.free_lbl[i] = box;
