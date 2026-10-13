@@ -151,9 +151,19 @@ def validate_profile(raw):
         pet_night = ""
     if not re.fullmatch(r"[a-z0-9_]{0,24}", pet_weather):
         pet_weather = ""
+    # 用量看板（P1-2）：日预算阈值（千 token，0=不设限）。超限提醒由
+    # Web 端按 status 的 usage_budget.exceeded 触发，这里只做校验与钳制。
+    usage_raw = raw.get("usage")
+    if not isinstance(usage_raw, dict):
+        usage_raw = {}
+    try:
+        budget_daily_k = max(0, min(10_000_000, int(usage_raw.get("budget_daily_k", 0) or 0)))
+    except (TypeError, ValueError):
+        budget_daily_k = 0
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
     "weather": {"city": ""}, "theme": {}, "smc": {"interval": 20},
+    "usage": {"budget_daily_k": budget_daily_k},
     "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
             "sleep": pet_sleep, "greet": pet_greet,
             "autopack": _pet_flag("autopack", 0),

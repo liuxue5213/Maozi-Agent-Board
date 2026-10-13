@@ -27,6 +27,22 @@ def _day_of(iso: str) -> str:
         return text[:10]
 
 
+def _hour_of(iso: str) -> str:
+    """ISO 时间按电脑本地时区归到小时桶（YYYY-MM-DDTHH）；失败返回空串。
+
+    与 _day_of 同口径（同一时区换算），保证「小时桶之和 = 今日累计」。"""
+    text = str(iso or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone().strftime("%Y-%m-%dT%H")
+    except (TypeError, ValueError):
+        return ""
+
+
 def _zcode_tool_steps(d: dict):
     """rollout 记录里的工具步数与最近输出片段：(n, snippet≤40)。"""
     n = 0
@@ -152,10 +168,18 @@ class _IncFile:
 
 
 class UsageScanner:
-    """后台线程：每 60 秒增量扫描，输出今日汇总 + 每工具最新模型。"""
+    """后台线程：每 60 秒增量扫描，输出今日汇总 + 每工具最新模型。
 
-    def __init__(self, roots: dict):
+    P1-2 用量透明度：小时桶/按日趋势（持久化，重启不清零）、高消耗会话
+    排行、数据来源与最后更新时间。"""
+
+    # 趋势持久化：小时桶保留 48 个、按日累计保留 8 天
+    HOURLY_KEEP = 48
+    DAILY_KEEP = 8
+
+    def __init__(self, roots: dict, trend_path: Path | None = None):
         self.roots = roots
+        self.trend_path = trend_path or Path.home() / ".workbuddy" / "usage-trend.json"
         self._zinc = _IncFile()
         self._cinc = _IncFile()
         self._codex_inc = _IncFile()
@@ -176,6 +200,12 @@ class UsageScanner:
         # 会话级今日累计（客户端启动后增量；sid -> {"total","out"}）——
         # 供「本轮 Token」显示。重启清零：语义 = 本次运行期间该会话的用量。
         self.by_sid: dict[str, dict] = {}
+        # P1-2：小时桶（YYYY-MM-DDTHH -> tokens）/按日累计（YYYY-MM-DD -> tokens）
+        self.hourly: dict[str, int] = {}
+        self.daily: dict[str, int] = {}
+        self.seen_by_tool: dict[str, float] = {}  # 每来源最近扫到用量记录的时刻
+        self.updated_at = 0.0                     # 最近一次成功扫描完成时刻
+        self._load_trend()
         self._thread = None
         self._stop = False
         self.last_error = ""
@@ -196,7 +226,48 @@ class UsageScanner:
                     "last_step_by_tool": dict(self.last_step_by_tool),
                     "last_msg_by_tool": dict(self.last_msg_by_tool),
                     "last_msg_by_sid": dict(self.last_msg_by_sid),
-                    "by_sid": {k: dict(v) for k, v in self.by_sid.items()}}
+                    "by_sid": {k: dict(v) for k, v in self.by_sid.items()},
+                    # P1-2：趋势 / 排行 / 来源与更新时间
+                    "trend_hourly": dict(sorted(self.hourly.items())[-24:]),
+                    "trend_daily": dict(sorted(self.daily.items())),
+                    "top_sessions": [
+                        {"sid": sid, **vals} for sid, vals in
+                        sorted(self.by_sid.items(),
+                               key=lambda kv: -kv[1].get("total", 0))[:5]],
+                    "seen_by_tool": dict(self.seen_by_tool),
+                    "updated_at": self.updated_at,
+                    "last_error": self.last_error}
+
+    # ---- 趋势持久化（P1-2）----
+
+    def _load_trend(self):
+        try:
+            d = json.loads(self.trend_path.read_text(encoding="utf-8"))
+            self.hourly = {str(k): int(v)
+                           for k, v in (d.get("hourly") or {}).items()}
+            self.daily = {str(k): int(v)
+                          for k, v in (d.get("daily") or {}).items()}
+        except Exception:
+            self.hourly, self.daily = {}, {}
+
+    def _save_trend(self):
+        """原子写（tmp + replace），不占锁调用。"""
+        try:
+            self.trend_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.trend_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(
+                {"hourly": self.hourly, "daily": self.daily},
+                ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.trend_path)
+        except OSError:
+            pass
+
+    @classmethod
+    def _prune_trend(cls, hourly: dict, daily: dict) -> tuple[dict, dict]:
+        hours = sorted(hourly)[-cls.HOURLY_KEEP:]
+        days = sorted(daily)[-cls.DAILY_KEEP:]
+        return ({k: hourly[k] for k in hours},
+                {k: daily[k] for k in days})
 
     def _loop(self):
         time.sleep(3)
@@ -216,6 +287,9 @@ class UsageScanner:
         # “会话已有数字但今日仍为 0”的半成品状态。
         with self._lock:
             if self._day != today:
+                # 跨日：先把上一日的总量归档进按日趋势，再清今日各累计器
+                if self._day and self.today.get("total"):
+                    self.daily[self._day] = self.today["total"]
                 self._day = today
                 self.today = {"total": 0, "input": 0, "cached": 0,
                               "output": 0, "reasoning": 0}
@@ -228,6 +302,9 @@ class UsageScanner:
                 self.last_msg_by_tool = {}
                 self.by_sid = {}
             totals = dict(self.today)
+            hourly = dict(self.hourly)     # P1-2：趋势拷贝区（扫描期不改真身）
+            daily = dict(self.daily)
+            seen = dict(self.seen_by_tool)
             models = dict(self.models)
             by_model: dict[str, int] = dict(self.today_by_model)
             steps_by_tool: dict[str, int] = dict(self.steps_by_tool)
@@ -252,7 +329,11 @@ class UsageScanner:
                     if not rec:
                         continue
                     day, r_total, r_out, model = rec
+                    seen["zcode"] = time.time()
                     if day == today:
+                        hk = _hour_of(d.get("completedAt", ""))
+                        if hk:
+                            hourly[hk] = hourly.get(hk, 0) + r_total
                         tn, tsnip = _zcode_tool_steps(d)
                         if tn:
                             steps_by_tool["zcode"] = steps_by_tool.get("zcode", 0) + tn
@@ -295,7 +376,11 @@ class UsageScanner:
                     if not rec:
                         continue
                     day, r_total, r_out, model = rec
+                    seen["claude"] = time.time()
                     if day == today:
+                        hk = _hour_of(d.get("timestamp", ""))
+                        if hk:
+                            hourly[hk] = hourly.get(hk, 0) + r_total
                         totals["total"] += r_total
                         totals["output"] += r_out
                         usage = (d.get("message") or {}).get("usage") or {}
@@ -347,6 +432,10 @@ class UsageScanner:
                         day, r_total, r_out, rec_model, parts = rec
                         if day != today:
                             continue
+                        seen["codex"] = time.time()
+                        hk = _hour_of(d.get("timestamp", ""))
+                        if hk:
+                            hourly[hk] = hourly.get(hk, 0) + r_total
                         totals["total"] += r_total
                         for key in ("input", "cached", "output", "reasoning"):
                             totals[key] += int(parts.get(key) or 0)
@@ -379,3 +468,8 @@ class UsageScanner:
             self.last_msg_by_tool = last_msg_by_tool
             self.by_sid = by_sid
             self.models.update(models)
+            # P1-2：趋势裁剪提交 + 扫描完成时刻；写盘放锁外
+            self.hourly, self.daily = self._prune_trend(hourly, daily)
+            self.seen_by_tool = seen
+            self.updated_at = time.time()
+        self._save_trend()

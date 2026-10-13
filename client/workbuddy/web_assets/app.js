@@ -2222,6 +2222,7 @@ function renderInspector() {
   $('ac-met-turn').checked=mets.has('turn');
   $('ac-met-model').checked=mets.has('model');
   $('ac-met-models').checked=mets.has('models');
+  const ub=$('usage-budget'); if(ub)ub.value=draft.usage?.budget_daily_k||'';
   for(const key of ['bg','grad','card','card_edge','accent','text','sub']) $('theme-'+key).value='#'+draft.theme[key];
   $('theme-bright').value=draft.theme.bright;$('bright-value').textContent=draft.theme.bright+'%';
   updateQuantNote();
@@ -2701,12 +2702,20 @@ function renderTools(){
     });
 }
 /* 优化#14：今日 token 每小时用量折线（canvas 本地绘制，无外部库、CSP 安全）。
-   数据点来自 /api/status 的 usage.today_k，按小时分桶存 localStorage（保留 24 桶）。 */
+   P1-2 起数据点优先后端权威小时桶（usage.trend_hourly，重启/换浏览器不丢，
+   与今日累计同口径）；无后端数据时回落 localStorage 采样（保留 24 桶）。 */
 const USAGE_KEY='workbuddy-usage-hist';
 function usageHistory(){
+  const t=live.usage?.trend_hourly;
+  if(t&&Object.keys(t).length){
+    return Object.entries(t).map(([hk,k])=>({
+      h:Math.floor(new Date(hk+':00:00').getTime()/3600000),
+      k:Math.round(Number(k)/1000)})).sort((a,b)=>a.h-b.h);
+  }
   try{return JSON.parse(localStorage.getItem(USAGE_KEY)||'[]')}catch(e){return []}
 }
 function sampleUsage(){
+  if(live.usage?.trend_hourly)return;   // 后端权威趋势在场，无需本地采样
   const u=live.usage;
   const k=u?.today?.total!=null?Math.round(u.today.total/1000):null;
   if(k==null)return;
@@ -2718,6 +2727,8 @@ function sampleUsage(){
   try{localStorage.setItem(USAGE_KEY,JSON.stringify(hist.slice(-24)))}catch(e){}
 }
 function drawUsageChart(){
+  renderUsageMeta();
+  renderUsageTop();
   const canvas=$('usage-chart');if(!canvas||!canvas.getContext)return;
   const dpr=window.devicePixelRatio||1;
   const w=canvas.clientWidth||canvas.width,h=72;
@@ -2753,6 +2764,44 @@ function drawUsageChart(){
   ctx.beginPath();ctx.arc(ex,ey,3,0,7);ctx.fillStyle=accent;ctx.fill();
   ctx.fillStyle=sub;ctx.font='10px sans-serif';ctx.textAlign='right';
   ctx.fillText(`峰值 ${maxK}k`,w-2,10);
+}
+/* P1-2 用量透明度：来源/更新时间/预算与高消耗会话排行（概览用量图区） */
+function renderUsageMeta(){
+  const m=$('usage-meta'); if(!m)return;
+  const u=live.usage||{};
+  const srcs=Object.keys(u.seen_by_tool||{});
+  const today=u.today?.total;
+  let text=`来源 ${srcs.length?srcs.join(' · '):'—'}`;
+  if(u.updated_at){
+    const s=Math.max(0,Math.round(Date.now()/1000-u.updated_at));
+    text+=` · 更新于 ${s<60?s+' 秒前':Math.round(s/60)+' 分前'}`;
+  }
+  const b=live.usage_budget;
+  if(b&&b.daily_k>0&&today!=null){
+    const pct=Math.min(999,Math.round(today/(b.daily_k*1000)*100));
+    text+=` · 预算 ${b.daily_k}k（${pct}%）`;
+    if(b.exceeded){
+      text+=' · 已超限';
+      m.classList.add('over');
+      if(m.dataset.warned!=='1'){
+        m.dataset.warned='1';
+        notice(`今日 AI 用量已超过预算 ${b.daily_k}k`,true);
+      }
+    }else m.classList.remove('over');
+  }
+  m.textContent=text;
+}
+function renderUsageTop(){
+  const box=$('usage-top'); if(!box)return;
+  box.replaceChildren();
+  const tops=live.usage?.top_sessions||[];
+  if(!tops.length)return;
+  tops.slice(0,3).forEach(s=>{
+    const task=(live.tasks||[]).find(t=>String(t.sid||'')===String(s.sid));
+    const name=task?(task.project||task.tool||s.sid):String(s.sid).slice(0,12);
+    const k=Math.round((s.total||0)/1000);
+    box.append(el('span','usage-top-item',`${task?.tool?task.tool+' · ':''}${name} ${k}k`));
+  });
 }
 function renderSyncState(){
   const status=dirty?'草稿未应用':(live.profile_status||'—');
@@ -3651,8 +3700,12 @@ function bind(){
     if($('ac-met-models').checked)mets.push('models');
     if(!mets.length)mets.push('today');   // 至少一项，别让卡片没得显示
     draft.ai_cost={mode:$('ac-auto').checked?0:1,metrics:mets};
+    // P1-2 日预算（千 token，0=不设限），走同一条「保存草稿/同步」链路
+    draft.usage={...(draft.usage||{}),
+                 budget_daily_k:Math.max(0,Math.round(Number($('usage-budget')?.value)||0))};
     markDirty();
   }
+  $('usage-budget')?.addEventListener('input',collectAiCost);
   $('pet-break-min').oninput=e=>{const ov=$('pet-break-val');if(ov)ov.textContent=e.target.value+' 分钟';};
   // 主题文件化：导出当前主题为 JSON；导入把 theme 段合并进草稿
   $('theme-dl').onclick=()=>{

@@ -938,7 +938,23 @@ class App:
                     # 最近完成的会话（「刚完成」条）；不靠列表重排提示完成
                     "done": self._done_recent(),
                     "usage": (self.usage_scanner.snapshot()
-                              if self.usage_scanner else None)}
+                              if self.usage_scanner else None),
+                    # P1-2 用量预算：daily_k=0 表示未设限；exceeded 供 Web 提醒
+                    "usage_budget": self._usage_budget()
+                                    if self.usage_scanner else None}
+
+    def _usage_budget(self) -> dict:
+        cfg = (self.profile.get("usage") or {}) if isinstance(self.profile, dict) else {}
+        try:
+            daily_k = int(cfg.get("budget_daily_k") or 0)
+        except (TypeError, ValueError):
+            daily_k = 0
+        exceeded = False
+        if daily_k > 0 and self.usage_scanner:
+            exceeded = ((self.usage_scanner.snapshot()
+                         .get("today", {}).get("total") or 0)
+                        > daily_k * 1000)
+        return {"daily_k": daily_k, "exceeded": exceeded}
 
     def push_profile(self):
         if not self.link or not self.link.status.startswith("connected:"):

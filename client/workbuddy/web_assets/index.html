@@ -128,7 +128,9 @@
           </div>
           <div class="usage-chart-wrap">
             <span class="usage-chart-label">今日 token（每小时）</span>
+            <span class="usage-chart-meta" id="usage-meta"></span>
             <canvas id="usage-chart" height="72" role="img" aria-label="今日 token 每小时用量折线图"></canvas>
+            <div class="usage-top" id="usage-top"></div>
           </div>
         </section>
 
@@ -715,6 +717,10 @@
             <label class="field toggle" style="flex:none"><input type="checkbox" id="ac-met-models"><span>分模型消耗</span></label>
           </div>
           <p class="hint">分模型消耗=每个用到的模型各占一槽（按今日消耗降序，最多 3 个），来自本机会话日志的按模型统计；「剩余/总额度」是厂商账号侧数据，本地日志拿不到。</p>
+          <label class="field">
+            <span>日预算阈值（千 token，0 或留空=不设限；概览用量区达到/超限时提醒）</span>
+            <input type="number" id="usage-budget" class="text-input" min="0" step="50" inputmode="numeric" placeholder="0">
+          </label>
           <div class="btn-row">
             <button type="button" class="button" id="look-save-btn">保存草稿</button>
             <button type="button" class="button primary" id="look-sync-btn">应用到设备</button>
