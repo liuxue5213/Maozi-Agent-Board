@@ -238,8 +238,14 @@ void Proto::handle(const char* line) {
         return;
     }
     if (!strcmp(key, "PET")) {
-        t.pet_play_changed = true;
-        dirty = true;
+        uint8_t action = !strcmp(v, "feed") ? 1
+                       : !strcmp(v, "water") ? 2
+                       : !strcmp(v, "play") ? 3 : 0;
+        if (action) {
+            t.pet_action = action;
+            t.pet_action_changed = true;
+            dirty = true;
+        }
         return;
     }
     if (key[0] == 'W' && key[1] >= '0' && key[1] <= '2' && key[2] == 0) {

@@ -77,7 +77,8 @@ struct Telemetry {
     // 托盘/上位机请求切页（1 基；0=无效），main 循环转给 ui_set_page
     int page_req = 0;
     bool page_req_changed = false;
-    bool pet_play_changed = false;   // 收到 PET=play（客户端互动）
+    uint8_t pet_action = 0;          // 1=feed 2=water 3=play
+    bool pet_action_changed = false;
     // 工作台「实拍」：SNAP=1 下行后设备抓当前画面经串口回传
     bool snap_req_changed = false;
     // 电脑控制状态（控制中心显示；-1 = 未知/不可用）

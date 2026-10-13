@@ -66,6 +66,8 @@ struct DeviceProfile {
     uint8_t pet_show_stats = 1;    // 角色页数值行（竞品#29 显示内容勾选）
     uint8_t pet_show_buttons = 1;  // 角色页喂食/喝水/运动按钮
     uint8_t pet_overlay = 0;       // 叠加指标：0=无 1=今日Token 2=焦点会话
+    uint8_t pet_fields[4] = {};    // 1项目 2工具 3状态 4用时 5模型 6本轮输出 7今日 8最近消息
+    uint8_t pet_field_n = 0;
     // 任务视图 tv.* 参数（竞品对齐）：AI 页渲染细节 + 空闲时切页
     uint8_t tv_other_tasks = 1;  // AI 页其他会话 3 行：1 显示 / 0 隐藏
     uint8_t tv_task_value = 0;   // 其他任务行右侧：0 用时 / 1 隐藏（仅项目名）

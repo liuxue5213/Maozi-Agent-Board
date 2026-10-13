@@ -3,7 +3,8 @@ import io
 import unittest
 import zipfile
 
-from workbuddy.web import validate_pack_zip
+from workbuddy import web
+from workbuddy.web import petpack_frame_path, validate_pack_zip
 
 
 def _zip(entries: dict) -> bytes:
@@ -12,6 +13,18 @@ def _zip(entries: dict) -> bytes:
         for name, content in entries.items():
             zf.writestr(name, content)
     return buf.getvalue()
+
+
+def test_petpack_frame_path_is_whitelisted_and_requires_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(web, "petpack_base_dir", lambda: tmp_path)
+    pack = tmp_path / "petpack_demo"
+    pack.mkdir()
+    frame = pack / "pet_working.jpg"
+    frame.write_bytes(b"jpeg")
+    assert petpack_frame_path("demo", "working") == frame
+    assert petpack_frame_path("../demo", "working") is None
+    assert petpack_frame_path("demo", "../../secret") is None
+    assert petpack_frame_path("demo", "happy") is None
 
 
 class ValidatePackZipTests(unittest.TestCase):

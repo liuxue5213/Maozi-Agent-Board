@@ -105,6 +105,27 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         out.pet_show_buttons = (pet_cfg["show_buttons"] | 1) ? 1 : 0;
         uint8_t ov = (uint8_t)constrain((int)(pet_cfg["overlay"] | 0), 0, 2);
         out.pet_overlay = ov;
+        JsonArrayConst fields = pet_cfg["fields"].as<JsonArrayConst>();
+        if (!fields.isNull()) {
+            for (const char* field : fields) {
+                if (!field || out.pet_field_n >= 4) break;
+                uint8_t code = 0;
+                if (!strcmp(field, "project")) code = 1;
+                else if (!strcmp(field, "tool")) code = 2;
+                else if (!strcmp(field, "state")) code = 3;
+                else if (!strcmp(field, "elapsed")) code = 4;
+                else if (!strcmp(field, "model")) code = 5;
+                else if (!strcmp(field, "turn")) code = 6;
+                else if (!strcmp(field, "today")) code = 7;
+                else if (!strcmp(field, "message")) code = 8;
+                if (code) out.pet_fields[out.pet_field_n++] = code;
+            }
+        } else if (ov == 1) {
+            out.pet_fields[out.pet_field_n++] = 7;
+        } else if (ov == 2) {
+            out.pet_fields[out.pet_field_n++] = 2;
+            out.pet_fields[out.pet_field_n++] = 3;
+        }
     }
     // 任务视图 tv.* 参数（缺省=现状渲染）
     JsonObjectConst tv_cfg = doc["tv"].as<JsonObjectConst>();
