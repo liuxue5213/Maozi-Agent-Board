@@ -8,6 +8,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from workbuddy.collect.macos import MacCollector
+from workbuddy.app import App
 
 
 class MacNetworkTests(unittest.TestCase):
@@ -38,6 +39,22 @@ class MacNetworkTests(unittest.TestCase):
             self.assertEqual(collector._net_rates(10.0), (None, None))
             # en0 一秒增加 1 MB / 0.5 MB，即 8 / 4 Mbps；utun3 不应重复计入。
             self.assertEqual(collector._net_rates(11.0), (8.0, 4.0))
+
+
+class ConsoleRenderTests(unittest.TestCase):
+    def _render(self, cputemp):
+        app = App.__new__(App)
+        app.link = None
+        return app.render({"cpu": 12, "mem": 34, "disk": 56,
+                           "cputemp": cputemp})
+
+    def test_empty_temperature_clear_marker_does_not_crash(self):
+        text = self._render("")
+        self.assertIn("CPU  12%", text)
+        self.assertNotIn("°", text)
+
+    def test_numeric_string_temperature_is_rendered(self):
+        self.assertIn("56°", self._render("55.6"))
 
 
 if __name__ == "__main__":

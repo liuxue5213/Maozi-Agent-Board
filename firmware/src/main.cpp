@@ -27,7 +27,9 @@ void send_touch(const char* page) {
 }
 
 void setup() {
-    Serial.setRxBufferSize(2048);   // 突发事务（背景图/配置分帧）防 RX 溢出丢字节
+    // OTA 在接收每个 512B 分片后会同步写 flash；擦写抖动期间仍有 UART
+    // 数据到达。2KB 在持续 921600 波特下会溢出，8KB 可覆盖多个分片。
+    Serial.setRxBufferSize(8192);
     // 921600：链路是 FT232R 桥（VID 0x0403），115200 时整帧实拍要 ~10s 且
     // 76KB 的背景图下发同样被带宽卡死。FT232R 与 ESP32 UART 都原生支持
     // 921600，客户端 serial_link.py 同步改；烧录走 ROM 下载模式不受影响。
@@ -42,7 +44,7 @@ void setup() {
 void send_fw_handshake() {
     // 真实能力握手（PROTOCOL §5）：客户端据此拒绝不兼容的配置推送。
     // 开机 + 每次"新客户端接入"（链路超时后再次收到数据）都会重发。
-    Serial.printf("FW=0.3.1,n16r8,schema:1,pages:%u,widgets:10,apps:12,reminders:20,calendar:50,alarms:16\n",
+    Serial.printf("FW=0.3.2,n16r8,schema:1,pages:%u,widgets:10,apps:12,reminders:20,calendar:50,alarms:16\n",
                   (unsigned)(sizeof(((DeviceProfile*)0)->pages) / sizeof(((DeviceProfile*)0)->pages[0])));
 }
 
@@ -164,9 +166,9 @@ void loop() {
             proto.t.snap_req_changed = false;
             ui_send_snapshot();
         }
-        if (proto.t.pet_play_changed) {
-            proto.t.pet_play_changed = false;
-            pet_play_event();
+        if (proto.t.pet_action_changed) {
+            proto.t.pet_action_changed = false;
+            pet_interact_event(proto.t.pet_action);
         }
         if (proto.t.bright >= 0) {
             bright_manual_val = proto.t.bright;

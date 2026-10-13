@@ -1,10 +1,16 @@
 """Regressions for task clearing, sensor invalidation and AI progress semantics."""
 import unittest
 import time
+import threading
+import base64
+import re
+import queue
+from pathlib import Path
 
 from workbuddy.app import App
 from workbuddy.aiwatch import AIWatcher, Activity, DONE, THINKING, WAIT_INPUT
 from workbuddy.protocol import encode_telemetry, parse_uplink
+from workbuddy.serial_link import SerialLink
 
 
 class _Source:
@@ -53,8 +59,8 @@ class StateProtocolTests(unittest.TestCase):
     def test_fan_value_encoded(self):
         self.assertIn("FAN=5301", encode_telemetry({"fan": 5301}))
 
-    def test_pet_play_event_forwards_to_device(self):
-        # 「运动」互动 → PET=play 下行（固件 PLAYING 场景）；其他动作不触发
+    def test_pet_actions_forward_to_device(self):
+        # 三种互动都必须下行，数值变化与视觉反馈才形成闭环。
         class RecLink:
             status = "connected:test"
             def __init__(self):
@@ -64,10 +70,12 @@ class StateProtocolTests(unittest.TestCase):
 
         app = App.__new__(App)
         app.link = RecLink()
-        app.pet_scene_event("play")
-        self.assertEqual(app.link.sent, ["PET=play\n"])
         app.pet_scene_event("feed")
-        self.assertEqual(len(app.link.sent), 1)
+        app.pet_scene_event("water")
+        app.pet_scene_event("play")
+        app.pet_scene_event("unknown")
+        self.assertEqual(app.link.sent,
+                         ["PET=feed\n", "PET=water\n", "PET=play\n"])
 
     def test_pet_play_event_silent_without_link(self):
         app = App.__new__(App)
@@ -77,6 +85,62 @@ class StateProtocolTests(unittest.TestCase):
     def test_sensor_failure_invalidates_last_value(self):
         self.assertEqual(parse_uplink("TEMP=NA"), {"temp": None})
         self.assertEqual(parse_uplink("HUM=NA"), {"hum": None})
+
+    def test_ota_ack_and_nak_are_parsed(self):
+        self.assertEqual(parse_uplink("ACK=OTA,BEGIN"),
+                         {"ota_reply": {"ok": True, "reason": "BEGIN"}})
+        self.assertEqual(parse_uplink("NAK=OTA,SEQ"),
+                         {"ota_reply": {"ok": False, "reason": "SEQ"}})
+
+    def test_ota_uses_lossless_queue_and_waits_for_device_ack(self):
+        class Health:
+            def event(self, *args, **kwargs):
+                pass
+
+        class Link:
+            status = "connected:test"
+            def __init__(self, owner):
+                self.owner = owner
+                self.calls = []
+            def send(self, data, *, block=False, timeout=5.0):
+                self.calls.append((data, block))
+                if data.startswith(b"OTA=BEGIN"):
+                    self.owner._ota_reply = {"ok": True, "reason": "BEGIN"}
+                    self.owner._ota_event.set()
+                elif data.startswith(b"OTA=DATA,"):
+                    seq = int(data.split(b",", 2)[1])
+                    self.owner._ota_reply = {"ok": True, "reason": f"DATA:{seq + 1}"}
+                    self.owner._ota_event.set()
+                elif data == b"OTA=END\n":
+                    self.owner._ota_reply = {"ok": True, "reason": "REBOOTING"}
+                    self.owner._ota_event.set()
+                return True
+
+        app = App.__new__(App)
+        app._ota_event = threading.Event()
+        app._ota_reply = None
+        app.ota_result = {"ok": None, "reason": ""}
+        app.health = Health()
+        app.link = Link(app)
+        self.assertTrue(app.send_ota(b"\xe9" + b"x" * 4096))
+        self.assertTrue(all(block for _, block in app.link.calls))
+        self.assertEqual(app.ota_result["reason"], "REBOOTING")
+
+    def test_ota_frame_fits_firmware_line_buffer(self):
+        encoded = base64.b64encode(b"x" * 512).decode("ascii")
+        longest = len(f"OTA=DATA,99999,{encoded}\n")
+        header = (Path(__file__).resolve().parents[2] /
+                  "firmware" / "src" / "proto.h").read_text(encoding="utf-8")
+        match = re.search(r"char\s+_line\[(\d+)\]", header)
+        self.assertIsNotNone(match)
+        self.assertGreaterEqual(int(match.group(1)), longest)
+
+    def test_serial_nonblocking_send_still_queues(self):
+        link = SerialLink.__new__(SerialLink)
+        link._port = object()
+        link._q = queue.Queue(maxsize=2)
+        self.assertTrue(link.send(b"HB=1\n"))
+        self.assertEqual(link._q.get_nowait(), b"HB=1\n")
 
     def test_inferred_ai_states_have_no_percentage(self):
         watcher = AIWatcher.__new__(AIWatcher)

@@ -20,6 +20,7 @@ class SerialLink:
         self.cfg = cfg
         self.on_uplink = on_uplink
         self._q = queue.Queue(maxsize=256)
+        self._write_lock = threading.Lock()
         self._port = None
         self._stop = False
         self._just_connected = False
@@ -51,20 +52,67 @@ class SerialLink:
             return True
         return False
 
-    def send(self, text):
-        """text 为 str（自动编码）或 bytes（如背景图分帧，原样发送）。"""
+    def send(self, text, *, block: bool = False, timeout: float = 5.0) -> bool:
+        """排队发送并返回是否成功。
+
+        普通遥测保持非阻塞，队列满时丢最旧帧；OTA 等不可丢事务使用
+        ``block=True`` 施加背压，绝不能沿用“丢最旧”的实时遥测策略。
+        """
         if self._port is None:
-            return
+            return False
         data = text if isinstance(text, (bytes, bytearray)) else \
             text.encode("utf-8", errors="replace")
+        if block:
+            try:
+                self._q.put(data, timeout=timeout)
+                return True
+            except queue.Full:
+                return False
         try:
             self._q.put_nowait(data)
+            return True
         except queue.Full:
             try:
                 self._q.get_nowait()
                 self._q.put_nowait(data)
+                return True
             except queue.Empty:
-                pass
+                return False
+
+    def clear_pending(self) -> None:
+        """丢弃尚未写出的普通遥测；独占事务开始前调用。"""
+        while True:
+            try:
+                self._q.get_nowait()
+            except queue.Empty:
+                return
+
+    def send_direct(self, text) -> bool:
+        """绕过实时队列同步写入并 flush；供 OTA 独占事务使用。"""
+        data = text if isinstance(text, (bytes, bytearray)) else \
+            text.encode("utf-8", errors="replace")
+        port = self._port
+        if port is None:
+            return False
+        try:
+            with self._write_lock:
+                if self._port is not port:
+                    return False
+                written = port.write(data)
+                if written != len(data):
+                    if _SERIAL_DEBUG:
+                        print(f"[tx-direct-short] {written}/{len(data)}", flush=True)
+                    return False
+                port.flush()
+            if _SERIAL_DEBUG and (data.startswith(b"OTA=BEGIN")
+                                  or data == b"OTA=END\n"
+                                  or data.startswith(b"OTA=DATA,7,")
+                                  or data.startswith(b"OTA=DATA,15,")):
+                print(f"[tx-direct] {data[:24]!r} bytes={len(data)}", flush=True)
+            return True
+        except Exception:
+            self._drop()
+            return False
 
     # ---- 后台线程 ----
 
@@ -89,7 +137,10 @@ class SerialLink:
                 dev = self._scan()
                 if dev:
                     try:
-                        self._port = serial.Serial(dev, 921600, timeout=0.2, write_timeout=0.2)
+                        # 普通遥测只有几百字节；OTA 会连续发送 4MB 以上。0.2s
+                        # 写超时在驱动缓冲短暂回压时会误判断线，导致分片中途丢失。
+                        self._port = serial.Serial(dev, 921600, timeout=0.2,
+                                                   write_timeout=5.0)
                         self._status = f"connected:{dev}"
                         self._last_rx_at = time.monotonic()
                         self._just_connected = True
@@ -104,7 +155,8 @@ class SerialLink:
             try:
                 while True:
                     data = self._q.get_nowait()
-                    self._port.write(data)
+                    with self._write_lock:
+                        self._port.write(data)
                     if _SERIAL_DEBUG and not data.startswith(b"AI") \
                             and not data.startswith(b"DN"):
                         print(f"[tx {time.strftime('%H:%M:%S')}] "

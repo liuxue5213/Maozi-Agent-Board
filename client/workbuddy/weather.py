@@ -9,11 +9,17 @@
 from __future__ import annotations
 
 import json
+import ssl
 import threading
 import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+try:
+    import certifi
+except ImportError:  # 系统 Python 证书链完整时可直接使用默认 CA
+    certifi = None
 
 _GEO = ("https://geocoding-api.open-meteo.com/v1/search?name={}"
         "&count=5&language=zh&format=json")
@@ -23,6 +29,17 @@ _FCST = ("https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}"
          "&timezone=auto&forecast_days=5")
 _CACHE = Path.home() / ".workbuddy" / "geocache.json"
 MAX_CITIES = 3
+
+
+def _urlopen(url: str, timeout: int = 8):
+    """使用明确的 CA 集合访问天气服务。
+
+    macOS 独立 Python 常没有随系统钥匙串配置 OpenSSL CA，默认 urlopen 会
+    报 CERTIFICATE_VERIFY_FAILED。优先使用 certifi，仍保持完整证书校验。
+    """
+    context = (ssl.create_default_context(cafile=certifi.where())
+               if certifi is not None else ssl.create_default_context())
+    return urllib.request.urlopen(url, timeout=timeout, context=context)
 
 
 # 行政边界字：按它们从右往左切出「父级行政区」候选（天津市河西区 → 天津市）
@@ -48,7 +65,7 @@ def _variants(query: str) -> list[str]:
 
 def _openmeteo_search(name: str) -> list[dict]:
     url = _GEO.format(urllib.parse.quote(name))
-    with urllib.request.urlopen(url, timeout=8) as resp:
+    with _urlopen(url) as resp:
         results = json.loads(resp.read()).get("results") or []
     out = []
     for r in results[:5]:
@@ -171,7 +188,7 @@ class WeatherFetcher:
             return None
         lat, lon = coord
         url = _FCST.format(lat, lon)
-        with urllib.request.urlopen(url, timeout=8) as resp:
+        with _urlopen(url) as resp:
             forecast = json.loads(resp.read())
         current = forecast.get("current", {})
         daily = forecast.get("daily", {})
