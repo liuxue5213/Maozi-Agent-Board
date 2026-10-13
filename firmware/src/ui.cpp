@@ -1072,11 +1072,14 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
             continue;
         }
         uint8_t t = c.t < 18 ? c.t : 0;   // 越界码兜底为时钟（decode 只放行 0-17）
-        // 样式档（竞品「时间样式」）：clock/weather 支持大字（48/28）
+        // 样式档（竞品「时间样式」）：所有单行文本组件支持大字（28px，
+        // clock 48px），宽度 +40 容纳更大字号；quote(5) 折行不加宽
         uint8_t font = FC_FONT[t];
         uint16_t w = FC_W[t];
-        if (c.big && t == 0) { font = 48; w = 260; }
-        if (c.big && t == 3) { font = 28; w = 240; }
+        if (c.big && t != 5 && t != 6 && t != 7 && t != 15) {
+            font = (t == 0) ? 48 : 28;
+            w = (t == 0) ? 260 : (uint16_t)(FC_W[t] + 40);
+        }
         uint32_t col = t == 0 ? accent : (t == 2 || t == 4) ? sub_color : text_color;
         if (t == 13) col = c.color == 1 ? accent : c.color == 2 ? sub_color
                         : c.color == 3 ? COL_WARN : text_color;

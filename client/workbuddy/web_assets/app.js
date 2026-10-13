@@ -1913,7 +1913,8 @@ function renderFreeEditor(page, root){
     b.style.borderColor = sel.includes(i) ? '#57C8F5' : 'rgba(87,200,245,.35)';
   });};
   page.components.forEach((c,i)=>{
-    const [w,h]=(c.big&&BIG[c.t])?BIG[c.t]:(SIZE[c.t]||[120,30]);
+    const NO=new Set(['ai_cost','pet','music']);
+    const [w,h]=(c.big&&!NO.has(c.t))?[SIZE[c.t][0]+40,SIZE[c.t][1]+12]:(SIZE[c.t]||[120,30]);
     const b=el('div','', (NAME[c.t]||c.t)+(c.hidden?'（隐）':'')+(c.lock?' 🔒':''));
     b.style.cssText=`position:absolute;left:${c.x*SCALE}px;top:${c.y*SCALE}px;`+
       `width:${w*SCALE}px;min-height:${Math.max(22,h*SCALE)}px;`+
@@ -2006,12 +2007,13 @@ function renderFreeEditor(page, root){
   const style=el('button','button','大字 / 常规');
   style.onclick=()=>{
     if(need())return;
-    const targets=sel.map(i=>page.components[i]).filter(c=>BIG[c.t]);
-    if(!targets.length)return notice('选中组件无样式档（时间/天气支持大字）',true);
+    const NO_STYLE=new Set(['ai_cost','pet','music']);
+    const targets=sel.map(i=>page.components[i]).filter(c=>!NO_STYLE.has(c.t));
+    if(!targets.length)return notice('选中组件无样式档',true);
     pushUndo();
     const on=targets.some(c=>!c.big);
-    targets.forEach(c=>{ if(!BIG[c.t])return; c.big=on?1:0;
-      const dims=c.big?BIG[c.t]:SIZE[c.t];
+    targets.forEach(c=>{ if(NO_STYLE.has(c.t))return; c.big=on?1:0;
+      const dims=c.big?[SIZE[c.t][0]+40,SIZE[c.t][1]+12]:SIZE[c.t];
       c.x=Math.max(0,Math.min(320-dims[0],c.x));
       c.y=Math.max(0,Math.min(480-dims[1],c.y)); });
     markDirty(); renderInspector();

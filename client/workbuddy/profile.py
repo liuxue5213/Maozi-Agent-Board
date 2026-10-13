@@ -234,7 +234,11 @@ def validate_profile(raw):
                      "text": (200, 28), "stat": (304, 28), "music": (304, 64),
                      "ai_focus": (304, 64), "calendar": (304, 28)}
             colors = (0, 1, 2, 3)   # 0=正文 1=强调 2=次要 3=警示
+            # 大字档尺寸：宽度 +40 容纳 28px 字号（clock/weather 保持专档）
             big_sizes = {"clock": (260, 64), "weather": (240, 40)}
+            big_sizes.update({k: (v[0] + 40, v[1] + 12)
+                              for k, v in sizes.items()
+                              if k not in big_sizes and k not in ("ai_cost", "pet", "music")})
             out_comps = []
             for c in comps:
                 if not isinstance(c, dict):
