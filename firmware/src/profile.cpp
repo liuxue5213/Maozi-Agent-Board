@@ -204,6 +204,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
                     else if (!strcmp(t, "net")) code = 12;
                     else if (!strcmp(t, "text")) code = 13;
                     else if (!strcmp(t, "stat")) code = 14;
+                    else if (!strcmp(t, "music")) code = 15;
                     else continue;
                     dst.comps[cn].t = code;
                     dst.comps[cn].big = (c["big"] | 0) ? 1 : 0;

@@ -992,10 +992,10 @@ static PetParts pet_free_parts;          // 自由页「角色」组件的像素
 static uint8_t pet_free_used = 0;
 static void ai_cost_build_rows(char rows[5][48]);   // 定义在 render_generic 前
 // 组件固定尺寸、坐标自由；数据全走既有遥测，零新数据源。
-static const uint8_t FC_FONT[15] = {48, 20, 20, 28, 20, 24,
-                                    20, 20, 20, 20, 20, 20, 20, 20, 20};
-static const uint16_t FC_W[15] = {220, 260, 304, 240, 280, 300,
-                                  304, 280, 304, 240, 240, 304, 304, 200, 304};
+static const uint8_t FC_FONT[16] = {48, 20, 20, 28, 20, 24,
+                                    20, 20, 20, 20, 20, 20, 20, 20, 20, 20};
+static const uint16_t FC_W[16] = {220, 260, 304, 240, 280, 300,
+                                  304, 280, 304, 240, 240, 304, 304, 200, 304, 304};
 // 6=ai_cost 7=pet：容器型组件（多标签/嵌入式宠物），尺寸固定
 static const uint16_t FC_BOX[2][2] = {{304, 116}, {96, 120}};
 static const uint32_t FC_COL[6] = {0, 0, 0, 0, 0, 0};   // 占位；颜色在 make 内定
@@ -1039,7 +1039,22 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
             page.free_n = i + 1;
             continue;
         }
-        uint8_t t = c.t < 15 ? c.t : 0;   // 越界码兜底为时钟（decode 只放行 0-14）
+        if (c.t == 15) {
+            // 正在播放：透明容器两行（歌名 / 歌手 · 进度）
+            lv_obj_t* box = lv_obj_create(screen);
+            lv_obj_set_pos(box, c.x, c.y);
+            lv_obj_set_size(box, 304, 64);
+            lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(box, 0, 0);
+            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+            label1(box, "未在播放", 20, text_color, 0, 0, 304);
+            label1(box, "", 20, sub_color, 0, 30, 304);
+            page.free_lbl[i] = box;
+            page.free_t[i] = 15;
+            page.free_n = i + 1;
+            continue;
+        }
+        uint8_t t = c.t < 16 ? c.t : 0;   // 越界码兜底为时钟（decode 只放行 0-15）
         // 样式档（竞品「时间样式」）：clock/weather 支持大字（48/28）
         uint8_t font = FC_FONT[t];
         uint16_t w = FC_W[t];
@@ -1091,6 +1106,26 @@ void render_free_page(PageView& page, const char* tb) {
             continue;
         }
         if (page.free_t[i] == 13) continue;   // 自定义文字：静态，make 时已写
+        if (page.free_t[i] == 15) {
+            lv_obj_t* box = page.free_lbl[i];
+            if (!box) continue;
+            if (latest.np.used) {
+                set_text(lv_obj_get_child(box, 0),
+                         latest.np.title[0] ? latest.np.title : "未知曲目");
+                char sub[96];
+                if (latest.np.dur > 0)
+                    snprintf(sub, sizeof(sub), "%s  %d:%02d / %d:%02d",
+                             latest.np.artist, latest.np.pos / 60,
+                             latest.np.pos % 60, latest.np.dur / 60,
+                             latest.np.dur % 60);
+                else snprintf(sub, sizeof(sub), "%s", latest.np.artist);
+                set_text(lv_obj_get_child(box, 1), sub);
+            } else {
+                set_text(lv_obj_get_child(box, 0), "未在播放");
+                set_text(lv_obj_get_child(box, 1), "");
+            }
+            continue;
+        }
         if (page.free_t[i] == 14) {
             set_text(page.free_lbl[i],
                      latest.ast[0] ? (snprintf(buf, sizeof(buf),
