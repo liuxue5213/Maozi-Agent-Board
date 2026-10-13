@@ -806,6 +806,14 @@
             <span>角色页显示喂食/喝水/运动按钮</span>
           </label>
           <label class="field">
+            <span>角色页叠加指标</span>
+            <select id="pet-overlay" class="text-input">
+              <option value="0">不叠加</option>
+              <option value="1">今日 Token</option>
+              <option value="2">焦点会话</option>
+            </select>
+          </label>
+          <label class="field">
             <span>提醒阈值 <output class="field-value" id="pet-break-val">45 分钟</output></span>
             <input type="range" id="pet-break-min" min="5" max="120" step="5" value="45">
           </label>

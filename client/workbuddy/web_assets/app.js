@@ -2221,6 +2221,10 @@ function renderPetTab(){
     const sel=$(id), v=draft.pet?.[keys[i]];
     if(sel && v && [...sel.options].some(o=>o.value===v)) sel.value=v;
   });
+  // 显示内容勾选 + 叠加指标（竞品#29）
+  if($('pet-show-stats')) $('pet-show-stats').checked=draft.pet?.show_stats!==0;
+  if($('pet-show-buttons')) $('pet-show-buttons').checked=draft.pet?.show_buttons!==0;
+  if($('pet-overlay')) $('pet-overlay').value=String(draft.pet?.overlay||0);
   renderPetStats();
 }
 function renderPetStats(){

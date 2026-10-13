@@ -1316,6 +1316,10 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
             view.pm_val[i] = label1(screen, "--", 14, text_color, 92, 354 + i * 24, 70);
         }
     if (g_profile.pet_show_buttons) {
+        // 叠加指标行（竞品「角色页叠加指标」）：顶部信息条（盖角色图）
+        if (g_profile.pet_overlay) {
+            view.extra[0] = label1(screen, "", 20, text_color, 8, 36, 200);
+        }
         button(screen, "喂食", 12, 428, 96, 44, pet_action_cb, (void*)"feed");
         button(screen, "喝水", 112, 428, 96, 44, pet_action_cb, (void*)"water");
         button(screen, "运动", 212, 428, 96, 44, pet_action_cb, (void*)"play");
@@ -1388,6 +1392,21 @@ void render_pet_page(WidgetView& view) {
         }
     }
     pet_ambient_tick();
+    // 叠加指标行（pet_overlay：1=今日Token 2=焦点会话）
+    if (view.extra[0]) {
+        char obuf[48] = "";
+        if (g_profile.pet_overlay == 1) {
+            if (latest.day_tok_total >= 0) {
+                long k = latest.day_tok_total / 1000;
+                if (k >= 1000) snprintf(obuf, sizeof(obuf), "今日 %.1fM", k / 1000.0);
+                else snprintf(obuf, sizeof(obuf), "今日 %ldk", k);
+            } else strcpy(obuf, "今日暂无用量");
+        } else if (g_profile.pet_overlay == 2 && latest.tasks[0].used) {
+            snprintf(obuf, sizeof(obuf), "%s · %s", latest.tasks[0].tool,
+                     state_short(latest.tasks[0].state));
+        }
+        set_text(view.extra[0], obuf);
+    }
     const char* st = latest.tasks[0].used ? latest.tasks[0].state : "IDLE";
     PetLayer layer = pet_arbitrate(st, millis());
     pet_layer_now = layer;
