@@ -21,6 +21,18 @@ def petpack_base_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "outputs"
 
 
+def petpack_frame_path(name: str, state: str) -> Path | None:
+    """返回角色包内的安全状态帧路径；参数不合法或文件缺失时返回 None。"""
+    if not re.fullmatch(r"[a-z0-9_]{1,24}", str(name or "")):
+        return None
+    if not re.fullmatch(
+            r"(idle|thinking|working|working_b|sleepy|sleeping|greeting|happy|error)",
+            str(state or "")):
+        return None
+    frame = petpack_base_dir() / f"petpack_{name}" / f"pet_{state}.jpg"
+    return frame if frame.is_file() else None
+
+
 def validate_pack_zip(zb: bytes):
     """场景包 zip 校验（导入安全闸）。
 
@@ -54,6 +66,50 @@ def validate_pack_zip(zb: bytes):
             return None, "解压总量超过 1.5MB"
         files[n] = content
     return files, None
+
+
+# 全状态九宫格的规范 9 帧：8 个状态 + working 动画双帧（B 帧交替）
+PETPACK_CANON_STATES = ("idle", "thinking", "working", "working_b",
+                        "sleepy", "sleeping", "greeting", "happy", "error")
+# 缺帧回退目标：状态帧缺→回退 idle（设备该状态不更新、停在上一帧/基础帧）；
+# working_b 缺→回退 working（无交替动画，仅 A 帧常显）
+_PETPACK_FALLBACK = {"working_b": "working"}
+_PETPACK_FALLBACK_DEFAULT = "idle"
+
+
+def compute_pack_info(d: Path) -> dict:
+    """盘点一个角色包目录：规范帧的 present / missing / fallback / manifest。"""
+    present = set()
+    for st in PETPACK_CANON_STATES:
+        if (d / f"pet_{st}.jpg").is_file():
+            present.add(st)
+    missing = [s for s in PETPACK_CANON_STATES if s not in present]
+    fallback = {s: _PETPACK_FALLBACK.get(s, _PETPACK_FALLBACK_DEFAULT)
+                for s in missing}
+    return {"present": sorted(present, key=PETPACK_CANON_STATES.index),
+            "missing": missing, "fallback": fallback,
+            "manifest": read_pack_manifest(d)}
+
+
+def read_pack_manifest(d: Path) -> dict | None:
+    """读取包内 manifest.json；缺失或解析失败返回 None。"""
+    m = d / "manifest.json"
+    if not m.is_file():
+        return None
+    try:
+        return json.loads(m.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def write_pack_manifest(d: Path, info: dict) -> None:
+    """写入/更新 manifest.json（导入或应用后调用，描述包元数据）。"""
+    try:
+        (d / "manifest.json").write_text(
+            json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
 
 WEB_ROOT = Path(__file__).with_name("web_assets")
 FILES = {"/": ("index.html", "text/html; charset=utf-8"),
@@ -236,10 +292,14 @@ def start_settings_server(app, port):
                 if base.is_dir():
                     for d in sorted(base.glob("petpack_*")):
                         if d.is_dir():
-                            frames = [f.name for f in sorted(d.glob("pet_*.jpg"))
-                                      if not f.name.endswith("_b.jpg")]
+                            info = compute_pack_info(d)
                             packs.append({"name": d.name.replace("petpack_", ""),
-                                          "dir": str(d), "frames": len(frames)})
+                                          "dir": str(d),
+                                          "frames": len(info["present"]),
+                                          "frame_list": info["present"],
+                                          "missing": info["missing"],
+                                          "fallback": info["fallback"],
+                                          "manifest": info["manifest"]})
                 self._json(200, {"packs": packs})
                 return
             if path == "/api/petpack-download":
@@ -300,6 +360,24 @@ def start_settings_server(app, port):
                     self.send_error(404)
                     return
                 data = f.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            if path == "/api/petpack-frame":
+                # Web 小屏预览使用与设备同一包、同一状态帧，避免网页仍显示
+                # 像素宠物而实机已经是彩色角色。严格白名单阻止路径穿越。
+                query = parse_qs(urlsplit(self.path).query)
+                name = query.get("name", [""])[0]
+                state = query.get("state", ["idle"])[0]
+                frame = petpack_frame_path(name, state)
+                if not frame:
+                    self._json(404, {"error": "角色帧不存在"})
+                    return
+                data = frame.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Content-Length", str(len(data)))
@@ -473,7 +551,7 @@ def start_settings_server(app, port):
                     # 触屏/网页的宠物交互：喂食/喝水/运动
                     action = str(data.get("action", ""))
                     result = app.pet.interact(action)
-                    app.pet_scene_event(action)   # 运动 → 设备 PLAYING 场景
+                    app.pet_scene_event(action)   # 三种互动 → 设备短反馈场景
                     self._json(200, result)
                     return
                 if path == "/api/weather-search":
@@ -506,6 +584,9 @@ def start_settings_server(app, port):
                         "show_buttons": 1 if data.get("show_buttons", old_pet.get("show_buttons", 1)) else 0,
                         "overlay": (lambda v: max(0, min(2, int(v) if str(v).isdigit() else 0)))(
                             data.get("overlay", old_pet.get("overlay", 0))),
+                        "fields": data.get("fields", old_pet.get("fields", [])),
+                        "density": (lambda v: max(0, min(2, int(v) if str(v).isdigit() else 2)))(
+                            data.get("density", old_pet.get("density", 2))),
                         "break_min": break_min,
                         "day_pack": str(data.get("day_pack", old_pet.get("day_pack", "")) or ""),
                         "night_pack": str(data.get("night_pack", old_pet.get("night_pack", "")) or ""),
@@ -571,7 +652,7 @@ def start_settings_server(app, port):
                         return
                     result = app.apply_petpack(name)
                     period = app.pack_period()
-                    app.mark_pack_applied(name, period)
+                    app.mark_pack_applied(name, period, ok=result.get("ok", False))
                     pet = dict(app.profile.get("pet") or {})
                     if pet.get("autopack"):
                         candidate = dict(app.profile)
@@ -604,6 +685,14 @@ def start_settings_server(app, port):
                     d.mkdir(parents=True, exist_ok=True)
                     for fn, content in files.items():
                         (d / fn).write_bytes(content)
+                    info = compute_pack_info(d)
+                    write_pack_manifest(d, {
+                        "name": name,
+                        "states": info["present"],
+                        "missing": info["missing"],
+                        "fallback": info["fallback"],
+                        "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                   time.gmtime())})
                     self._json(200, {"status": f"已导入 {len(files)} 帧（{name} 包）",
                                      "frames": len(files)})
                     return

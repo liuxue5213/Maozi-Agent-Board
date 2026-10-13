@@ -819,12 +819,26 @@
             <input type="checkbox" id="pet-show-buttons" checked>
             <span>角色页显示喂食/喝水/运动按钮</span>
           </label>
+          <div class="field-heading"><span>角色页信息</span></div>
+          <p class="hint">独立选择要显示的内容，最多 4 项；按下方顺序排列在小屏顶部。</p>
+          <div class="pet-field-grid" id="pet-fields">
+            <label class="field toggle"><input type="checkbox" value="title"><span>任务名</span></label>
+            <label class="field toggle"><input type="checkbox" value="project"><span>项目名称</span></label>
+            <label class="field toggle"><input type="checkbox" value="tool"><span>AI 工具</span></label>
+            <label class="field toggle"><input type="checkbox" value="state"><span>任务状态</span></label>
+            <label class="field toggle"><input type="checkbox" value="elapsed"><span>本轮用时</span></label>
+            <label class="field toggle"><input type="checkbox" value="model"><span>模型名称</span></label>
+            <label class="field toggle"><input type="checkbox" value="turn_total"><span>本轮总 Token</span></label>
+            <label class="field toggle"><input type="checkbox" value="turn_out"><span>本轮输出 Token</span></label>
+            <label class="field toggle"><input type="checkbox" value="today"><span>今日累计</span></label>
+            <label class="field toggle"><input type="checkbox" value="message"><span>最近消息</span></label>
+          </div>
           <label class="field">
-            <span>角色页叠加指标</span>
-            <select id="pet-overlay" class="text-input">
-              <option value="0">不叠加</option>
-              <option value="1">今日 Token</option>
-              <option value="2">焦点会话</option>
+            <span>信息密度</span>
+            <select id="pet-density">
+              <option value="0">单行</option>
+              <option value="1">双行</option>
+              <option value="2">自动摘要</option>
             </select>
           </label>
           <label class="field">
@@ -836,6 +850,7 @@
             <button type="button" class="button" id="pet-page-gen">生成「宠物」小屏页面</button>
           </div>
           <div class="field-heading"><span>场景包（整套切换）</span></div>
+          <div class="pet-library" id="pet-library"></div>
           <div class="btn-row">
             <img id="pet-pack-thumb" alt="" style="width:54px;height:81px;border-radius:8px;border:1px solid var(--edge,#4B6685);object-fit:cover;display:none">
             <select id="pet-pack-select" class="text-input" style="flex:1">
@@ -849,7 +864,7 @@
             <button type="button" class="button" id="pet-pack-dl" style="flex:1">下载分享</button>
             <button type="button" class="button" id="pet-pack-rename" style="flex:1">改名</button>
           </div>
-          <p class="hint" id="pet-pack-note">包目录在 outputs/petpack_&lt;名称&gt;/（pet_artwork.py 生成），应用时整套 8 张重传设备（约 20 秒）；应用包会替换设备上的自定义形象（以包为准，想恢复自定义图重新上传即可）。</p>
+          <p class="hint" id="pet-pack-note">包目录在 outputs/petpack_&lt;名称&gt;/（pet_artwork.py 生成），每包含 9 张规范帧（8 状态 + working 双帧），应用时整套 9 张重传设备（约 20 秒）；应用包会替换设备上的自定义形象（以包为准，想恢复自定义图重新上传即可）。点击上方角色卡可查看全部状态九宫格与设备裁切预览。</p>
           <label class="field toggle">
             <input type="checkbox" id="pet-autopack">
             <span>跟随昼夜自动切换（白天用「白天包」，22:00–06:00 用「夜晚包」，与屏幕氛围层同步）</span>
@@ -887,6 +902,16 @@
           <p class="hint">喂食恢复饱食、喝水恢复水分、运动消耗活力（也更饿更快渴）——和真实的小生命一样。
             设备的「宠物」页上也有同样的三个按钮。</p>
         </section>
+        <div class="modal-mask" id="pet-allstates" hidden>
+          <div class="modal-card">
+            <div class="modal-head">
+              <h3 id="pet-allstates-title">全部状态</h3>
+              <button type="button" class="button ghost" id="pet-allstates-close">关闭</button>
+            </div>
+            <div class="pet-allstates-grid" id="pet-allstates-grid"></div>
+            <p class="hint" id="pet-allstates-note"></p>
+          </div>
+        </div>
         </div>
       </div>
       <div class="tabpane" id="spane-system" role="tabpanel" hidden>

@@ -1067,28 +1067,95 @@ function devPet(card, type, st, bx, by, sz){
 function devPetCompact(card, ctx, st){
   devPet(card, (draft.pet&&draft.pet.type)||'robot', st, 229, 42, 1);
 }
+function devPetFrame(st){
+  const hour=new Date().getHours();
+  const working=['GENERATING','TOOL','BUILD'].includes(st);
+  if(hour>=1&&hour<6&&Number(draft.pet?.sleep??1))return 'sleeping';
+  if(Number((live.telemetry||{}).pb||0)&&!working)return 'sleepy';
+  if(st==='ERROR')return 'error';
+  if(st==='DONE')return 'happy';
+  if(st==='WAIT_INPUT'||st==='ASK')return 'thinking';
+  if(working)return 'working';
+  if((hour>=22||hour<6)&&!working)return 'sleepy';
+  return 'idle';
+}
+function petFields(){
+  if(Array.isArray(draft.pet?.fields))return draft.pet.fields;
+  return Number(draft.pet?.overlay||0)===1?['today']:
+    Number(draft.pet?.overlay||0)===2?['tool','state']:[];
+}
+function petFieldText(field){
+  const task=(live.tasks||[])[0]||{}, usage=live.usage||{};
+  const token=n=>Number.isFinite(Number(n))?`${(Number(n)/1000).toFixed(1)}k`:'暂无';
+  const sid=task.sid;
+  const values={project:`项目  ${task.project||'暂无'}`,
+    tool:`工具  ${task.tool||'暂无'}`,
+    state:`状态  ${task.state?(stateNames[task.state]||task.state):'空闲'}`,
+    elapsed:`用时  ${fmtElapsed(task.elapsed)}`,
+    model:`模型  ${usage.models?.[task.tool]||'暂无'}`,
+    turn:`本轮输出  ${token(usage.by_sid?.[sid]?.out)}`,
+    turn_out:`本轮输出  ${token(usage.by_sid?.[sid]?.out)}`,
+    turn_total:`本轮总Token  ${token(usage.by_sid?.[sid]?.total)}`,
+    today:`今日累计  ${token(usage.today?.total)}`,
+    message:`消息  ${usage.last_msg_by_tool?.[task.tool]||'暂无'}`,
+    title:`任务  ${task.title||usage.last_msg_by_tool?.[task.tool]||task.project||'暂无'}`};
+  return values[field]||'';
+}
 /* 宠物页（W_PET）：大宠物 ×2 + 三条状态条 + 三个交互按钮，几何照抄固件 */
 function devPetPage(screen, ctx){
   const type=(draft.pet&&draft.pet.type)||'robot';
   const st=((live.tasks||[])[0]||{}).state||'IDLE';
-  devPet(screen, type, st, 96, 66, 2);
+  // 先画像素回退；当前设备成功应用过角色包时，再用真实 320×480 状态帧
+  // 覆盖它。图片加载失败会自动移除，预览仍保持可用。
+  const fallback=devAbs(el('div','dev-el'),0,0,DEV.W,DEV.H);
+  screen.append(fallback);
+  devPet(fallback, type, st, 96, 66, 2);
+  const pack=live.petpack?.ok&&live.petpack?.pack?live.petpack.pack:'';
+  if(pack){
+    const frame=devPetFrame(st);
+    const img=devAbs(document.createElement('img'),0,0,DEV.W,DEV.H);
+    img.alt=`${pack} · ${frame}`;
+    img.src=`/api/petpack-frame?name=${encodeURIComponent(pack)}&state=${encodeURIComponent(frame)}`;
+    img.style.objectFit='cover';img.style.display='block';
+    img.onload=()=>fallback.remove();
+    img.onerror=()=>img.remove();
+    screen.append(img);
+  }
   const ps=(live.telemetry||{}).ps||'80,75,90';
   const vals=ps.split(',').map(Number);
   const names=['饱食','水分','活力'];
-  // 用户反馈：不要数值条，直接显示数字（与固件 make_pet_page 同步，
-  // 行距 24 ×3 行卡在按钮行上方）
-  names.forEach((label,i)=>{
-    devLabel(screen, 20, 354+24*i, 70, label, 18, 'dev-dim');
-    devLabel(screen, 92, 354+24*i, 70, String(vals[i]||0), 18, 'dev-ink');
-  });
-  ['喂食','喝水','运动'].forEach((t,i)=>{
-    const btn=devAbs(el('div','dev-el'), 12+100*i, 428, 96, 44);
-    btn.style.background=panelHex(draft.theme.card);
-    btn.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
-    btn.style.borderRadius='10px';
-    screen.append(btn);
-    devLabel(btn, 0, 0, 96, t, 20, null, ctx.text, 'center');
-  });
+  // 三项数值一行，按钮与底部页码各有独立触控区域。
+  if(Number(draft.pet?.show_stats??1)){
+    names.forEach((label,i)=>{
+      devLabel(screen, 12+100*i, 370, 48, label, 14, 'dev-dim');
+      devLabel(screen, 62+100*i, 370, 42, String(vals[i]??0), 14, 'dev-ink');
+    });
+  }
+  const pf=petFields().slice(0,4);
+  const dens=Number(draft.pet?.density??2);
+  if(dens===0 && pf.length){            // 单行：合并截断
+    const row=devAbs(el('div','dev-el'),12,36,296,25);
+    row.style.background='rgba(6,10,18,.7)';screen.append(row);
+    devLabel(row,0,0,296,pf.map(petFieldText).join('  ·  '),14,null,ctx.text);
+  }else{                                // 双行 / 自动摘要：2 列网格
+    const cols=2, rows=Math.min(2, Math.ceil(pf.length/cols));
+    pf.slice(0,cols*rows).forEach((field,i)=>{
+      const r=Math.floor(i/cols), c=i%cols;
+      const row=devAbs(el('div','dev-el'),12+c*150,36+r*26,146,25);
+      row.style.background='rgba(6,10,18,.7)';screen.append(row);
+      devLabel(row,0,0,146,petFieldText(field),14,null,ctx.text);
+    });
+  }
+  if(Number(draft.pet?.show_buttons??1)){
+    ['喂食','喝水','运动'].forEach((t,i)=>{
+      const btn=devAbs(el('div','dev-el'), 12+100*i, 400, 96, 42);
+      btn.style.background=panelHex(draft.theme.card);
+      btn.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
+      btn.style.borderRadius='10px';
+      screen.append(btn);
+      devLabel(btn, 0, 0, 96, t, 20, null, ctx.text, 'center');
+    });
+  }
 }
 /* 工具页（页面带 filter）：顶部完成带 30px + 5 行会话（66px、间隔 4、y=94 起）。/* 工具页（页面带 filter）：顶部完成带 30px + 5 行会话（66px、间隔 4、y=94 起）。
    与固件 make_ai_tool_page / render_ai_filtered 同源；完成带高亮 = 有 10 秒内
@@ -1153,6 +1220,38 @@ function devWeatherCity(screen, ctx, page){
     devLabel(row, 194, 4, 98, dp?`${dp[1]}° ${dp[2]}°`:'', 20, null, null, 'right');
   }
 }
+  /* P1-1 活动舞台：会话行迷你角色（24×30），几何与固件 draw_pet_mini 同源。
+     身体色 = 状态色×背景（镜像固件 mix_hex 权重 130/210），等待/待确认挂「!」
+     徽标；运行中的眨眼用 CSS 动画近似固件的 0.5s 呼吸。 */
+  function devPetMini(row, task, ctx){
+    const st = String(task.state||'');
+    const isErr = st==='ERROR', wait = st==='WAIT_INPUT'||st==='ASK', done = st==='DONE';
+    const col = c=>String(c).startsWith('#')?c:'#'+c;
+    const sc = col(devStateColor(st, ctx.accent, ctx.sub));
+    const ok = col(devSemantic('status.ok'));
+    const rgbHex = (fg,a)=>{ const m = composite(hexToRgb(fg), hexToRgb(ctx.bg), a);
+      return '#'+m.map(v=>v.toString(16).padStart(2,'0')).join(''); };
+    const bodyC = done ? rgbHex(ok,130/255) : rgbHex(sc,isErr?210/255:130/255);
+    const edgeC = done ? ok : sc;
+    const root = devAbs(el('div','dev-el'), 7, 14, 24, 30); row.append(root);
+    const head = devAbs(el('div','dev-el'), 2, 0, 20, 13);
+    head.style.borderRadius='5px'; head.style.background=bodyC; root.append(head);
+    const eyeH = (done||isErr||wait) ? 4 : 1;
+    [[6,5],[15,5]].forEach(([ex,ey])=>{
+      const e = devAbs(el('div','dev-el'), ex, ey, 3, eyeH);
+      e.style.borderRadius='1px'; e.style.background=ctx.text; root.append(e);
+      if(!done && !isErr && !wait && st){ e.style.height='4px'; e.classList.add('dev-mini-eye'); }
+    });
+    const mouth = devAbs(el('div','dev-el'), 9, 9, 6, 2);
+    mouth.style.borderRadius='1px'; mouth.style.background = done?ok:sc; root.append(mouth);
+    const body = devAbs(el('div','dev-el'), 4, 15, 16, 12);
+    body.style.borderRadius='4px'; body.style.background=bodyC;
+    body.style.border='1px solid '+edgeC; root.append(body);
+    if(wait){ const b = devAbs(el('div','dev-el'), 16, -4, 8, 14);
+      b.textContent='!'; b.style.fontSize='12px'; b.style.fontWeight='700';
+      b.style.lineHeight='14px'; b.style.color=col(devSemantic('status.warn'));
+      root.append(b); }
+  }
 function devAiPage(screen, ctx, page){
   const filter = (page && page.filter) || '';
   if(filter){ devAiToolPage(screen, ctx, filter); return; }
@@ -1186,8 +1285,8 @@ function devAiPage(screen, ctx, page){
     card.append(row);
     const task = others[i];
     if(!task) continue;
-    devDot(row, 8, 10, 8, devStateColor(task.state, ctx.accent, ctx.sub));
-    devLabel(row, 22, 4, 104, task.tool, 20, null,
+    devPetMini(row, task, ctx);   // P1-1 活动舞台：状态点 → 迷你角色
+    devLabel(row, 34, 4, 92, task.tool, 20, null,
              task.state === 'ERROR' ? devSemantic('status.err') : undefined);
     devLabel(row, 126, 4, 150, `${task.project || '未命名'} · ${fmtElapsed(task.elapsed)}`,
              20, 'dev-dim', null, 'right');
@@ -2227,10 +2326,13 @@ function renderPetTab(){
     const sel=$(id), v=draft.pet?.[keys[i]];
     if(sel && v && [...sel.options].some(o=>o.value===v)) sel.value=v;
   });
-  // 显示内容勾选 + 叠加指标（竞品#29）
+  // 角色页信息字段单独勾选；旧 overlay 配置在 petFields() 中兼容。
   if($('pet-show-stats')) $('pet-show-stats').checked=draft.pet?.show_stats!==0;
   if($('pet-show-buttons')) $('pet-show-buttons').checked=draft.pet?.show_buttons!==0;
-  if($('pet-overlay')) $('pet-overlay').value=String(draft.pet?.overlay||0);
+  $('pet-fields')?.querySelectorAll('input[type="checkbox"]').forEach(input=>{
+    input.checked=petFields().includes(input.value);
+  });
+  if($('pet-density')) $('pet-density').value=String(draft.pet?.density??2);
   renderPetStats();
 }
 function renderPetStats(){
@@ -3704,6 +3806,9 @@ function bind(){
   // ---- 设置 · 宠物 ----
   $('pet-save').onclick=pending($('pet-save'),async()=>{
     try{
+      const fields=[...$('pet-fields').querySelectorAll('input:checked')].map(input=>input.value);
+      if(fields.length>4)throw Error('角色页信息最多选择 4 项');
+      const density=Number($('pet-density')?.value||2);
       const r=await request('/api/pet-config',{type:petCache?.type||'robot',
         name:$('pet-name').value.trim()||'帽子',
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
@@ -3711,6 +3816,7 @@ function bind(){
         break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         show_stats:$('pet-show-stats')?.checked?1:0,
         show_buttons:$('pet-show-buttons')?.checked?1:0,
+        density, fields,
         day_pack:$('pet-pack-day')?.value||'',
         night_pack:$('pet-pack-night')?.value||'',
         weather_pack:$('pet-pack-weather')?.value||''});
@@ -3721,6 +3827,7 @@ function bind(){
         break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         show_stats:$('pet-show-stats')?.checked?1:0,
         show_buttons:$('pet-show-buttons')?.checked?1:0,
+        density, fields,
         day_pack:$('pet-pack-day')?.value||'',
         night_pack:$('pet-pack-night')?.value||'',
         weather_pack:$('pet-pack-weather')?.value||''};
@@ -3979,6 +4086,7 @@ function bind(){
         $('pet-pack-weather').value=draft.pet.weather_pack;
       if($('pet-autopack')) $('pet-autopack').checked=!!draft.pet?.autopack;
       updatePackThumb();
+      renderPetLibrary(packs);
     }catch(e){}
   }
   function updatePackThumb(){
@@ -4047,6 +4155,78 @@ function bind(){
     }catch(err){notice('改名失败：'+err.message,true)}
   };
   refreshPetPacks();
+
+  // ---- 角色库全状态预览（P0-5）：卡片视图 + 九宫格 Modal ----
+  const PET_CANON = ['idle','thinking','working','working_b','sleepy',
+                     'sleeping','greeting','happy','error'];
+  const PET_CANON_LABEL = {idle:'待机',thinking:'思考',working:'工作',
+    working_b:'工作·双帧',sleepy:'犯困',sleeping:'睡眠',greeting:'问候',
+    happy:'开心',error:'出错'};
+  const PET_FALLBACK_DEFAULT = 'idle';
+  function petUseRoles(name){
+    const p = draft.pet || {}; const roles = [];
+    if(p.day_pack === name) roles.push('白天');
+    if(p.night_pack === name) roles.push('夜晚');
+    if(p.weather_pack === name) roles.push('雨雪');
+    return roles;
+  }
+  function renderPetLibrary(packs){
+    const box = $('pet-library'); if(!box) return;
+    box.replaceChildren();
+    if(!packs.length){
+      box.append(el('p','hint','暂无角色包——用 pet_artwork.py --pack 生成或导入 .zip'));
+      return;
+    }
+    packs.forEach(p=>{
+      const card = el('div','pet-card'); card.dataset.name = p.name;
+      const thumb = el('img','pet-card-thumb');
+      thumb.src = `/api/petpack-thumb?name=${encodeURIComponent(p.name)}&t=${Date.now()}`;
+      thumb.alt = p.name; card.append(thumb);
+      const body = el('div','pet-card-body');
+      body.append(el('div','pet-card-name', p.name));
+      body.append(el('div','pet-card-meta', `${p.frames} 帧`));
+      const badges = el('div','pet-card-badges');
+      petUseRoles(p.name).forEach(r=> badges.append(el('span','badge use', `当前·${r}`)));
+      if(p.missing && p.missing.length)
+        badges.append(el('span','badge warn', `缺 ${p.missing.length} 帧`));
+      if(badges.childElementCount) body.append(badges);
+      card.append(body);
+      card.onclick = ()=> openPetAllStates(p.name, p);
+      box.append(card);
+    });
+  }
+  function openPetAllStates(name, packInfo){
+    const mask = $('pet-allstates'); if(!mask) return;
+    $('pet-allstates-title').textContent = `全部状态 · ${name}`;
+    const grid = $('pet-allstates-grid'); grid.replaceChildren();
+    const fallbackMap = (packInfo && packInfo.fallback) || {};
+    const present = new Set((packInfo && packInfo.frame_list) || []);
+    PET_CANON.forEach(st=>{
+      const cell = el('div','pet-cell');
+      cell.append(el('div','pet-cell-label', PET_CANON_LABEL[st] || st));
+      const crop = el('div','pet-cell-crop');     // 设备裁切预览（320×480 竖屏, cover）
+      const img = el('img','pet-cell-img');
+      if(present.has(st)){
+        img.src = `/api/petpack-frame?name=${encodeURIComponent(name)}&state=${encodeURIComponent(st)}`;
+      }else{
+        const fb = fallbackMap[st] || PET_FALLBACK_DEFAULT;
+        img.src = `/api/petpack-frame?name=${encodeURIComponent(name)}&state=${encodeURIComponent(fb)}`;
+        cell.classList.add('missing');
+        cell.append(el('div','pet-cell-note', `缺帧 → 回退 ${fb}`));
+      }
+      crop.append(img); cell.append(crop); grid.append(cell);
+    });
+    const miss = (packInfo && packInfo.missing) || [];
+    $('pet-allstates-note').textContent = miss.length
+      ? `缺帧状态（${miss.join('/')}）设备端该状态不更新、停在上一帧；预览显示其回退帧。`
+        + '裁切框模拟 320×480 竖屏实际显示范围（cover 裁切）。'
+      : '9 帧齐全，设备各状态均有专属帧。裁切框模拟 320×480 竖屏实际显示范围。';
+    mask.hidden = false;
+  }
+  $('pet-allstates-close').onclick = ()=>{ const m = $('pet-allstates'); if(m) m.hidden = true; };
+  $('pet-allstates').addEventListener('click', e=>{
+    if(e.target === $('pet-allstates')) $('pet-allstates').hidden = true;
+  });
 
   // ---- 彩色角色图（图集管线）：文件名映射状态，逐张走 IMG 通道 ----
   const PET_STATES=['working','thinking','sleeping','greeting','happy','error','idle','sleepy'];

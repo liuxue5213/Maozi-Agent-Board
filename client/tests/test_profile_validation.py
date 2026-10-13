@@ -266,6 +266,38 @@ class PetShowFlagsTests(unittest.TestCase):
         self.assertEqual((out["pet"]["show_stats"], out["pet"]["show_buttons"]),
                          (0, 0))
 
+    def test_pet_information_fields_roundtrip(self):
+        fields = ["project", "model", "turn", "today"]
+        out = validate_profile(base(pet={"fields": fields, "show_stats": 0,
+                                         "show_buttons": 0}))
+        self.assertEqual(out["pet"]["fields"], fields)
+        self.assertEqual(out["pet"]["show_stats"], 0)
+
+    def test_pet_information_fields_reject_overflow_and_duplicates(self):
+        for fields in (["project", "tool", "state", "elapsed", "model"],
+                       ["project", "project"], ["unknown"]):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                validate_profile(base(pet={"fields": fields}))
+
+    def test_legacy_overlay_migrates(self):
+        out = validate_profile(base(pet={"overlay": 2}))
+        self.assertEqual(out["pet"]["fields"], ["tool", "state"])
+
+    def test_pet_fields_accept_new_keys(self):
+        fields = ["title", "turn_total", "turn_out", "today"]
+        out = validate_profile(base(pet={"fields": fields}))
+        self.assertEqual(out["pet"]["fields"], fields)
+
+    def test_pet_fields_reject_unknown_key(self):
+        with self.assertRaises(ValueError):
+            validate_profile(base(pet={"fields": ["context_occupancy"]}))
+
+    def test_pet_density_clamped_and_defaulted(self):
+        self.assertEqual(validate_profile(base(pet={"density": 0}))["pet"]["density"], 0)
+        self.assertEqual(validate_profile(base(pet={"density": 1}))["pet"]["density"], 1)
+        self.assertEqual(validate_profile(base(pet={"density": 9}))["pet"]["density"], 2)
+        self.assertEqual(validate_profile(base(pet={}))["pet"]["density"], 2)
+
     def test_roundtrip(self):
         out = validate_profile(base(tv={"name_mode": 1, "tl_range": 1}))
         self.assertEqual((out["tv"]["name_mode"], out["tv"]["tl_range"]), (1, 1))

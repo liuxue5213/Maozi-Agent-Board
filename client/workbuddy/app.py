@@ -398,10 +398,10 @@ class App:
     # ---- 实拍（SNAP：设备快照 → 串口回传 → PNG）----
 
     def pet_scene_event(self, action: str) -> None:
-        """宠物互动转发设备：运动触发屏端 PLAYING 场景 2.5s（固件三层仲裁的场景层）。"""
-        if action == "play" and self.link and \
+        """把三种宠物互动转发设备，触发对应的短反馈场景。"""
+        if action in ("feed", "water", "play") and self.link and \
                 self.link.status.startswith("connected:"):
-            self.link.send("PET=play\n")
+            self.link.send(f"PET={action}\n")
 
     def request_snap(self) -> bool:
         """工作台「实拍」按钮：下发 SNAP=1，设备约 10s 内分帧回传。"""
@@ -924,6 +924,8 @@ class App:
                                             "thermal_hint", ""),
                     "device": self.link.status if self.link else "串口关闭",
                     "tasks": self._tasks_with_trace(), "telemetry": self.last,
+                    # Web 设备预览据此读取当前实机角色包的对应状态帧。
+                    "petpack": self._pack_state(),
                     "telemetry_age": (round(time.time() - last_tick, 1)
                                       if last_tick else None),
                     "telemetry_at": last_tick,

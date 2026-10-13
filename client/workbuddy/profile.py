@@ -119,7 +119,23 @@ def validate_profile(raw):
     try:
         pet_overlay = max(0, min(2, int(pet.get("overlay", 0) or 0)))
     except (TypeError, ValueError):
-        pet_overlay = 0   # 叠加指标：0=无 1=今日Token 2=焦点会话
+        pet_overlay = 0   # 叠加指标（旧版）：0=无 1=今日Token 2=焦点会话；新版请改用 fields 多选
+    try:
+        pet_density = max(0, min(2, int(pet.get("density", 2))))
+    except (TypeError, ValueError):
+        pet_density = 2   # 角色页信息密度：0=单行 1=双行 2=自动摘要
+    # 字段白名单：title=任务名 turn_total=本轮总Token turn_out=本轮输出；
+    # turn 保留为 turn_out 别名以兼容旧档案与既有测试。
+    allowed_pet_fields = {"project", "tool", "state", "elapsed", "model",
+                          "turn", "turn_total", "turn_out", "today", "message", "title"}
+    if "fields" in pet:
+        pet_fields = pet["fields"]
+        if (not isinstance(pet_fields, list) or len(pet_fields) > 4
+                or any(not isinstance(f, str) or f not in allowed_pet_fields for f in pet_fields)
+                or len(set(pet_fields)) != len(pet_fields)):
+            raise ValueError("宠物页信息最多选择 4 项，且不可重复")
+    else:
+        pet_fields = ["today"] if pet_overlay == 1 else (["tool", "state"] if pet_overlay == 2 else [])
     # 昼夜自动切包：包名只作 outputs/petpack_<名>/ 目录引用，白名单字符集
     # 久坐提醒阈值（分钟，0=关）：键鼠空闲超限 → 宠物犯困 + 一次性推送
     try:
@@ -143,6 +159,8 @@ def validate_profile(raw):
             "autopack": _pet_flag("autopack", 0),
             "show_stats": pet_stats, "show_buttons": pet_btns,
             "overlay": pet_overlay,
+            "density": pet_density,
+            "fields": pet_fields,
             "break_min": pet_break,
             "day_pack": pet_day, "night_pack": pet_night,
             "weather_pack": pet_weather}}

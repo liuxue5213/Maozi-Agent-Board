@@ -667,6 +667,8 @@ svg { display:block; }
 
 /* ---- 设置 · 宠物（形象卡片 / 状态条）---- */
 .pet-types { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:var(--space-2); }
+.pet-field-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:8px 16px; }
+.pet-field-grid .field { min-width:0; margin:0; }
 .pet-type {
   display:flex; flex-direction:column; align-items:center; gap:var(--space-1);
   padding:var(--space-3) var(--space-2);
@@ -1723,6 +1725,10 @@ svg { display:block; }
   .btn-row { flex-wrap:wrap; }
 }
 
+@media (max-width:480px) {
+  .pet-allstates-grid { grid-template-columns:repeat(2, 1fr); }
+}
+
 @media (max-width:440px) {
   .widget-palette, .template-row, .theme-grid { grid-template-columns:minmax(0, 1fr); }
   .check-grid { grid-template-columns:minmax(0, 1fr); }
@@ -1798,3 +1804,49 @@ svg { display:block; }
 .pet-slot { padding:3px 10px; border-radius:12px; font-size:12px;
   border:1px solid var(--line); color:var(--text-tertiary); }
 .pet-slot.on { border-color:var(--accent); color:var(--accent); }
+
+/* ---- 角色库卡片视图（P0-5）---- */
+.pet-library { display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr));
+  gap:10px; margin:8px 0 4px; }
+.pet-card { display:flex; gap:10px; align-items:center; padding:8px;
+  border:1px solid var(--line); border-radius:10px; background:var(--bg-surface);
+  cursor:pointer; transition:border-color .15s, transform .1s; }
+.pet-card:hover { border-color:var(--line-accent); transform:translateY(-1px); }
+.pet-card-thumb { width:48px; height:72px; border-radius:6px; object-fit:cover;
+  border:1px solid var(--line); flex:none; background:var(--bg-sunken); }
+.pet-card-body { min-width:0; flex:1; }
+.pet-card-name { font-size:var(--fs-sm); font-weight:var(--fw-bold);
+  color:var(--text-primary); word-break:break-all; }
+.pet-card-meta { font-size:var(--fs-xs); color:var(--text-tertiary); margin-top:2px; }
+.pet-card-badges { display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; }
+.badge { font-size:11px; padding:1px 7px; border-radius:10px; line-height:1.5;
+  border:1px solid var(--line); color:var(--text-tertiary); }
+.badge.use { border-color:var(--accent-soft-line); color:var(--accent);
+  background:var(--accent-soft); }
+.badge.warn { border-color:var(--warn-line); color:var(--warn);
+  background:var(--warn-bg); }
+
+/* ---- 全部状态九宫格 Modal（P0-5）---- */
+.modal-mask { position:fixed; inset:0; background:var(--bg-overlay);
+  display:flex; align-items:center; justify-content:center; z-index:60; padding:18px; }
+.modal-card { width:min(760px,94vw); max-height:88vh; overflow:auto;
+  background:var(--bg-surface); border:1px solid var(--line); border-radius:14px;
+  padding:16px; box-shadow:var(--shadow-lg); }
+.modal-head { display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:12px; }
+.modal-head h3 { margin:0; font-size:var(--fs-md); color:var(--text-primary); }
+.pet-allstates-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.pet-cell { border:1px solid var(--line); border-radius:10px; overflow:hidden;
+  background:var(--bg-surface); }
+.pet-cell.missing { border-color:var(--warn-line); }
+.pet-cell-label { font-size:var(--fs-xs); color:var(--text-secondary);
+  padding:5px 8px; font-weight:var(--fw-bold); border-bottom:1px solid var(--line); }
+.pet-cell-crop { position:relative; width:100%; aspect-ratio:2/3;
+  background:var(--bg-sunken); overflow:hidden; }
+.pet-cell-img { width:100%; height:100%; object-fit:cover; display:block; }
+.pet-cell-note { font-size:11px; color:var(--warn); padding:4px 8px;
+  background:var(--warn-bg); }
+
+/* ---- P1-1 活动舞台：会话行迷你角色（镜像固件 draw_pet_mini）---- */
+.dev-mini-eye { animation: dev-mini-blink 3.2s infinite; }
+@keyframes dev-mini-blink { 0%,90%,100% { height:4px; } 94% { height:1px; } }

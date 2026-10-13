@@ -122,6 +122,14 @@ struct PetParts {
     int sz = 1;
 };
 static PetParts pet_ai, pet_page;
+
+// P1-1 活动舞台：AI 页「其余会话」行的迷你角色（24×30，头/眼/嘴/身/徽标），
+// 表情与配色由 pet_mini_apply 按该行会话状态实时刷新（见 render_ai）。
+struct MiniPet {
+    lv_obj_t *root=nullptr, *head=nullptr, *eye_l=nullptr, *eye_r=nullptr;
+    lv_obj_t *mouth=nullptr, *body=nullptr, *badge=nullptr;
+};
+static MiniPet pet_mini[3];   // AI 页 3 行会话各一只
 static lv_obj_t* pet_photo = nullptr;    // 宠物页角色图层（图片资源包）
 static lv_obj_t* pet_tint = nullptr;     // 氛围层：昼夜/雨天色罩（盖图、低于控件）
 static lv_timer_t* work_timer = nullptr; // working 动画交替 timer（A/B 双帧）
@@ -597,6 +605,8 @@ void make_ai_tool_page(WidgetView& view, lv_obj_t* screen) {
 }
 
 void make_pet_compact(WidgetView& view, lv_obj_t* screen);
+struct MiniPet;
+static void draw_pet_mini(MiniPet& p, lv_obj_t* parent, int x, int y);
 
 void pet_action_cb(lv_event_t* event);
 
@@ -624,8 +634,9 @@ void make_ai(WidgetView& view, lv_obj_t* screen, const char* filter) {
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_event_cb(row, choose_task, LV_EVENT_CLICKED, &view);
         view.rows[i] = row;
-        view.row_dot[i] = dot_obj(row, 8, 10, 8);
-        view.extra[i + 1] = label(row, "", 20, text_color, 22,  4, 104, 26);  // 行1 工具
+        // P1-1 活动舞台：状态点 → 迷你角色（配色/眼高/「!」徽标随会话状态）
+        draw_pet_mini(pet_mini[i], row, 7, 14);
+        view.extra[i + 1] = label(row, "", 20, text_color, 34,  4, 92, 26);   // 行1 工具
         view.extra[i + 4] = label(row, "", 20, sub_color, 126,  4, 150, 26);  // 行1 右：项目·用时
         lv_obj_set_style_text_align(view.extra[i + 4], LV_TEXT_ALIGN_RIGHT, 0);
         view.row_bar[i] = bar_track(row, 8, 40, 268);
@@ -772,10 +783,11 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
    活动层：WORKING/THINKING/IDLE（AI 会话状态驱动）
    时间层：SLEEPY 22:00-01:00 软覆盖（AI 在干活则「陪你熬夜」不犯困，须持续 10s）；
           SLEEPING 01:00-06:00 硬覆盖
-   场景层：ALERT > CELEBRATE > PLAYING > GREETING 瞬时覆盖，到期回基态 */
+   场景层：ALERT > CELEBRATE > FEEDING/DRINKING/PLAYING > GREETING
+   瞬时覆盖，到期回基态 */
 enum PetLayer {
     PL_IDLE = 0, PL_THINKING, PL_WORKING, PL_SLEEPY, PL_SLEEPING,
-    PL_GREETING, PL_CELEBRATE, PL_PLAYING, PL_ALERT,
+    PL_GREETING, PL_CELEBRATE, PL_FEEDING, PL_DRINKING, PL_PLAYING, PL_ALERT,
 };
 static PetLayer pet_scene = PL_IDLE;      // 场景层当前值（pet_scene_until>0 时有效）
 static uint32_t pet_scene_until = 0;      // 场景层到期时刻（millis）
@@ -905,6 +917,10 @@ static void pet_apply_expression(PetParts& p, const char* st,
                            badge = "z";                    break;
         case PL_GREETING:  badge = "嗨"; mouth_w = 16;      break;
         case PL_CELEBRATE: eh = 3; mouth_w = 18; mouth_col = COL_OK; break;
+        case PL_FEEDING:   eh = 3; mouth_w = 18; badge = "食";
+                           badge_col = COL_OK; mouth_col = COL_OK; break;
+        case PL_DRINKING:  eh = 4; mouth_w = 10; badge = "水";
+                           badge_col = accent;                    break;
         case PL_PLAYING:   eh = 4; mouth_w = 14;           break;
         case PL_ALERT:     badge = "×"; badge_col = COL_ERR; edge_col = COL_ERR;
                            eye_col = COL_ERR; mouth_w = 20;
@@ -1042,19 +1058,52 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
             continue;
         }
         if (c.t == 15) {
-            // 正在播放：透明容器两行（歌名 / 歌手 · 进度）；触摸=播放/暂停
-            // （uplink_key PLAY → 客户端 _handle_key：有会话 toggle，无会话
-            // 启动用户选定的默认音乐软件）
+            // 迷你媒体控制器：两行（歌名 / 歌手·进度）+ 底部进度条；
+            // 触摸分区：左 210px=播放/暂停，右 94px=下一首
+            // （uplink_key → 客户端 _handle_key：有会话 toggle/next，
+            // 无会话 PLAY 启动用户选定的默认音乐软件）
             lv_obj_t* box = lv_obj_create(screen);
             lv_obj_set_pos(box, c.x, c.y);
-            lv_obj_set_size(box, 304, 64);
+            lv_obj_set_size(box, 304, 76);
             lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
             lv_obj_set_style_border_width(box, 0, 0);
             lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_add_flag(box, LV_OBJ_FLAG_CLICKABLE);
-            lv_obj_add_event_cb(box, send_key_cb, LV_EVENT_CLICKED, (void*)"PLAY");
+            lv_obj_t* z1 = lv_obj_create(box);
+            lv_obj_set_pos(z1, 0, 0);
+            lv_obj_set_size(z1, 210, 76);
+            lv_obj_set_style_bg_opa(z1, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(z1, 0, 0);
+            lv_obj_clear_flag(z1, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(z1, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(z1, send_key_cb, LV_EVENT_CLICKED, (void*)"PLAY");
+            lv_obj_t* z2 = lv_obj_create(box);
+            lv_obj_set_pos(z2, 210, 0);
+            lv_obj_set_size(z2, 94, 76);
+            lv_obj_set_style_bg_opa(z2, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(z2, 0, 0);
+            lv_obj_clear_flag(z2, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_add_flag(z2, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_add_event_cb(z2, send_key_cb, LV_EVENT_CLICKED, (void*)"NEXT");
             label1(box, "未在播放", 20, text_color, 0, 0, 304);
             label1(box, "", 20, sub_color, 0, 30, 304);
+            lv_obj_t* track = lv_obj_create(box);
+            lv_obj_set_pos(track, 0, 64);
+            lv_obj_set_size(track, 304, 6);
+            lv_obj_set_style_bg_color(track, lv_color_hex(text_color), 0);
+            lv_obj_set_style_bg_opa(track, LV_OPA_20, 0);
+            lv_obj_set_style_border_width(track, 0, 0);
+            lv_obj_set_style_radius(track, 3, 0);
+            lv_obj_clear_flag(track, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_clear_flag(track, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_t* fill = lv_obj_create(track);
+            lv_obj_set_pos(fill, 0, 0);
+            lv_obj_set_size(fill, 0, 6);
+            lv_obj_set_style_bg_color(fill, lv_color_hex(accent), 0);
+            lv_obj_set_style_bg_opa(fill, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(fill, 0, 0);
+            lv_obj_set_style_radius(fill, 3, 0);
+            lv_obj_clear_flag(fill, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_clear_flag(fill, LV_OBJ_FLAG_CLICKABLE);
             page.free_lbl[i] = box;
             page.free_t[i] = 15;
             page.free_n = i + 1;
@@ -1152,8 +1201,9 @@ void render_free_page(PageView& page, const char* tb) {
         if (page.free_t[i] == 15) {
             lv_obj_t* box = page.free_lbl[i];
             if (!box) continue;
+            // 子序：0=z1(播放区) 1=z2(下一首区) 2=歌名 3=歌手·进度 4=进度槽 5=进度填充
             if (latest.np.used) {
-                set_text(lv_obj_get_child(box, 0),
+                set_text(lv_obj_get_child(box, 2),
                          latest.np.title[0] ? latest.np.title : "未知曲目");
                 char sub[96];
                 if (latest.np.dur > 0)
@@ -1162,10 +1212,15 @@ void render_free_page(PageView& page, const char* tb) {
                              latest.np.pos % 60, latest.np.dur / 60,
                              latest.np.dur % 60);
                 else snprintf(sub, sizeof(sub), "%s", latest.np.artist);
-                set_text(lv_obj_get_child(box, 1), sub);
+                set_text(lv_obj_get_child(box, 3), sub);
+                lv_obj_t* fill = lv_obj_get_child(box, 5);
+                if (fill) lv_obj_set_width(fill,
+                    latest.np.dur > 0 ? 304 * latest.np.pos / latest.np.dur : 0);
             } else {
-                set_text(lv_obj_get_child(box, 0), "未在播放");
-                set_text(lv_obj_get_child(box, 1), "");
+                set_text(lv_obj_get_child(box, 2), "未在播放");
+                set_text(lv_obj_get_child(box, 3), "");
+                lv_obj_t* fill = lv_obj_get_child(box, 5);
+                if (fill) lv_obj_set_width(fill, 0);
             }
             continue;
         }
@@ -1310,23 +1365,23 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_GESTURE_BUBBLE);
-    // 三项宠物数值（饱食/水分/活力），PS 遥测实时驱动。
-    // 用户反馈：不要数值条，直接显示数字。行距 24（cn_20 行高）×3 行
-    // 恰好放进 y354..426，不压 y428 的按钮行（cn_24 三行 84px 会溢出）。
+    // 三项数值收成一行，留出独立按钮行及 y446 页码导航。
     static const char* names[3] = {"饱食", "水分", "活力"};
     if (g_profile.pet_show_stats)
         for (int i = 0; i < 3; ++i) {
-            label1(screen, names[i], 14, sub_color, 20, 354 + i * 24, 70);
-            view.pm_val[i] = label1(screen, "--", 14, text_color, 92, 354 + i * 24, 70);
+            label1(screen, names[i], 14, sub_color, 12 + i * 100, 370, 48);
+            view.pm_val[i] = label1(screen, "--", 14, text_color, 62 + i * 100, 370, 42);
         }
+    // 独立信息行始终在角色图和氛围层上方；与交互按钮开关无关。
+    for (uint8_t i = 0; i < g_profile.pet_field_n; ++i) {
+        view.extra[i] = label1(screen, "", 14, text_color, 12, 36 + i * 26, 296);
+        lv_obj_set_style_bg_color(view.extra[i], lv_color_hex(bg), 0);
+        lv_obj_set_style_bg_opa(view.extra[i], LV_OPA_70, 0);
+    }
     if (g_profile.pet_show_buttons) {
-        // 叠加指标行（竞品「角色页叠加指标」）：顶部信息条（盖角色图）
-        if (g_profile.pet_overlay) {
-            view.extra[0] = label1(screen, "", 20, text_color, 8, 36, 200);
-        }
-        button(screen, "喂食", 12, 428, 96, 44, pet_action_cb, (void*)"feed");
-        button(screen, "喝水", 112, 428, 96, 44, pet_action_cb, (void*)"water");
-        button(screen, "运动", 212, 428, 96, 44, pet_action_cb, (void*)"play");
+        button(screen, "喂食", 12, 400, 96, 42, pet_action_cb, (void*)"feed");
+        button(screen, "喝水", 112, 400, 96, 42, pet_action_cb, (void*)"water");
+        button(screen, "运动", 212, 400, 96, 42, pet_action_cb, (void*)"play");
     }
 }
 
@@ -1386,7 +1441,6 @@ static void work_anim_flip(lv_timer_t* t) {
 }
 
 void render_pet_page(WidgetView& view) {
-    if (!view.pm_val[0]) return;
     int vals[3] = {latest.pet_h, latest.pet_t, latest.pet_e};
     for (int i = 0; i < 3; ++i) {
         if (view.pm_val[i]) {
@@ -1396,28 +1450,32 @@ void render_pet_page(WidgetView& view) {
         }
     }
     pet_ambient_tick();
-    // 叠加指标行（pet_overlay：1=今日Token 2=焦点会话）
-    if (view.extra[0]) {
-        char obuf[48] = "";
-        if (g_profile.pet_overlay == 1) {
-            if (latest.day_tok_total >= 0) {
-                long k = latest.day_tok_total / 1000;
-                if (k >= 1000) snprintf(obuf, sizeof(obuf), "今日 %.1fM", k / 1000.0);
-                else snprintf(obuf, sizeof(obuf), "今日 %ldk", k);
-            } else strcpy(obuf, "今日暂无用量");
-        } else if (g_profile.pet_overlay == 2 && latest.tasks[0].used) {
-            snprintf(obuf, sizeof(obuf), "%s · %s", latest.tasks[0].tool,
-                     state_short(latest.tasks[0].state));
+    const AITask& task = latest.tasks[0];
+    for (uint8_t i = 0; i < g_profile.pet_field_n; ++i) {
+        if (!view.extra[i]) continue;
+        char obuf[96] = "";
+        switch (g_profile.pet_fields[i]) {
+        case 1: snprintf(obuf, sizeof(obuf), "项目  %s", task.used && task.proj[0] ? task.proj : "暂无"); break;
+        case 2: snprintf(obuf, sizeof(obuf), "工具  %s", task.used ? task.tool : "暂无"); break;
+        case 3: snprintf(obuf, sizeof(obuf), "状态  %s", task.used ? state_short(task.state) : "空闲"); break;
+        case 4: snprintf(obuf, sizeof(obuf), "用时  %d:%02d", task.used ? task.elapse / 60 : 0,
+                         task.used ? task.elapse % 60 : 0); break;
+        case 5: snprintf(obuf, sizeof(obuf), "模型  %s", latest.ai_model[0] ? latest.ai_model : "暂无"); break;
+        case 6: if (latest.ai_tok_out >= 0) snprintf(obuf, sizeof(obuf), "本轮输出  %.1fk", latest.ai_tok_out / 1000.0);
+                else strcpy(obuf, "本轮输出  暂无"); break;
+        case 7: if (latest.day_tok_total >= 0) snprintf(obuf, sizeof(obuf), "今日 Token  %.1fk", latest.day_tok_total / 1000.0);
+                else strcpy(obuf, "今日 Token  暂无"); break;
+        case 8: snprintf(obuf, sizeof(obuf), "消息  %s", latest.afm[0] ? latest.afm : "暂无"); break;
         }
-        set_text(view.extra[0], obuf);
+        set_text(view.extra[i], obuf);
     }
     const char* st = latest.tasks[0].used ? latest.tasks[0].state : "IDLE";
     PetLayer layer = pet_arbitrate(st, millis());
     pet_layer_now = layer;
     static const char* frame_of[] = {
         "pet_idle", "pet_thinking", "pet_working", "pet_sleepy",
-        "pet_sleeping", "pet_greeting", "pet_happy", "pet_working",
-        "pet_error",
+        "pet_sleeping", "pet_greeting", "pet_happy", "pet_happy",
+        "pet_greeting", "pet_working", "pet_error",
     };
     const char* frame = frame_of[(int)layer];
     Serial.printf("[PET] layer=%d frame=%s exists=%d loaded=%s\n",
@@ -1818,6 +1876,52 @@ bool state_running(const char* s) {
            !strcmp(s, "TOOL") || !strcmp(s, "BUILD");
 }
 
+/* ---------- P1-1 活动舞台：会话行迷你角色 ---------- */
+
+/* 24×30 迷你像素角色：头/双眼/嘴/身/徽标。行内空间小，不做摇摆等常驻
+   动画（会互相干扰）；颜色画主题混色初值，之后由 pet_mini_apply 按该行
+   会话状态实时着色。 */
+static void draw_pet_mini(MiniPet& p, lv_obj_t* parent, int x, int y) {
+    if (p.root) lv_obj_del(p.root);
+    p = MiniPet();
+    uint32_t body_c = mix_hex(accent, bg, 120);
+    p.root = pet_rect(parent, x, y, 24, 30, 0, bg);
+    p.head = pet_rect(p.root, 2, 0, 20, 13, 5, body_c);
+    p.eye_l = pet_rect(p.root, 6, 5, 3, 4, 1, text_color);
+    p.eye_r = pet_rect(p.root, 15, 5, 3, 4, 1, text_color);
+    p.mouth = pet_rect(p.root, 9, 9, 6, 2, 1, accent);
+    p.body = pet_rect(p.root, 4, 15, 16, 12, 4, body_c, 1, accent);
+    p.badge = lv_label_create(p.root);
+    lv_obj_set_pos(p.badge, 16, -4);
+    lv_obj_set_style_text_color(p.badge, lv_color_hex(COL_WARN), 0);
+    lv_obj_set_style_text_font(p.badge, &cn_20, 0);
+    set_text(p.badge, "");
+}
+
+/* 活动舞台表情（与该行会话状态一一对应）：
+   运行 = 状态色身体 + 随呼吸眨眼；出错 = 红；
+   等待输入/待确认 = 绿/黄 + 「!」徽标（主动提示）；
+   完成 = 绿身体 + 眯眼（整场庆祝由焦点宠物的跳跃动画承担）。 */
+static void pet_mini_apply(MiniPet& p, const AITask& task, bool blink_on) {
+    if (!p.root) return;
+    lv_obj_clear_flag(p.root, LV_OBJ_FLAG_HIDDEN);
+    bool is_err = !strcmp(task.state, "ERROR");
+    bool wait = !strcmp(task.state, "WAIT_INPUT") || !strcmp(task.state, "ASK");
+    bool done = !strcmp(task.state, "DONE");
+    uint32_t sc = state_color(task.state);
+    uint32_t body_c = done ? mix_hex(COL_OK, bg, 130)
+                           : mix_hex(sc, bg, is_err ? 210 : 130);
+    uint32_t edge_c = done ? COL_OK : sc;
+    lv_obj_set_style_bg_color(p.head, lv_color_hex(body_c), 0);
+    lv_obj_set_style_bg_color(p.body, lv_color_hex(body_c), 0);
+    lv_obj_set_style_border_color(p.body, lv_color_hex(edge_c), 0);
+    lv_obj_set_style_bg_color(p.mouth, lv_color_hex(done ? COL_OK : sc), 0);
+    int eye_h = (done || is_err || wait || blink_on) ? 4 : 1;  // 睁大 / 眨眼
+    lv_obj_set_height(p.eye_l, eye_h);
+    lv_obj_set_height(p.eye_r, eye_h);
+    set_text(p.badge, wait ? "!" : "");
+}
+
 // 任务活跃 = 任一会话处于运行/等待用户状态（非 DONE/IDLE）。
 // 用于屏保门控：盯着长任务时屏幕不能自己睡掉。
 bool tasks_active() {
@@ -1972,6 +2076,7 @@ void render_ai(WidgetView& view) {
             if (view.row_dot[row])
                 lv_obj_set_style_bg_color(view.row_dot[row],
                     lv_color_hex(state_color(task.state)), 0);
+            pet_mini_apply(pet_mini[row], task, blink_on && state_running(task.state));
             lv_obj_clear_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
             ++row;
             continue;
@@ -1990,6 +2095,7 @@ void render_ai(WidgetView& view) {
         if (view.row_dot[row])
             lv_obj_set_style_bg_color(view.row_dot[row],
                 lv_color_hex(state_color(task.state)), 0);
+        pet_mini_apply(pet_mini[row], task, blink_on && state_running(task.state));
         bar_set(view.row_fill[row], view.row_bar[row], task.prog, accent);
         view.row_slot[row] = i;
         lv_obj_clear_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
@@ -1999,6 +2105,8 @@ void render_ai(WidgetView& view) {
         lv_obj_add_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
         set_text(view.extra[row + 1], "");
         set_text(view.extra[row + 4], "");
+        if (pet_mini[row].root)
+            lv_obj_add_flag(pet_mini[row].root, LV_OBJ_FLAG_HIDDEN);
         if (view.row_dot[row])
             lv_obj_set_style_bg_color(view.row_dot[row], lv_color_hex(sub_color), 0);
         bar_set(view.row_fill[row], view.row_bar[row], 0, accent);
@@ -2980,8 +3088,12 @@ void ui_set_page(uint8_t page) {
 // 全分辨率渲染到 PSRAM → 2×2 均值降到 160×240（76KB）→ base64 分帧上行。
 // 每行负载 512 字节：90 字节曾把整帧拖到 ~10s（行数太多，逐行 printf/flush
 // 的开销远大于纯带宽）。传输约 1-2s，期间渲染停顿——按需触发可接受。
-void pet_play_event() {                   // 客户端「运动」互动 → PLAYING 场景
-    pet_trigger_scene(PL_PLAYING, 2500);
+void pet_interact_event(uint8_t action) {
+    // 角色包 v1 没有独立吃/喝帧：喂食复用 happy、喝水复用 greeting，像素
+    // 回退则额外显示“食/水”徽标。这样旧包无需重做也能获得明确反馈。
+    if (action == 1) pet_trigger_scene(PL_FEEDING, 1800);
+    else if (action == 2) pet_trigger_scene(PL_DRINKING, 1800);
+    else if (action == 3) pet_trigger_scene(PL_PLAYING, 2500);
 }
 
 void ui_send_snapshot() {
