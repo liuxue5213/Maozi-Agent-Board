@@ -3395,7 +3395,84 @@ function bind(){
     markDirty(); renderPalette(); renderInspector();
   };
   $('duplicate-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);const copy=structuredClone(current());copy.id=uniqueId('p');copy.title+=' 副本';draft.pages.splice(selected+1,0,copy);selected++;markDirty()};
-  $('delete-page').onclick=()=>{if(draft.pages.length===1)return notice('至少保留 1 页',true);draft.pages.splice(selected,1);selected=Math.max(0,selected-1);markDirty()};
+  $('delete-page').onclick=()=>{if(draft.pages.length===1)return notice('至少保留 1 页',true);
+    const trash=(draft._trash=JSON.parse(localStorage.getItem('workbuddy-pagetrash')||'[]'));
+    trash.unshift({page:structuredClone(draft.pages[selected]),at:Date.now()});
+    while(trash.length>10)trash.pop();
+    localStorage.setItem('workbuddy-pagetrash',JSON.stringify(trash));
+    draft.pages.splice(selected,1);selected=Math.max(0,selected-1);markDirty()};
+  // ---- 编辑器安全网：页面回收站 + 草稿版本（localStorage 持久，设备无关）----
+  const trashRead=()=>JSON.parse(localStorage.getItem('workbuddy-pagetrash')||'[]');
+  const trashWrite=t=>localStorage.setItem('workbuddy-pagetrash',JSON.stringify(t));
+  const versRead=()=>JSON.parse(localStorage.getItem('workbuddy-draftvers')||'[]');
+  const versWrite=v=>localStorage.setItem('workbuddy-draftvers',JSON.stringify(v));
+  const fmtT=t=>{const d=new Date(t);return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`};
+  const safetyPanel=$('editor-safety-panel');
+  function renderSafety(mode){    // mode: 'trash' | 'vers'
+    safetyPanel.replaceChildren();
+    if(!mode)return;
+    const list=el('div');
+    const close=el('button','button','收起');close.style.marginBottom='6px';
+    close.onclick=()=>{safetyPanel.hidden=true;renderSafety(null)};
+    list.append(close);
+    if(mode==='trash'){
+      trashRead().forEach((it,idx)=>{
+        const row=el('div','btn-row');
+        const b=el('button','button',`${it.page.title}（${fmtT(it.at)}）`);
+        b.style.flex='1';
+        b.onclick=()=>{
+          if(draft.pages.length>=6)return notice('最多 6 页，先删一页再恢复',true);
+          draft.pages.push(structuredClone(it.page));selected=draft.pages.length-1;
+          const t=trashRead();t.splice(idx,1);trashWrite(t);
+          markDirty();renderSafety('trash');renderPages();renderTaskPages();
+          notice(`已恢复「${it.page.title}」`);
+        };
+        const del=el('button','button danger','彻底删除');
+        del.onclick=()=>{const t=trashRead();t.splice(idx,1);trashWrite(t);renderSafety('trash')};
+        row.append(b,del);list.append(row);
+      });
+      if(!trashRead().length)list.append(el('p','hint','回收站为空'));
+      else{const hint=el('p','hint','点击条目恢复到页面末尾；「彻底删除」不可恢复。');list.append(hint)}
+    }else{
+      versRead().forEach((it,idx)=>{
+        const row=el('div','btn-row');
+        const b=el('button','button',`${it.name}（${fmtT(it.at)}）`);
+        b.style.flex='1';
+        b.onclick=()=>{
+          draft.pages=structuredClone(it.data.pages);
+          draft.theme=structuredClone(it.data.theme||draft.theme);
+          selected=0;markDirty();renderSafety('vers');
+          renderPages();renderTaskPages();renderPalette();renderInspector();
+          notice(`已恢复版本「${it.name}」（未保存，确认后应用）`);
+        };
+        const del=el('button','button danger','删除');
+        del.onclick=()=>{const v=versRead();v.splice(idx,1);versWrite(v);renderSafety('vers')};
+        row.append(b,del);list.append(row);
+      });
+      if(!versRead().length)list.append(el('p','hint','还没有保存过版本'));
+    }
+    safetyPanel.append(list);
+    safetyPanel.hidden=false;
+  }
+  $('page-trash-btn').onclick=()=>{
+    const mode=safetyPanel.hidden||renderSafety.mode!=='trash'?'trash':null;
+    renderSafety.mode=mode;renderSafety(mode);
+  };
+  $('draft-ver-btn').onclick=()=>{
+    const mode=safetyPanel.hidden||renderSafety.mode!=='vers'?'vers':null;
+    renderSafety.mode=mode;renderSafety(mode);
+  };
+  $('draft-save-ver').onclick=()=>{
+    const name=prompt('版本名称：',fmtT(Date.now())+' 配置');
+    if(!name)return;
+    const v=versRead();
+    v.unshift({name:name.trim()||'未命名',at:Date.now(),
+      data:{pages:structuredClone(draft.pages),theme:structuredClone(draft.theme)}});
+    while(v.length>10)v.pop();
+    versWrite(v);
+    notice(`版本「${name.trim()}」已存（本地 10 个上限）`);
+  };
+
   const startTemplates={
     '专注模式':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']}],
     '数据控':[{id:'ai',title:'AI 工作台',layout:'list',widgets:['ai_list']},{id:'pc',title:'电脑',layout:'grid_2x2',widgets:['hw_cards']}],
