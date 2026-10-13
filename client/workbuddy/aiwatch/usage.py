@@ -16,6 +16,20 @@ def _day_of(iso: str) -> str:
     return (iso or "")[:10]
 
 
+def _zcode_tool_steps(d: dict):
+    """rollout 记录里的工具步数与最近输出片段：(n, snippet≤40)。"""
+    n = 0
+    snip = ""
+    for m in (d.get("request") or {}).get("messages") or []:
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        n += 1
+        c = m.get("content")
+        if isinstance(c, str) and c.strip() and not snip:
+            snip = " ".join(c.split())[:40]
+    return n, snip
+
+
 def _zcode_last_text(d: dict) -> str:
     """rollout 记录里 AI 的最近回复文本（≤80 字符单行）；无则空串。"""
     msgs = ((d.get("request") or {}).get("messages")) or []
@@ -136,6 +150,8 @@ class UsageScanner:
             return {"today": dict(self.today), "models": dict(self.models),
                     "by_model": dict(self.today_by_model),
                     "sessions_by_tool": dict(self.sessions_by_tool),
+                    "steps_by_tool": dict(self.steps_by_tool),
+                    "last_step_by_tool": dict(self.last_step_by_tool),
                     "last_msg_by_tool": dict(self.last_msg_by_tool),
                     "last_msg_by_sid": dict(self.last_msg_by_sid),
                     "by_sid": {k: dict(v) for k, v in self.by_sid.items()}}
@@ -155,6 +171,8 @@ class UsageScanner:
         models = {}
         by_model: dict[str, int] = {}
         sids_by_tool: dict[str, set] = {"zcode": set(), "claude": set()}
+        steps_by_tool: dict[str, int] = {}
+        last_step_by_tool: dict[str, str] = {}
 
         # ZCode：rollout 增量
         zroot = Path(self.roots.get("zcode", "")) / "rollout"
@@ -170,6 +188,11 @@ class UsageScanner:
                         continue
                     if not rec:
                         continue
+                    tn, tsnip = _zcode_tool_steps(d)
+                    if tn:
+                        steps_by_tool["zcode"] = steps_by_tool.get("zcode", 0) + tn
+                        if tsnip:
+                            last_step_by_tool["zcode"] = tsnip
                     day, r_total, r_out, model = rec
                     if day == today:
                         total += r_total
@@ -231,6 +254,8 @@ class UsageScanner:
                 sorted(by_model.items(), key=lambda kv: -kv[1])[:6])
             self.sessions_by_tool = {
                 tool: len(sids) for tool, sids in sids_by_tool.items() if sids}
+            self.steps_by_tool = dict(steps_by_tool)
+            self.last_step_by_tool = dict(last_step_by_tool)
             self.last_msg_by_sid = dict(self.last_msg_by_sid)
             self.last_msg_by_tool = dict(self.last_msg_by_tool)
             self.models.update(models)
