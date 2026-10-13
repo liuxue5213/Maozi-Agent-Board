@@ -95,10 +95,13 @@ class _IncFile:
         except OSError:
             return []
         pos, rem = self.state.get(str(path), (0, ""))
+        first_scan = str(path) not in self.state
         if size < pos:
             pos, rem = 0, ""       # 文件被轮转/截断
-        if size - pos > max_bytes:
-            pos = max(0, size - max_bytes)   # 首次扫描大文件只看尾部
+        # 4MB 尾部截断只用于增量防御；首扫不限——否则大文件前半段的今日
+        # 记录永久漏计（实测偏差 -65%：真值 63.4M 只读到 22.1M）
+        if not first_scan and size - pos > max_bytes:
+            pos = max(0, size - max_bytes)
             rem = ""
         lines = []
         try:
