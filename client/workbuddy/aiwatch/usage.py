@@ -133,6 +133,8 @@ class UsageScanner:
         self.sessions_by_tool: dict[str, int] = {}  # 今日会话数（按工具）
         self.last_msg_by_sid: dict[str, str] = {}   # 会话最近消息（≤80 字符）
         self.last_msg_by_tool: dict[str, str] = {}  # 工具级最近消息（焦点显示用）
+        self.steps_by_tool: dict[str, int] = {}     # 今日工具调用步数
+        self.last_step_by_tool: dict[str, str] = {}  # 最近工具输出片段
         self.models: dict[str, str] = {}      # tool -> 最近模型名
         # 会话级今日累计（客户端启动后增量；sid -> {"total","out"}）——
         # 供「本轮 Token」显示。重启清零：语义 = 本次运行期间该会话的用量。

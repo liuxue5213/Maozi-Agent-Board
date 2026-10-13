@@ -236,7 +236,7 @@ def validate_profile(raw):
                      "ai_cost": (304, 116), "pet": (96, 120),
                      "remind": (304, 28), "alarm": (280, 28),
                      "countdown": (304, 28), "env": (240, 28), "net": (240, 28),
-                     "text": (200, 28), "stat": (304, 28), "music": (304, 64),
+                     "text": (200, 28), "stat": (304, 28), "music": (304, 76),
                      "ai_focus": (304, 64), "calendar": (304, 28)}
             colors = (0, 1, 2, 3)   # 0=正文 1=强调 2=次要 3=警示
             # 大字档尺寸：宽度 +40 容纳 28px 字号（clock/weather 保持专档）
