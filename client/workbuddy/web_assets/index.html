@@ -517,6 +517,18 @@
             <input type="file" id="bgimg-file" accept="image/*" class="visually-hidden">
             <button type="button" class="button danger" id="bgimg-clear">恢复纯色</button>
           </div>
+          <div id="bg-cropper" hidden>
+            <canvas id="bg-crop-canvas" width="240" height="360" style="display:block;border-radius:8px;border:1px solid rgba(255,255,255,.2);cursor:grab;touch-action:none"></canvas>
+            <label class="field">
+              <span>缩放 <output class="field-value" id="bg-crop-zoom-val">铺满</output></span>
+              <input type="range" id="bg-crop-zoom" min="100" max="300" step="5" value="100">
+            </label>
+            <div class="btn-row">
+              <button type="button" class="button" id="bg-crop-fit" style="flex:1">铺满居中</button>
+              <button type="button" class="button primary" id="bg-crop-apply" style="flex:2">确认裁剪并上传</button>
+            </div>
+            <p class="hint">拖动画布移动取景位置，缩放后可再拖；确认后按 320×480 裁剪上屏。</p>
+          </div>
           <input type="hidden" id="weather-city">
           <p class="hint">天气城市已集中到“设置 → 天气”管理。</p>
         </section>

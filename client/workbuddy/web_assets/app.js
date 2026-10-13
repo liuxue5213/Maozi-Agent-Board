@@ -3506,32 +3506,58 @@ function bind(){
     notice(`已生成「${title}」页面，应用到设备后即可查看`);
   });
   $('weather-city').onchange=e=>{if(!draft.weather)draft.weather={};draft.weather.city=e.target.value.trim();markDirty()};
+  // ---- 背景取景器（竞品图5 #64「移动取景/+-/铺满」）：拖动平移+缩放，
+  // 确认后按取景裁出 320×480 上屏（取代旧居中硬裁）。----
   $('bgimg-file').onchange=async e=>{
     const file=e.target.files[0];e.target.value='';
     if(!file)return;
-    if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
-    notice('正在处理图片…');
-    try{
-      // onerror 收到的是 Event 而不是 Error，必须包一层，否则 err.message 是 undefined。
-      const img=await new Promise((ok,bad)=>{
-        const i=new Image();
-        i.onload=()=>{URL.revokeObjectURL(i.src);ok(i)};
-        i.onerror=()=>bad(new Error('图片解码失败，请换一张 JPG/PNG'));
-        i.src=URL.createObjectURL(file);
-      });
-      const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;
-      const ctx=canvas.getContext('2d');
-      const scale=Math.max(320/img.width,480/img.height);
-      const w=img.width*scale,h=img.height*scale;
-      ctx.drawImage(img,(320-w)/2,(480-h)/2,w,h);
-      const blob=await new Promise(ok=>canvas.toBlob(ok,'image/jpeg',0.72));
-      const r=await fetch('/api/bgimg',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:await blob.arrayBuffer()});
-      const d=await r.json();
-      if(!r.ok)throw new Error(d.error||'发送失败');
-      logHist('bg','自定义背景图已发送');
-      notice('背景图已发送，等待设备应用');
-    }catch(err){notice('背景图失败：'+err.message,true)}
+    const img=await new Promise((ok,bad)=>{
+      const i=new Image();
+      i.onload=()=>{URL.revokeObjectURL(i.src);ok(i)};
+      i.onerror=()=>bad(new Error('图片解码失败，请换一张 JPG/PNG'));
+      i.src=URL.createObjectURL(file);
+    });
+    openBgCropper(img);
   };
+  function openBgCropper(img){
+    const box=$('bg-cropper'); box.hidden=false;
+    const cv=$('bg-crop-canvas'), ctx=cv.getContext('2d');
+    const VSC=cv.width/320;
+    const cover=Math.max(320/img.width,480/img.height);
+    let scale=cover, w=0, h=0, ox=0, oy=0;
+    const clamp=()=>{ ox=Math.min(0,Math.max(320-w,ox)); oy=Math.min(0,Math.max(480-h,oy)); };
+    const draw=()=>{ ctx.fillStyle='#000'; ctx.fillRect(0,0,cv.width,cv.height);
+      ctx.drawImage(img, ox*VSC, oy*VSC, w*VSC, h*VSC); };
+    const reset=()=>{ const z=Number($('bg-crop-zoom').value)/100;
+      scale=cover*z; w=img.width*scale; h=img.height*scale;
+      ox=(320-w)/2; oy=(480-h)/2; clamp(); draw(); };
+    $('bg-crop-zoom').oninput=()=>{ const ov=$('bg-crop-zoom-val');
+      if(ov)ov.textContent=$('bg-crop-zoom').value+'%'; reset(); };
+    $('bg-crop-fit').onclick=()=>{ $('bg-crop-zoom').value=100;
+      const ov=$('bg-crop-zoom-val'); if(ov)ov.textContent='铺满'; reset(); };
+    let sx=0, sy=0, sox=0, soy=0;
+    cv.onpointerdown=ev=>{ try{ cv.setPointerCapture(ev.pointerId); }catch(err){}
+      sx=ev.clientX; sy=ev.clientY; sox=ox; soy=oy; };
+    cv.onpointermove=ev=>{ if(ev.buttons&1){
+      ox=sox+(ev.clientX-sx)/VSC; oy=soy+(ev.clientY-sy)/VSC; clamp(); draw(); } };
+    $('bg-crop-apply').onclick=async()=>{
+      if(!isConnected()){notice('设备未连接，先等设备上线',true);return}
+      notice('正在裁剪并上传…');
+      try{
+        const out=document.createElement('canvas'); out.width=320; out.height=480;
+        out.getContext('2d').drawImage(img, ox, oy, w, h);
+        const blob=await new Promise(ok=>out.toBlob(ok,'image/jpeg',0.72));
+        const r=await fetch('/api/bgimg',{method:'POST',
+          headers:{'Content-Type':'application/octet-stream'},body:await blob.arrayBuffer()});
+        const d=await r.json();
+        if(!r.ok)throw new Error(d.error||'发送失败');
+        logHist('bg','自定义背景图已发送（取景裁剪）');
+        notice('背景图已发送，等待设备应用');
+        box.hidden=true;
+      }catch(err){notice('背景图失败：'+err.message,true)}
+    };
+    reset();
+  }
   // ---- ICS 日程导入：读文件文本 → /api/calendar-ics 合并去重落盘 ----
   $('ics-file').onchange=async e=>{
     const file=e.target.files[0];e.target.value='';

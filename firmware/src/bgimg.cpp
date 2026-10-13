@@ -225,7 +225,7 @@ bool bgimg_receive_cfg(const char* value) {
         const char* nm = value + 4;
         if (nm[0]) {
             size_t nlen = strlen(nm);
-            bool ok = nlen >= 7 && nlen < sizeof(target) &&
+            bool ok = nlen >= 6 && nlen < sizeof(target) &&   // bg.jpg 只有 6 字符
                       !strcmp(nm + nlen - 4, ".jpg");
             if (ok && !strncmp(nm, "bg", 2)) ok = (nlen == 6);
             else if (ok && !strncmp(nm, "sv", 2))
