@@ -988,14 +988,16 @@ void make_pet_compact(WidgetView& view, lv_obj_t* screen) {
 int weekday(const char* date);           // 定义在文件后部（此处前向引用）
 const char* weekday_name(int day);
 long countdown_seconds(const ScheduleItem* item);   // 同上
+const char* state_short(const char* s);             // 同上
 static PetParts pet_free_parts;          // 自由页「角色」组件的像素宠物部件
 static uint8_t pet_free_used = 0;
 static void ai_cost_build_rows(char rows[5][48]);   // 定义在 render_generic 前
 // 组件固定尺寸、坐标自由；数据全走既有遥测，零新数据源。
-static const uint8_t FC_FONT[16] = {48, 20, 20, 28, 20, 24,
-                                    20, 20, 20, 20, 20, 20, 20, 20, 20, 20};
-static const uint16_t FC_W[16] = {220, 260, 304, 240, 280, 300,
-                                  304, 280, 304, 240, 240, 304, 304, 200, 304, 304};
+static const uint8_t FC_FONT[18] = {48, 20, 20, 28, 20, 24,
+                                    20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20};
+static const uint16_t FC_W[18] = {220, 260, 304, 240, 280, 300,
+                                  304, 280, 304, 240, 240, 304, 304, 200, 304, 304,
+                                  304, 304};
 // 6=ai_cost 7=pet：容器型组件（多标签/嵌入式宠物），尺寸固定
 static const uint16_t FC_BOX[2][2] = {{304, 116}, {96, 120}};
 static const uint32_t FC_COL[6] = {0, 0, 0, 0, 0, 0};   // 占位；颜色在 make 内定
@@ -1054,7 +1056,22 @@ void make_free_page(PageView& page, const PageConfig& config, lv_obj_t* screen) 
             page.free_n = i + 1;
             continue;
         }
-        uint8_t t = c.t < 16 ? c.t : 0;   // 越界码兜底为时钟（decode 只放行 0-15）
+        if (c.t == 16) {
+            // AI 焦点状态：透明容器两行（工具·项目 / 状态·用时）
+            lv_obj_t* box = lv_obj_create(screen);
+            lv_obj_set_pos(box, c.x, c.y);
+            lv_obj_set_size(box, 304, 64);
+            lv_obj_set_style_bg_opa(box, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(box, 0, 0);
+            lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+            label1(box, "暂无活跃会话", 20, text_color, 0, 0, 304);
+            label1(box, "", 20, sub_color, 0, 30, 304);
+            page.free_lbl[i] = box;
+            page.free_t[i] = 16;
+            page.free_n = i + 1;
+            continue;
+        }
+        uint8_t t = c.t < 18 ? c.t : 0;   // 越界码兜底为时钟（decode 只放行 0-17）
         // 样式档（竞品「时间样式」）：clock/weather 支持大字（48/28）
         uint8_t font = FC_FONT[t];
         uint16_t w = FC_W[t];
@@ -1106,6 +1123,25 @@ void render_free_page(PageView& page, const char* tb) {
             continue;
         }
         if (page.free_t[i] == 13) continue;   // 自定义文字：静态，make 时已写
+        if (page.free_t[i] == 16) {
+            lv_obj_t* box = page.free_lbl[i];
+            if (!box) continue;
+            if (latest.tasks[0].used) {
+                const AITask& t0 = latest.tasks[0];
+                char l1[96];
+                snprintf(l1, sizeof(l1), "%s · %s",
+                         t0.tool[0] ? t0.tool : "AI", t0.proj);
+                set_text(lv_obj_get_child(box, 0), l1);
+                char l2[64];
+                snprintf(l2, sizeof(l2), "%s · 运行 %ld:%02ld",
+                         state_short(t0.state), t0.elapse / 60, t0.elapse % 60);
+                set_text(lv_obj_get_child(box, 1), l2);
+            } else {
+                set_text(lv_obj_get_child(box, 0), "暂无活跃会话");
+                set_text(lv_obj_get_child(box, 1), "");
+            }
+            continue;
+        }
         if (page.free_t[i] == 15) {
             lv_obj_t* box = page.free_lbl[i];
             if (!box) continue;
@@ -1207,6 +1243,20 @@ void render_free_page(PageView& page, const char* tb) {
                           latest.netrx, latest.nettx);
             set_text(lbl, buf);
             break;
+        case 17: {
+            // 今日下一个日程（与今日日历卡同逻辑）
+            const ScheduleItem* found = nullptr;
+            for (uint8_t k = 0; k < g_profile.calendar_count; ++k) {
+                const ScheduleItem& item = g_profile.calendar[k];
+                if (item.enabled && !strcmp(item.date, current_date) &&
+                    (!found || strcmp(item.time, found->time) < 0)) found = &item;
+            }
+            if (found) snprintf(buf, sizeof(buf), "日程 %s %s",
+                                found->time, found->text);
+            else strcpy(buf, "今天无日程");
+            set_text(lbl, buf);
+            break;
+        }
         default:
             set_text(lbl, saver_msg[0] ? saver_msg : "代码写完了吗？起来喝口水");
             break;

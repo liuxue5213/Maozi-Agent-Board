@@ -224,13 +224,15 @@ def validate_profile(raw):
                 raise ValueError("自由布局页组件需为 ≤8 项的列表")
             allowed = ("clock", "date", "lunar", "weather", "sys", "quote",
                        "ai_cost", "pet", "remind", "alarm", "countdown",
-                       "env", "net", "text", "stat", "music")
+                       "env", "net", "text", "stat", "music", "ai_focus",
+                       "calendar")
             sizes = {"clock": (220, 60), "date": (260, 28), "lunar": (304, 28),
                      "weather": (240, 36), "sys": (280, 28), "quote": (300, 96),
                      "ai_cost": (304, 116), "pet": (96, 120),
                      "remind": (304, 28), "alarm": (280, 28),
                      "countdown": (304, 28), "env": (240, 28), "net": (240, 28),
-                     "text": (200, 28), "stat": (304, 28), "music": (304, 64)}
+                     "text": (200, 28), "stat": (304, 28), "music": (304, 64),
+                     "ai_focus": (304, 64), "calendar": (304, 28)}
             colors = (0, 1, 2, 3)   # 0=正文 1=强调 2=次要 3=警示
             big_sizes = {"clock": (260, 64), "weather": (240, 40)}
             out_comps = []
