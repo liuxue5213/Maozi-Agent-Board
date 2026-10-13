@@ -1928,9 +1928,16 @@ void render_ai(WidgetView& view) {
                 if (state_running(task.state) && !blink_on) adc = bg;
                 lv_obj_set_style_bg_color(view.ai_dot, lv_color_hex(adc), 0);
             }
-        snprintf(line, sizeof(line), "运行 %d:%02d · %d 秒前更新",
-                 task.elapse / 60, task.elapse % 60, task.age);
-        set_text(view.extra[7], line);
+        // 任务补充三档（竞品#9）：0=运行信息 1=最近消息 2=不显示
+        if (g_profile.tv_task_detail == 2) {
+            set_text(view.extra[7], "");
+        } else if (g_profile.tv_task_detail == 1 && latest.afm[0]) {
+            set_text(view.extra[7], latest.afm);
+        } else {
+            snprintf(line, sizeof(line), "运行 %d:%02d · %d 秒前更新",
+                     task.elapse / 60, task.elapse % 60, task.age);
+            set_text(view.extra[7], line);
+        }
         bar_set(view.ai_bar_fill, view.ai_bar, task.prog, accent);
     }
     int row = 0;

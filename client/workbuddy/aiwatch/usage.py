@@ -16,6 +16,34 @@ def _day_of(iso: str) -> str:
     return (iso or "")[:10]
 
 
+def _zcode_last_text(d: dict) -> str:
+    """rollout 记录里 AI 的最近回复文本（≤80 字符单行）；无则空串。"""
+    msgs = ((d.get("request") or {}).get("messages")) or []
+    for m in reversed(msgs):
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            c = " ".join(b.get("text", "") for b in c
+                         if isinstance(b, dict) and b.get("type") == "text")
+        if isinstance(c, str) and c.strip():
+            return " ".join(c.split())[:80]
+    return ""
+
+
+def _claude_last_text(d: dict) -> str:
+    """claude assistant 记录的文本块拼接（≤80 字符单行）。"""
+    if d.get("type") != "assistant":
+        return ""
+    c = (d.get("message") or {}).get("content")
+    if isinstance(c, list):
+        c = " ".join(b.get("text", "") for b in c
+                     if isinstance(b, dict) and b.get("type") == "text")
+    if not isinstance(c, str):
+        return ""
+    return " ".join(c.split())[:80]
+
+
 def _zcode_record_usage(d: dict):
     """从一条 rollout 记录提取 (date, total_tokens, out_tokens, model) 或 None。"""
     resp = d.get("response") or {}
@@ -86,6 +114,8 @@ class UsageScanner:
         self.today = {"total": 0}
         self.today_by_model: dict[str, int] = {}   # 今日分模型 token（降序 top6）
         self.sessions_by_tool: dict[str, int] = {}  # 今日会话数（按工具）
+        self.last_msg_by_sid: dict[str, str] = {}   # 会话最近消息（≤80 字符）
+        self.last_msg_by_tool: dict[str, str] = {}  # 工具级最近消息（焦点显示用）
         self.models: dict[str, str] = {}      # tool -> 最近模型名
         # 会话级今日累计（客户端启动后增量；sid -> {"total","out"}）——
         # 供「本轮 Token」显示。重启清零：语义 = 本次运行期间该会话的用量。
@@ -106,6 +136,8 @@ class UsageScanner:
             return {"today": dict(self.today), "models": dict(self.models),
                     "by_model": dict(self.today_by_model),
                     "sessions_by_tool": dict(self.sessions_by_tool),
+                    "last_msg_by_tool": dict(self.last_msg_by_tool),
+                    "last_msg_by_sid": dict(self.last_msg_by_sid),
                     "by_sid": {k: dict(v) for k, v in self.by_sid.items()}}
 
     def _loop(self):
@@ -132,7 +164,8 @@ class UsageScanner:
                     continue
                 for line in self._zinc.new_lines(f):
                     try:
-                        rec = _zcode_record_usage(json.loads(line))
+                        d = json.loads(line)
+                        rec = _zcode_record_usage(d)
                     except Exception:
                         continue
                     if not rec:
@@ -144,6 +177,11 @@ class UsageScanner:
                             by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem.replace("model-io-", "")
                         sids_by_tool["zcode"].add(sid)
+                        if r_total:   # 该行有用量 = 模型真实跑过一轮
+                            txt = _zcode_last_text(d)
+                            if txt:
+                                self.last_msg_by_sid[sid] = txt
+                                self.last_msg_by_tool["zcode"] = txt
                         acc = self.by_sid.setdefault(
                             sid, {"total": 0, "out": 0})
                         acc["total"] += r_total
@@ -163,7 +201,8 @@ class UsageScanner:
                     continue
                 for line in self._cinc.new_lines(f):
                     try:
-                        rec = _claude_record_usage(json.loads(line))
+                        d = json.loads(line)
+                        rec = _claude_record_usage(d)
                     except Exception:
                         continue
                     if not rec:
@@ -175,6 +214,10 @@ class UsageScanner:
                             by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem
                         sids_by_tool["claude"].add(sid)
+                        txt = _claude_last_text(d)
+                        if txt:
+                            self.last_msg_by_sid[sid] = txt
+                            self.last_msg_by_tool["claude"] = txt
                         acc = self.by_sid.setdefault(
                             sid, {"total": 0, "out": 0})
                         acc["total"] += r_total
@@ -188,4 +231,6 @@ class UsageScanner:
                 sorted(by_model.items(), key=lambda kv: -kv[1])[:6])
             self.sessions_by_tool = {
                 tool: len(sids) for tool, sids in sids_by_tool.items() if sids}
+            self.last_msg_by_sid = dict(self.last_msg_by_sid)
+            self.last_msg_by_tool = dict(self.last_msg_by_tool)
             self.models.update(models)

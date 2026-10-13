@@ -117,6 +117,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         out.tv_idle_page = (idle_pg <= 6) ? idle_pg : 0;
         out.tv_name_mode = ((tv_cfg["name_mode"] | 0) == 1) ? 1 : 0;
         out.tv_tl_range = ((tv_cfg["tl_range"] | 0) == 1) ? 1 : 0;
+        out.tv_task_detail = (uint8_t)constrain((int)(tv_cfg["task_detail"] | 0), 0, 2);
     }
     // AI 用量卡看板参数（缺省=现状三槽轮换）。槽序=用户勾选序。
     JsonObjectConst ac_cfg = doc["ai_cost"].as<JsonObjectConst>();

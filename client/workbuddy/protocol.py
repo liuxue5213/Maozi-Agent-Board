@@ -10,6 +10,7 @@ _ORDER = [
     "w0", "w1", "w2", "wf0", "wf1", "wf2", "ps", "aiu", "ait", "remind",
     "pb",   # 久坐提醒标志（输入空闲超阈值；0/1）
     "ast",  # 今日会话数按工具（zcode:3 · claude:1）
+    "afm",  # 焦点会话最近消息（≤80 字符单行）
     "aib0", "aib1", "aib2",   # 分模型今日消耗（模型名,token；无值自动省略）
     "cpu", "cpufreq", "cputemp", "fan",
     "mem", "memused", "memtotal",

@@ -88,6 +88,7 @@ struct Telemetry {
     bool inbox_changed = false;
     uint8_t pb = 0;                            // 久坐提醒（客户端输入空闲超阈值）
     char ast[48] = "";                         // 今日会话数按工具（zcode:3 · claude:1）
+    char afm[67] = "";                         // 焦点会话最近消息（≤22 汉字 UTF-8）
     // 天气（客户端 30 分钟刷新）
     float wx_temp = NAN, wx_hi = NAN, wx_lo = NAN;
     int wx_code = -1;

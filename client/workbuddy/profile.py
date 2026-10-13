@@ -454,6 +454,7 @@ def validate_profile(raw):
         "idle_page": _tv_int("idle_page", 0, 0, 6),
         "name_mode": _tv_int("name_mode", 0, 0, 1),   # 0=页面标题 1=自动智能体名
         "tl_range": _tv_int("tl_range", 0, 0, 1),     # 0=含近期完成 1=仅进行中
+        "task_detail": _tv_int("task_detail", 0, 0, 2),  # 0=运行信息 1=最近消息 2=不显示
     }
 
     # AI 用量卡看板参数（竞品图4「内容组合/显示指标」；缺省=现状三槽轮换）

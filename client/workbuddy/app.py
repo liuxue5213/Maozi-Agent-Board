@@ -1290,6 +1290,13 @@ class App:
             sby = snap.get("sessions_by_tool") or {}
             if sby:
                 t["ast"] = " · ".join(f"{tool}:{n}" for tool, n in sby.items())
+            # 焦点会话最近消息（AFM 线，竞品「任务补充·最近消息」）：
+            # 按焦点工具取该工具的最新消息（会话 id 两源格式不同，工具级匹配
+            # 语义也更对——「这个智能体最近在说什么」）
+            focus_tool = (self.tasks[0] or {}).get("tool") if self.tasks else ""
+            fm = (snap.get("last_msg_by_tool") or {}).get(focus_tool or "")
+            if fm:
+                t["afm"] = fm
             focus = self.tasks[0] if self.tasks else None
             if focus:
                 model = (snap["models"].get(focus["tool"]) or "")[:15]

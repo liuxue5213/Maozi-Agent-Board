@@ -339,6 +339,11 @@ void Proto::handle(const char* line) {
         dirty = true;
         return;
     }
+    if (!strcmp(key, "AFM")) {
+        snprintf(t.afm, sizeof(t.afm), "%s", v);
+        dirty = true;
+        return;
+    }
     if (!strcmp(key, "AST")) {
         snprintf(t.ast, sizeof(t.ast), "%s", v);
         dirty = true;

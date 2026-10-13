@@ -274,6 +274,14 @@ class PetShowFlagsTests(unittest.TestCase):
         out = validate_profile(base(tv={"name_mode": 5, "tl_range": 9}))
         self.assertEqual((out["tv"]["name_mode"], out["tv"]["tl_range"]), (1, 1))
 
+    def test_task_detail_tiers(self):
+        out = validate_profile(base(tv={"task_detail": 1}))
+        self.assertEqual(out["tv"]["task_detail"], 1)
+        out2 = validate_profile(base(tv={"task_detail": 7}))
+        self.assertEqual(out2["tv"]["task_detail"], 2)
+        out3 = validate_profile(default_profile())
+        self.assertEqual(out3["tv"]["task_detail"], 0)
+
 
 class BreakReminderTests(unittest.TestCase):
     """久坐提醒阈值（pet.break_min，分钟，0=关）。"""
