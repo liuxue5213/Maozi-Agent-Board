@@ -50,6 +50,34 @@ ACCENT_SOFT = (90, 130, 190)
 Z_COL = (150, 200, 250)
 HEART = (255, 108, 128)
 
+# 角色毛色调色板（合并原则：同一模板 × 不同毛色 = 形象多样化）。
+# 键为模块常量名，use_palette 时覆盖全局；orange 即上面默认值（橘猫）。
+_PAL_DEFAULTS = None   # 首次 use_palette 前由 use_palette 快照
+_PALETTES = {
+    "orange": {},
+    "white": {"FUR": (245, 242, 238), "FUR_DARK": (225, 218, 210),
+              "FUR_BELLY": (255, 255, 252), "STRIPE": (228, 220, 210),
+              "EAR_IN": (255, 205, 205), "NOSE": (255, 150, 160)},
+    "grey": {"FUR": (96, 102, 118), "FUR_DARK": (74, 80, 96),
+             "FUR_BELLY": (168, 174, 190), "STRIPE": (58, 64, 80),
+             "EAR_IN": (130, 120, 140), "EYE": (235, 215, 120),
+             "EYE_WHITE": (60, 66, 86), "NOSE": (200, 190, 170)},
+    "cream": {"FUR": (245, 220, 180), "FUR_DARK": (225, 195, 150),
+              "FUR_BELLY": (252, 240, 215), "STRIPE": (228, 200, 158),
+              "EAR_IN": (255, 210, 190)},
+}
+
+
+def use_palette(name):
+    """切换毛色调色板（模块常量按名覆盖/恢复）。"""
+    global _PAL_DEFAULTS
+    if _PAL_DEFAULTS is None:
+        _PAL_DEFAULTS = {k: globals()[k] for k in _PALETTES["white"]}
+    pal = _PALETTES.get(name)
+    globals().update(_PAL_DEFAULTS)          # 先复位再覆盖（防串色）
+    if pal:
+        globals().update(pal)
+
 
 def _lerp(a, b, k):
     return tuple(int(a[i] + (b[i] - a[i]) * k) for i in range(3))
@@ -336,8 +364,9 @@ def _laptop(d, cx, cy, u):
                             radius=2 * u // 2, fill=LAPTOP_GLOW)
 
 
-def draw_frame(state, pose=0, scene="night"):
-    """scene: night=夜空科技(默认) / window=窗边小院(白天暖色)。"""
+def draw_frame(state, pose=0, scene="night", palette="orange"):
+    """scene: night/window/rainy/snow/spring；palette: orange/white/grey/cream。"""
+    use_palette(palette)
     img = Image.new("RGB", (W, H))
     d = ImageDraw.Draw(img)
     if scene == "window":
@@ -493,12 +522,15 @@ def main():
     if "--pack" in sys.argv:
         pack = sys.argv[sys.argv.index("--pack") + 1]
         out = os.path.join(os.path.dirname(OUT_DEFAULT), f"petpack_{pack}")
+    palette = "orange"
+    if "--palette" in sys.argv:
+        palette = sys.argv[sys.argv.index("--palette") + 1]
     out = os.path.abspath(out)
     os.makedirs(out, exist_ok=True)
     states = ["working", "thinking", "sleeping", "greeting",
               "happy", "error", "idle", "sleepy"]
     for st in states:
-        img = draw_frame(st, 0, scene).resize((320, 480), Image.LANCZOS)
+        img = draw_frame(st, 0, scene, palette).resize((320, 480), Image.LANCZOS)
         path = os.path.join(out, f"pet_{st}.jpg")
         q = 88
         while True:
@@ -508,7 +540,7 @@ def main():
             q -= 8
         print(f"{path}  {os.path.getsize(path)} bytes (q={q})")
         if st == "working":                   # 动态版：B 帧（右爪抬起）
-            img_b = draw_frame(st, pose=1, scene=scene).resize((320, 480), Image.LANCZOS)
+            img_b = draw_frame(st, pose=1, scene=scene, palette=palette).resize((320, 480), Image.LANCZOS)
             path_b = os.path.join(out, "pet_working_b.jpg")
             q = 88
             while True:
