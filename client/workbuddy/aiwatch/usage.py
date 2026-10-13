@@ -1,6 +1,6 @@
 """AI 用量扫描：从本地会话日志增量提取 token 消耗与模型（不上传、只读）。
 
-- 今日累计：ZCode rollout / Claude JSONL 按 completedAt/timestamp 过滤当天记录求和
+- 今日累计：ZCode / Claude / Codex 本地日志按时间戳过滤当天记录求和
 - 焦点会话：最新一条记录的 usage + 模型名（给"本轮"展示）
 - 增量读取：按文件偏移缓存，只解析新追加的部分
 """
@@ -9,11 +9,22 @@ from __future__ import annotations
 import json
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
 def _day_of(iso: str) -> str:
-    return (iso or "")[:10]
+    """ISO 时间按电脑本地时区归日；解析失败时保留旧格式兼容。"""
+    text = str(iso or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone().date().isoformat()
+    except (TypeError, ValueError):
+        return text[:10]
 
 
 def _zcode_tool_steps(d: dict):
@@ -83,6 +94,26 @@ def _claude_record_usage(d: dict):
     return _day_of(d.get("timestamp", "")), total, out, msg.get("model") or ""
 
 
+def _codex_record_usage(d: dict, model: str = ""):
+    """读取 Codex 单次响应记录；忽略 token_count 累计事件以免重复相加。"""
+    if d.get("type") != "token_usage_record":
+        return None
+    # Codex 正式日志把 usage 放在 payload；保留顶层兼容早期夹具/格式。
+    payload = d.get("payload") or {}
+    usage = payload.get("usage") or d.get("usage") or {}
+    total = int(usage.get("total_tokens") or 0)
+    if not total:
+        return None
+    out = int(usage.get("output_tokens") or 0)
+    parts = {
+        "input": int(usage.get("input_tokens") or 0),
+        "cached": int(usage.get("cached_input_tokens") or 0),
+        "output": out,
+        "reasoning": int(usage.get("reasoning_output_tokens") or 0),
+    }
+    return _day_of(d.get("timestamp", "")), total, out, model, parts
+
+
 class _IncFile:
     """增量读取器：记住每个文件的偏移和半行残留。"""
 
@@ -127,10 +158,16 @@ class UsageScanner:
         self.roots = roots
         self._zinc = _IncFile()
         self._cinc = _IncFile()
+        self._codex_inc = _IncFile()
+        self._codex_model_by_file: dict[str, str] = {}
         self._lock = threading.Lock()
-        self.today = {"total": 0}
+        self._day = ""
+        self.today = {"total": 0, "input": 0, "cached": 0,
+                      "output": 0, "reasoning": 0}
         self.today_by_model: dict[str, int] = {}   # 今日分模型 token（降序 top6）
         self.sessions_by_tool: dict[str, int] = {}  # 今日会话数（按工具）
+        self._session_ids: dict[str, set[str]] = {
+            "zcode": set(), "claude": set(), "codex": set()}
         self.last_msg_by_sid: dict[str, str] = {}   # 会话最近消息（≤80 字符）
         self.last_msg_by_tool: dict[str, str] = {}  # 工具级最近消息（焦点显示用）
         self.steps_by_tool: dict[str, int] = {}     # 今日工具调用步数
@@ -172,12 +209,33 @@ class UsageScanner:
 
     def _scan_once(self):
         today = time.strftime("%Y-%m-%d")
-        total = 0
-        models = {}
-        by_model: dict[str, int] = {}
-        sids_by_tool: dict[str, set] = {"zcode": set(), "claude": set()}
-        steps_by_tool: dict[str, int] = {}
-        last_step_by_tool: dict[str, str] = {}
+        # 增量读取器只返回新增行，所以汇总也必须在同一天内累加；旧实现每次
+        # 从 0 重算，第二轮没有新日志时会把“今日用量”错误清成 0。
+        # 先在锁内复制稳定快照，扫描期间只改局部变量，最后一次性提交。
+        # 首扫 70MB 日志约需 1-2 秒；若直接改 self.by_sid，Web 会看到
+        # “会话已有数字但今日仍为 0”的半成品状态。
+        with self._lock:
+            if self._day != today:
+                self._day = today
+                self.today = {"total": 0, "input": 0, "cached": 0,
+                              "output": 0, "reasoning": 0}
+                self.today_by_model = {}
+                self.sessions_by_tool = {}
+                self._session_ids = {"zcode": set(), "claude": set(), "codex": set()}
+                self.steps_by_tool = {}
+                self.last_step_by_tool = {}
+                self.last_msg_by_sid = {}
+                self.last_msg_by_tool = {}
+                self.by_sid = {}
+            totals = dict(self.today)
+            models = dict(self.models)
+            by_model: dict[str, int] = dict(self.today_by_model)
+            steps_by_tool: dict[str, int] = dict(self.steps_by_tool)
+            last_step_by_tool: dict[str, str] = dict(self.last_step_by_tool)
+            session_ids = {tool: set(ids) for tool, ids in self._session_ids.items()}
+            last_msg_by_sid = dict(self.last_msg_by_sid)
+            last_msg_by_tool = dict(self.last_msg_by_tool)
+            by_sid = {sid: dict(values) for sid, values in self.by_sid.items()}
 
         # ZCode：rollout 增量
         zroot = Path(self.roots.get("zcode", "")) / "rollout"
@@ -193,28 +251,29 @@ class UsageScanner:
                         continue
                     if not rec:
                         continue
-                    tn, tsnip = _zcode_tool_steps(d)
-                    if tn:
-                        steps_by_tool["zcode"] = steps_by_tool.get("zcode", 0) + tn
-                        if tsnip:
-                            last_step_by_tool["zcode"] = tsnip
                     day, r_total, r_out, model = rec
                     if day == today:
-                        total += r_total
+                        tn, tsnip = _zcode_tool_steps(d)
+                        if tn:
+                            steps_by_tool["zcode"] = steps_by_tool.get("zcode", 0) + tn
+                            if tsnip:
+                                last_step_by_tool["zcode"] = tsnip
+                        totals["total"] += r_total
+                        totals["output"] += r_out
                         if model:
                             by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem.replace("model-io-", "")
-                        sids_by_tool["zcode"].add(sid)
+                        session_ids["zcode"].add(sid)
                         if r_total:   # 该行有用量 = 模型真实跑过一轮
                             txt = _zcode_last_text(d)
                             if txt:
-                                self.last_msg_by_sid[sid] = txt
-                                self.last_msg_by_tool["zcode"] = txt
-                        acc = self.by_sid.setdefault(
+                                last_msg_by_sid[sid] = txt
+                                last_msg_by_tool["zcode"] = txt
+                        acc = by_sid.setdefault(
                             sid, {"total": 0, "out": 0})
                         acc["total"] += r_total
                         acc["out"] += r_out
-                    if model:
+                    if model and day == today:
                         models["zcode"] = model
 
         # Claude：今天的 JSONL 增量
@@ -237,30 +296,86 @@ class UsageScanner:
                         continue
                     day, r_total, r_out, model = rec
                     if day == today:
-                        total += r_total
+                        totals["total"] += r_total
+                        totals["output"] += r_out
+                        usage = (d.get("message") or {}).get("usage") or {}
+                        totals["input"] += int(usage.get("input_tokens") or 0)
+                        totals["cached"] += (int(usage.get("cache_creation_input_tokens") or 0)
+                                               + int(usage.get("cache_read_input_tokens") or 0))
                         if model:
                             by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem
-                        sids_by_tool["claude"].add(sid)
+                        session_ids["claude"].add(sid)
                         txt = _claude_last_text(d)
                         if txt:
-                            self.last_msg_by_sid[sid] = txt
-                            self.last_msg_by_tool["claude"] = txt
-                        acc = self.by_sid.setdefault(
+                            last_msg_by_sid[sid] = txt
+                            last_msg_by_tool["claude"] = txt
+                        acc = by_sid.setdefault(
                             sid, {"total": 0, "out": 0})
                         acc["total"] += r_total
                         acc["out"] += r_out
-                    if model:
+                    if model and day == today:
                         models["claude"] = model
 
+        # Codex：任务状态监听早已支持；这里补齐同一 rollout 的模型与精确用量。
+        # 只累计 token_usage_record（单次响应），绝不累计 token_count 中不断增长的
+        # total_token_usage，否则一轮会被重复计算多次。
+        xroot = Path(self.roots.get("codex", ""))
+        if xroot.is_dir():
+            try:
+                xfiles = xroot.rglob("rollout-*.jsonl")
+                for f in xfiles:
+                    try:
+                        if time.time() - f.stat().st_mtime > 3 * 86400:
+                            continue
+                    except OSError:
+                        continue
+                    fkey = str(f)
+                    model = self._codex_model_by_file.get(fkey, "")
+                    sid = f.stem
+                    for line in self._codex_inc.new_lines(f):
+                        try:
+                            d = json.loads(line)
+                        except Exception:
+                            continue
+                        payload = d.get("payload") or {}
+                        if d.get("type") == "turn_context" and payload.get("model"):
+                            model = str(payload["model"])
+                        rec = _codex_record_usage(d, model)
+                        if not rec:
+                            continue
+                        day, r_total, r_out, rec_model, parts = rec
+                        if day != today:
+                            continue
+                        totals["total"] += r_total
+                        for key in ("input", "cached", "output", "reasoning"):
+                            totals[key] += int(parts.get(key) or 0)
+                        if rec_model:
+                            by_model[rec_model] = by_model.get(rec_model, 0) + r_total
+                            models["codex"] = rec_model
+                        session_ids["codex"].add(sid)
+                        acc = by_sid.setdefault(
+                            sid, {"total": 0, "out": 0, "input": 0,
+                                  "cached": 0, "reasoning": 0})
+                        acc["total"] += r_total
+                        acc["out"] += r_out
+                        acc["input"] += parts["input"]
+                        acc["cached"] += parts["cached"]
+                        acc["reasoning"] += parts["reasoning"]
+                    self._codex_model_by_file[fkey] = model
+            except OSError:
+                pass
+
         with self._lock:
-            self.today = {"total": total}
+            self.today = totals
             self.today_by_model = dict(
                 sorted(by_model.items(), key=lambda kv: -kv[1])[:6])
             self.sessions_by_tool = {
-                tool: len(sids) for tool, sids in sids_by_tool.items() if sids}
+                tool: len(sids) for tool, sids in session_ids.items() if sids}
+            self._session_ids = session_ids
             self.steps_by_tool = dict(steps_by_tool)
             self.last_step_by_tool = dict(last_step_by_tool)
-            self.last_msg_by_sid = dict(self.last_msg_by_sid)
-            self.last_msg_by_tool = dict(self.last_msg_by_tool)
+            self.last_msg_by_sid = last_msg_by_sid
+            self.last_msg_by_tool = last_msg_by_tool
+            self.by_sid = by_sid
             self.models.update(models)
