@@ -945,7 +945,10 @@ function devGenericContent(kind){
     const hum = sensor.hum ?? t.hum;
     const pressure = sensor.pressure;
     const source = sensor.env_source && sensor.env_source !== 'NA' ? sensor.env_source : '';
-    const detail = hum == null ? '传感器读取失败' : `湿度 ${Math.round(hum)}%`;
+    // 缺湿度≠读取失败：BMP280 温度兜底时有温度无湿度，应显示"湿度不可用"而非"传感器读取失败"
+    const detail = hum == null
+        ? (temp != null ? '湿度不可用' : '传感器读取失败')
+        : `湿度 ${Math.round(hum)}%`;
     return {main: temp == null ? '温度不可用' : `${Number(temp).toFixed(1)} ℃`,
             sub: [detail, source || (pressure == null ? '' : `${Number(pressure).toFixed(0)} hPa`)]
               .filter(Boolean).join(' · ')};
@@ -1564,7 +1567,8 @@ function devControlPage(screen, ctx){
     b.onclick = async ()=>{
       try{
         const res = await request('/api/music-key', {action});
-        if(!res.ok && res.reason) notice(res.reason, true);
+        if(res && res.reason) notice(res.reason, !res.ok);
+        else if(action==='PLAY' && res && res.ok) notice(`${res.app?res.app+' ':''}已开始播放`);
         poll();
       }catch(e){ notice(e.message, true); }
     };
