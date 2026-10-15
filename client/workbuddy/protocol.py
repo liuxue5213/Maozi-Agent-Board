@@ -181,7 +181,9 @@ def parse_uplink(line: str):
         except ValueError:
             return None
     if key == "ENVSRC":
-        return {"env_source": value if value in ("AHT20", "DHT11", "NA") else "NA"}
+        # 已知来源白名单：AHT20(主) / DHT11(回退) / BMP280(温度兜底，见 firmware sensors.h) / NA(无)。
+        # 未知值一律回落 "NA"，避免未来固件新增来源时把脏字符串透传给前端。
+        return {"env_source": value if value in ("AHT20", "DHT11", "BMP280", "NA") else "NA"}
     if key == "SN":
         return {"sensor_bus": value[:64]}
     if key in ("HUM", "BRIGHT"):

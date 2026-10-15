@@ -125,6 +125,11 @@ class StateProtocolTests(unittest.TestCase):
         self.assertEqual(parse_uplink("PRESSURE=1013.2"), {"pressure": 1013.2})
         self.assertEqual(parse_uplink("DISTANCE=NA"), {"distance": None})
         self.assertEqual(parse_uplink("ENVSRC=AHT20"), {"env_source": "AHT20"})
+        # BMP280 温度兜底来源（firmware sensors.h）必须透传，不能被改写成 NA
+        self.assertEqual(parse_uplink("ENVSRC=BMP280"), {"env_source": "BMP280"})
+        self.assertEqual(parse_uplink("ENVSRC=DHT11"), {"env_source": "DHT11"})
+        # 未知来源一律回落 NA，不把脏字符串透传给前端
+        self.assertEqual(parse_uplink("ENVSRC=FOO"), {"env_source": "NA"})
         self.assertIsNone(parse_uplink("PRESSURE=nan"))
         self.assertEqual(parse_uplink("[PETPERF] frame=play load_ms=48 psram=1"),
                          {"pet_frame_perf": {"frame": "play", "load_ms": 48, "psram": 1}})
