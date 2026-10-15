@@ -2495,6 +2495,33 @@ function renderHealthTab(fill=false){
     :h.due?`已达到提醒时间；离开电脑后约 ${restLeft} 分钟完成休息。`
     :`距活动提醒约 ${Math.max(0,Math.ceil((target-(Number(h.work_seconds)||0))/60))} 分钟；短暂离开会暂停计时。`;
 }
+let holidayCatalog=null;
+function updateHolidayCount(){
+  const c=$('holidays-count'); if(c) c.textContent=`${((draft&&draft.holidays)||[]).length} 已选`;
+}
+/* 节日提醒：勾选预设节日（目录来自 /api/holidays），选中即屏保常显倒计时 */
+async function renderHolidays(){
+  const root=$('holidays-list'); if(!root||!draft) return;
+  if(!holidayCatalog){
+    try{ holidayCatalog=(await request('/api/holidays')).holidays||[]; }
+    catch(e){ root.replaceChildren(el('div','empty','节日目录加载失败：'+e.message)); return }
+  }
+  root.replaceChildren();
+  const chosen=new Set(draft.holidays||[]);
+  holidayCatalog.forEach(h=>{
+    const label=el('label','field toggle');
+    const cb=el('input'); cb.type='checkbox'; cb.checked=chosen.has(h.key);
+    cb.onchange=()=>{
+      if(!draft.holidays) draft.holidays=[];
+      if(cb.checked){ if(!draft.holidays.includes(h.key)) draft.holidays.push(h.key); }
+      else{ draft.holidays=draft.holidays.filter(k=>k!==h.key); }
+      markDirty(); updateHolidayCount();
+    };
+    label.append(cb, el('span','',h.name));
+    root.append(label);
+  });
+  updateHolidayCount();
+}
 function renderEntries(key){
   const root=$(key+'-list');root.replaceChildren();
   const items=draft[key];
@@ -3181,6 +3208,7 @@ function openSettings(tab){
 /* ================= 视图路由 ================= */
 function renderExtras(){
   ['reminders','calendar','alarms','countdowns','birthdays','apps'].forEach(key=>{if(draft&&draft[key])renderEntries(key)});
+  renderHolidays();
   document.querySelectorAll('[data-generate-widget]').forEach(button=>{
     const kind=button.dataset.generateWidget;
     const exists=(draft.pages||[]).some(page=>(page.widgets||[]).includes(kind));
@@ -4250,7 +4278,7 @@ function bind(){
   $('reset-btn').onclick=()=>{
     if(!confirm('恢复默认档案？当前未保存修改会丢失。'))return;
     draft={schema:1,version:saved.version,pages:defaultPages(),
-           reminders:[],calendar:[],alarms:[],apps:[],countdowns:[],birthdays:[],
+           reminders:[],calendar:[],alarms:[],apps:[],countdowns:[],birthdays:[],holidays:[],
            theme:structuredClone(DEFAULT_THEME)};
     selected=0;previewPage=0;markDirty();
   };

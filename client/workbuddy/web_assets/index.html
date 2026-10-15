@@ -513,7 +513,17 @@
           </div>
           <p class="hint">可添加多位家人或朋友的生日（如 爸爸、妈妈）。某位生日进入一个月内时，
             屏保日期行会显示「距 XX 生日还有 N 天」，生日当天显示「XX 生日快乐」；
-            多个生日同时临近时只显示最近的那个。日期填「月-日」即可（如 05-12）。</p>
+            多个生日同时临近时只显示最近的那个。            日期填「月-日」即可（如 05-12）。</p>
+        </section>
+
+        <section class="panel schedule-panel" aria-labelledby="holidays-heading">
+          <div class="panel-head">
+            <div><h2 id="holidays-heading">节日提醒</h2><p class="panel-kicker">选中的节日在屏保常显倒计时</p></div>
+            <span class="count-pill muted" id="holidays-count">0</span>
+          </div>
+          <div class="entry-list" id="holidays-list"></div>
+          <p class="hint">勾选想在小屏屏保上看到的节日（元旦、春节、中秋……）。与生日「只在临近一个月才出现」
+            不同，节日一旦勾选就<b>一直</b>显示「距 X 还有 N 天」，当天显示「X 快乐」；多个节日取最近的一个。</p>
         </section>
       </div>
 
