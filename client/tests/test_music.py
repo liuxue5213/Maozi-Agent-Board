@@ -234,6 +234,37 @@ class MusicModuleTests(unittest.TestCase):
         opener.assert_called_once()
         sender.assert_not_called()
 
+    def test_running_player_without_song_reason_is_actionable(self):
+        # 已运行但没在播放：应把软件带到前台，并给出「去选歌」的可操作提示，
+        # 而不是笼统的「打开播放器」。
+        self._patch_apps([{"id": "com.netease.163music", "name": "网易云音乐",
+                           "path": "/A/NM.app"}])
+        with patch.object(music.sys, "platform", "darwin"), \
+             patch.object(music, "is_running", return_value=True), \
+             patch.object(music, "now_playing", return_value={}), \
+             patch.object(music, "open_app", return_value=True), \
+             patch.object(music, "send"):
+            result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
+        self.assertFalse(result["ok"])
+        self.assertIn("已在运行", result["reason"])
+        self.assertIn("选一首歌", result["reason"])
+
+    def test_cold_launch_without_song_reason_is_actionable(self):
+        # 冷启动后还没选歌（1.2s 内用户来不及选）：提示「已启动 + 去选歌」，
+        # 不要误启 Apple Music 的空会话（仍不发 PLAY），但文案要能引导下一步。
+        self._patch_apps([{"id": "com.netease.163music", "name": "网易云音乐",
+                           "path": "/A/NM.app"}])
+        with patch.object(music.sys, "platform", "darwin"), \
+             patch.object(music, "is_running", return_value=False), \
+             patch.object(music, "now_playing", return_value={}), \
+             patch.object(music, "open_app", return_value=True), \
+             patch.object(music, "send"):
+            result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["launched"])
+        self.assertIn("启动", result["reason"])
+        self.assertIn("选一首歌", result["reason"])
+
     def test_play_default_does_not_control_other_player(self):
         self._patch_apps([{"id": "com.netease.163music", "name": "网易云音乐", "path": "/A/NM.app"}])
         with patch.object(music.sys, "platform", "darwin"), \

@@ -367,7 +367,7 @@ def open_app(app: dict | None) -> bool:
         return False
 
 
-def play_default(cfg, settle: float = 1.2) -> dict:
+def play_default(cfg, settle: float = 2.5) -> dict:
     """「点一下就开始放歌」：确保默认软件在跑 → 下发播放命令。
 
     返回 {"ok","app","launched","command"}，便于前端/日志说明到底做了什么。
@@ -390,12 +390,19 @@ def play_default(cfg, settle: float = 1.2) -> dict:
             time.sleep(0.2)
             session = now_playing()
         if not session or not session.get("title"):
-            # 软件可能已在后台运行，但尚未选择歌曲；切到所选播放器让用户
-            # 直接选歌。只打开这一个应用，绝不向空会话发送系统 PLAY。
+            # 软件可能已在后台运行但没选歌，或刚冷启动还没选歌。绝不在空会话
+            # 上发系统 PLAY（会误启 Apple Music），只把软件带到前台让用户选歌，
+            # 并给出明确的下一步，避免「点了像没反应」的错觉。
             activated = open_app(app) if not launched else True
-            return {"ok": False, "app": app["name"], "launched": launched,
-                    "activated": activated,
-                    "reason": "已打开播放器；请先在软件中选择一首歌曲"}
+            name = app["name"]
+            if launched:
+                reason = (f"已为你启动{name}并切到前台；它还没有可播放的歌曲，"
+                          f"请在里面选一首歌后再点一次「打开并发送播放」")
+            else:
+                reason = (f"{name}已在运行但当前没有正在播放；请在该软件里选一首歌，"
+                          f"然后再次点击「打开并发送播放」")
+            return {"ok": False, "app": name, "launched": launched,
+                    "activated": bool(activated), "reason": reason}
         if session.get("bundle") != app["id"]:
             return {"ok": False, "app": app["name"], "launched": launched,
                     "reason": "当前媒体会话属于其他软件；请先在所选播放器中选择歌曲"}
