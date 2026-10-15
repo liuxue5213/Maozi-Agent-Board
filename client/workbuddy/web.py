@@ -970,9 +970,10 @@ def start_settings_server(app, port):
                     action = str(data.get("action", "")).upper()
                     if action in ("PLAY", "NEXT", "PREV"):
                         handler = getattr(app, "_handle_key", None)
-                        if callable(handler):
-                            handler(action)
-                        self._json(200, {"ok": True, "action": action})
+                        result = (handler(action) or {}) if callable(handler) else {}
+                        payload = {"action": action, **result}
+                        payload.setdefault("ok", True)   # PLAY 失败时带上 ok=False+reason
+                        self._json(200, payload)
                     else:
                         self._json(400, {"error": "未知动作"})
                 elif path == "/api/hooks-install":

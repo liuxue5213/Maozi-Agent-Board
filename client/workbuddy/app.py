@@ -575,8 +575,9 @@ class App:
                 pass
         return {"supported": cache.get("supported"), "now": info}
 
-    def _handle_key(self, action: str):
+    def _handle_key(self, action: str) -> dict:
         # ±10：直接改系统音量不触发 macOS 音量 HUD，步长太小用户会以为没反应
+        result: dict = {"ok": True, "action": action}
         if action == "VOL+":
             self.control.volume_step(+10)
         elif action == "VOL-":
@@ -589,8 +590,11 @@ class App:
             session = music.now_playing(timeout=0.2)
             if session and session.get("title"):
                 self.control.media("toggle")
+                result = {"ok": True, "action": action, "command": "toggle"}
             else:
-                music.play_default(self.cfg)
+                # 把 play_default 的 ok/reason 一并返回——Web 之前只拿到 ok:true，
+                # 「请先选一首歌」这类原因被吞掉，点击就像没反应。
+                result = {"action": action, **(music.play_default(self.cfg) or {})}
         elif action == "NEXT":
             self.control.media("next")
         elif action == "PREV":
@@ -603,6 +607,7 @@ class App:
             kick = getattr(self, "_kick", None)
             if kick:
                 kick.set()
+        return result
 
     # ---- 需要处理（收件箱）：Web / 设备角标 / 推送共用的服务端事实源 ----
 
