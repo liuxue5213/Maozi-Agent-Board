@@ -1554,10 +1554,20 @@ function devControlPage(screen, ctx){
   devLabel(music,12,70,280,info.title?(info.artist||'未知歌手'):'打开播放器并选择歌曲',18,'dev-dim');
   devLabel(music,12,96,280,info.title?progress:'',18,'dev-dim');
   devTrack(music,12,120,280,info.duration>0 ? 100*(info.position||0)/info.duration : 0,ctx.accent);
-  [['上一首',8,88],[info.title?(info.playing?'暂停':'播放'):'打开音乐',104,96],['下一首',208,88]].forEach(([txt,x,w],i)=>{
+  // 这三个按钮在真实设备屏上是可触控的，预览里也做成可点击，避免「点了没反应」。
+  [['上一首','PREV',8,88],[info.title?(info.playing?'暂停':'播放'):'打开音乐','PLAY',104,96],['下一首','NEXT',208,88]].forEach(([txt,action,x,w])=>{
     const b=devCard(music,x,132,w,38);
-    if(!info.title && i!==1) b.style.opacity='.5';
+    const clickable = info.title || action==='PLAY';
+    if(!clickable) b.style.opacity='.5';
     devLabel(b,0,5,w,txt,20,'dev-ink',null,'center');
+    b.style.cursor = clickable ? 'pointer' : 'default';
+    b.onclick = async ()=>{
+      try{
+        const res = await request('/api/music-key', {action});
+        if(!res.ok && res.reason) notice(res.reason, true);
+        poll();
+      }catch(e){ notice(e.message, true); }
+    };
   });
   const vol=devCard(body,0,184,304,90);
   devLabel(vol,12,8,280,'电脑音量',20,'dev-dim');
@@ -4291,7 +4301,7 @@ function bind(){
   async function refreshPetPacks(){
     const sel=$('pet-pack-select'); if(!sel)return;
     try{
-      const d=await request('/api/petpacks');
+      const d=await request('/api/petpacks');   // P1-2 收口：返回渲染模型（builtin+packs+skin+预算）
       const packs=d.packs||[];
       fillPackSelect(sel, packs, '（无包——pet_artwork.py --pack 生成）');
       fillPackSelect($('pet-pack-day'), packs, '（未设置白天包）');
@@ -4305,7 +4315,7 @@ function bind(){
         $('pet-pack-weather').value=draft.pet.weather_pack;
       if($('pet-autopack')) $('pet-autopack').checked=!!draft.pet?.autopack;
       updatePackThumb();
-      renderPetLibrary(packs);
+      renderPetLibrary(d);
     }catch(e){}
   }
   function updatePackThumb(){
@@ -4395,30 +4405,101 @@ function bind(){
     if(p.weather_pack === name) roles.push('雨雪');
     return roles;
   }
-  function renderPetLibrary(packs){
+  function renderPetLibrary(model){
     const box = $('pet-library'); if(!box) return;
     box.replaceChildren();
+    const builtin = model && model.builtin;
+    const packs = (model && model.packs) || [];
+    const activeKind = (model && model.active_kind) || 'builtin';
+    const psram = (model && model.psram_kb) || 0;
+    const budget = (model && model.psram_budget_kb) || 0;
+
+    // 顶部摘要：当前渲染路线 + PSRAM 占用（P1-2 收口单一事实源可视化）
+    const sum = el('div','pet-summary');
+    const routeTxt = activeKind === 'skin'
+      ? `当前：可选皮肤（${model.skin ? model.skin.name : '?'}，PSRAM ${psram}KB / 预算 ${budget}KB）`
+      : '当前：内置像素宠物（canonical · 矢量 · 零下载 · 零 PSRAM）';
+    sum.append(el('div','pet-summary-route', routeTxt));
+    if(model && model.fallback_to_builtin)
+      sum.append(el('div','pet-summary-warn',
+        '⚠ 激活皮肤缺帧/不存在 → 已自动回落内置矢量'));
+    // P1-4 资产管线：预算占用条 + 缓存压力提示
+    const ratio = budget ? Math.min(100, Math.round(psram / budget * 100)) : 0;
+    const bar = el('div','pet-summary-budget');
+    bar.append(el('div','pet-budget-bar', '', { '--pct': ratio + '%' }));
+    bar.append(el('span','pet-budget-label', `PSRAM ${psram}KB / ${budget}KB（${ratio}%）`));
+    sum.append(bar);
+    if(activeKind === 'skin' && model.skin){
+      if(model.skin.over_source_cap && model.skin.over_source_cap.length)
+        sum.append(el('div','pet-summary-warn',
+          `⛔ 帧 ${model.skin.over_source_cap.join('/')} 超单帧源上限，下发会被预检拒绝`));
+      else if(model.skin.cache_pressure)
+        sum.append(el('div','pet-summary-warn',
+          '⚠ 皮肤帧数超缓存槽（12），最坏驻留受 LRU 约束，长会话可能微卡'));
+    }
+    box.append(sum);
+
+    // 内置矢量 · canonical 卡（永远可用，是出厂默认与回落终点）
+    if(builtin){
+      const bcard = el('div','pet-card builtin' + (builtin.active ? ' active' : ''));
+      const thumb = el('div','pet-card-thumb builtin-thumb');
+      try { if(typeof devPet === 'function') devPet(thumb,
+              (draft.pet && draft.pet.type) || 'robot', 'IDLE', 0, 0, 0.55); }
+      catch(e){ thumb.append(el('div','builtin-fallback', '矢量')); }
+      bcard.append(thumb);
+      const body = el('div','pet-card-body');
+      body.append(el('div','pet-card-name', `${builtin.name} · canonical`));
+      body.append(el('div','pet-card-meta', `${builtin.frames} 态齐全 · PSRAM 0KB`));
+      const badges = el('div','pet-card-badges');
+      badges.append(el('span','badge canon', '出厂默认·回落终点'));
+      body.append(badges);
+      bcard.append(body);
+      if(!builtin.active){
+        const btn = el('button','pet-card-btn','恢复内置');
+        btn.onclick = (ev)=>{ ev.stopPropagation(); restoreBuiltinPet(); };
+        body.append(btn);
+      }
+      box.append(bcard);
+    }
+
     if(!packs.length){
-      box.append(el('p','hint','暂无角色包——用 pet_artwork.py --pack 生成或导入 .zip'));
+      box.append(el('p','hint','暂无可选皮肤包——用 pet_artwork.py --pack 生成或导入 .zip'));
       return;
     }
     packs.forEach(p=>{
-      const card = el('div','pet-card'); card.dataset.name = p.name;
+      const card = el('div','pet-card skin' + (p.active ? ' active' : ''));
+      card.dataset.name = p.name;
       const thumb = el('img','pet-card-thumb');
       thumb.src = `/api/petpack-thumb?name=${encodeURIComponent(p.name)}&t=${Date.now()}`;
       thumb.alt = p.name; card.append(thumb);
       const body = el('div','pet-card-body');
       body.append(el('div','pet-card-name', p.manifest?.display_name||p.name));
-      body.append(el('div','pet-card-meta', `${p.frames} 帧`));
+      body.append(el('div','pet-card-meta',
+        `${p.frames} 帧 · 解码 ${p.total_decoded_kb||p.psram_kb}KB`));
       const badges = el('div','pet-card-badges');
-      petUseRoles(p.name).forEach(r=> badges.append(el('span','badge use', `当前·${r}`)));
-      if(p.missing && p.missing.length)
-        badges.append(el('span','badge warn', `缺 ${p.missing.length} 帧`));
-      if(badges.childElementCount) body.append(badges);
+      (p.roles || petUseRoles(p.name)).forEach(r=> badges.append(el('span','badge use', `当前·${r}`)));
+      if(!p.complete) badges.append(el('span','badge warn', `缺 ${p.missing.length} 帧`));
+      else badges.append(el('span','badge ok', '完整'));
+      // P1-4 资产管线状态徽标
+      if(p.over_source_cap && p.over_source_cap.length)
+        badges.append(el('span','badge err', `超源上限 ${p.over_source_cap.length}`));
+      else badges.append(el('span','badge ok', '源校验通过'));
+      if(p.cache_pressure) badges.append(el('span','badge warn', '缓存压力'));
+      body.append(badges);
       card.append(body);
       card.onclick = ()=> openPetAllStates(p.name, p);
       box.append(card);
     });
+  }
+  async function restoreBuiltinPet(){
+    if(!isConnected()){ notice('设备未连接，先等设备上线', true); return; }
+    notice('正在恢复内置像素宠物（清空设备皮肤帧）…');
+    try{
+      const r = await request('/api/petpack-clear');
+      if(r.ok) notice(`已恢复内置矢量（删除 ${r.deleted.length} 张）`);
+      else notice('恢复失败：' + (r.reason || '部分帧删除失败'), true);
+      refreshPetPacks();
+    }catch(e){ notice('恢复失败：' + e.message, true); }
   }
   function openPetAllStates(name, packInfo){
     const mask = $('pet-allstates'); if(!mask) return;

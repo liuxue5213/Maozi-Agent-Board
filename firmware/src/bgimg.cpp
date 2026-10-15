@@ -13,6 +13,9 @@ String staging;
 uint32_t stage_len = 0, stage_crc = 0;
 uint16_t stage_seq = 0;
 bool stage_active = false;
+// 皮肤（JPEG 角色包）单帧源文件硬上限：P1-2 决策 4 要求 ≤100KB，留 120KB 余量。
+// 解码后 RGB565 320×480 = 300KB/缓冲；workanim LRU 缓存 12 槽 → 最坏 3.6MB。
+// 矢量 draw_pet 为 canonical（零 PSRAM 大块占用），皮肤仅在包被上传后才解码。
 constexpr uint32_t MAX_IMG = 120 * 1024;
 
 constexpr int IMG_W = 320, IMG_H = 480;

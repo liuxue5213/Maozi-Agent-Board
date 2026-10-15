@@ -1365,8 +1365,9 @@ void render_free_page(PageView& page, const char* tb) {
 
 void make_pet_page(WidgetView& view, lv_obj_t* screen) {
     PetPageVisual& visual = pet_pages[widget_page_slot(&view)];
-    // 彩色角色图层（/pet_<帧>.jpg 资源包）：存在对应帧时显示图片并隐藏
-    // 像素宠物；无资源包保持像素绘制（诚实降级）。
+    // 渲染路线（P1-2 收口）：矢量 draw_pet 为 canonical（内置、零 PSRAM、永远可用）；
+    // /pet_<帧>.jpg 资源包是「可选皮肤」，仅当客户端按 day/night/weather 上传后才存在。
+    // 无皮肤 → 矢量回落（诚实降级，见下方 photo_ok 分支）。
     visual.photo = lv_img_create(screen);
     lv_obj_set_pos(visual.photo, 0, 0);
     lv_obj_set_size(visual.photo, 320, 480);
@@ -1603,6 +1604,8 @@ void render_pet_page(WidgetView& view) {
         "pet_feeding", "pet_drinking", "pet_playing", "pet_error",
     };
     const char* frame = frame_of[(int)layer];
+    // 渲染路线（P1-2 收口）：先按当前层取帧名，找不到对应皮肤帧时回退到
+    // canonical 矢量（下方 else 分支调用 draw_pet）。皮肤仅在 pet_<帧>.jpg 存在时上屏。
     // 旧图包只有基础 9 帧；触摸场景缺专属帧时回退到原有画面。
     if (!petimg_exists(frame)) {
         if (layer == PL_FEEDING || layer == PL_DRINKING) frame = "pet_greeting";

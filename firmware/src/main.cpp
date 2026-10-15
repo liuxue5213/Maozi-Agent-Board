@@ -51,7 +51,7 @@ void setup() {
 void send_fw_handshake() {
     // 真实能力握手（PROTOCOL §5）：客户端据此拒绝不兼容的配置推送。
     // 开机 + 每次"新客户端接入"（链路超时后再次收到数据）都会重发。
-    Serial.printf("FW=0.3.2,n16r8,schema:1,pages:%u,widgets:10,apps:12,reminders:20,calendar:50,alarms:16\n",
+    Serial.printf("FW=proto:0.3.2,n16r8,schema:1,pages:%u,widgets:10,apps:12,reminders:20,calendar:50,alarms:16\n",
                   (unsigned)(sizeof(((DeviceProfile*)0)->pages) / sizeof(((DeviceProfile*)0)->pages[0])));
 }
 

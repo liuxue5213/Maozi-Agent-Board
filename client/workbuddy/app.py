@@ -12,7 +12,8 @@ from pathlib import Path
 
 from .collect import create
 from .control import ControlApp
-from .protocol import encode_caps, encode_hb, encode_telemetry, now_playing_wire
+from .protocol import (encode_caps, encode_hb, encode_telemetry, now_playing_wire,
+                       parse_protocol_version)
 import base64 as _b64
 import zlib as _zlib
 
@@ -171,6 +172,7 @@ class App:
             self.syscal_fetcher = SysCalFetcher()
             self.syscal_fetcher.start()
         self.fw_caps = None          # 设备能力（来自 FW 握手），None = 未知
+        self.fw_proto = None         # 固件协议版本元组 (3,2)，None = 未知（P1-1）
         self.profile_lock = threading.Lock()
         self.profile = load_profile()
         # 配置/档案曾在损坏后被隔离回退过 → Web 自检面板要能提示
@@ -296,6 +298,7 @@ class App:
         with self.profile_lock:
             first_handshake = self.fw_caps is None
             self.fw_caps = caps
+            self.fw_proto = parse_protocol_version(raw)   # P1-1：握手指出版本
             if first_handshake:
                 self.sync_requested = True
                 self.profile_status = "待同步"
@@ -1252,10 +1255,26 @@ class App:
             if lock:
                 lock.release()
 
+    def _preflight_petpack(self, name: str) -> tuple[bool, str]:
+        """上传前资产管线预检（P1-4）：抓源文件损坏/部分下载 + 单帧源超限。
+
+        委托 web.petpack_integrity_check 完成「CRC 比对 + 源上限」核验。"""
+        from .web import petpack_integrity_check
+        d = self.petpack_base() / f"petpack_{name}"
+        if not d.is_dir():
+            return False, "包不存在"
+        return petpack_integrity_check(d)
+
     def _apply_petpack_transaction(self, name: str) -> dict:
         """整套下发 pet_<状态>.jpg。单帧 ACK 偶发超时（设备端 workanim
         解码与串口竞争），每帧最多重试 3 次并回报原因。不写状态文件——
         由调用方（手动路由/自动切换）决定语义。"""
+        # 资产管线预检：源损坏 / 单帧超限 在清旧形象前就拦下，避免误删当前皮肤。
+        ok, reason = self._preflight_petpack(name)
+        if not ok:
+            return {"sent": 0, "failed": list(self.PACK_STATES),
+                    "reasons": {"pack": reason}, "ok": False,
+                    "preflight": reason}
         d = self.petpack_base() / f"petpack_{name}"
         sent, failed, reasons = 0, [], {}
         if not d.is_dir():
@@ -1462,6 +1481,42 @@ class App:
                 return False
             finally:
                 self._img_active = False
+
+    def clear_pet_skins(self) -> dict:
+        """恢复内置像素宠物（P1-2 收口）：清空 profile 包选择（防自动重传），
+        再删除设备全部 pet_*.jpg 皮肤帧（含自定义形象）→ 设备回落 canonical 矢量。"""
+        if not self.link or not self.link.status.startswith("connected:"):
+            return {"ok": False, "reason": "设备未连接", "deleted": [],
+                    "failed": []}
+        # 先清空 profile 的 day/night/weather 包选择，避免后台自动重传。
+        with self.profile_lock:
+            draft = deepcopy(self.profile)
+        pet = draft.setdefault("pet", {})
+        for key in ("day_pack", "night_pack", "weather_pack"):
+            if key in pet:
+                pet[key] = ""
+        try:
+            self.save_profile(draft)
+        except Exception as e:   # 配置落盘失败也要尝试清设备帧，降低耦合
+            pass
+        # 可能存在于设备上的全部 pet 帧（规范 9 态 + 互动/双帧 + 自定义形象）。
+        pet_frames = [
+            "idle", "thinking", "working", "working_b", "sleepy", "sleeping",
+            "greeting", "happy", "error", "feeding", "drinking", "playing",
+            "idle_b", "thinking_b", "sleeping_b", "greeting_b", "happy_b",
+            "feeding_b", "drinking_b", "playing_b", "custom",
+        ]
+        deleted, failed = [], []
+        for st in pet_frames:
+            name = f"pet_{st}.jpg"
+            try:
+                if self.delete_album_image(name):
+                    deleted.append(name)
+                else:
+                    failed.append(name)
+            except Exception:
+                failed.append(name)
+        return {"ok": len(failed) == 0, "deleted": deleted, "failed": failed}
 
     def send_ota(self, data: bytes) -> bool:
         """OTA 固件分帧下发（OTA=BEGIN/DATA/END）。成功后设备自动重启。
@@ -1750,7 +1805,7 @@ class App:
                 # 暂停采集：复播上一帧遥测并保持心跳，设备不误报离线；
                 # Web 端 telemetry_age 持续增长会如实提示数据陈旧。
                 t = self.last if self.paused else self.tick(now)
-                text = encode_telemetry(t)
+                text = encode_telemetry(t, self.fw_proto)
                 if self.link:
                     online = self.link.status.startswith("connected:")
                     snapping = time.monotonic() < self._snap_until
@@ -1772,6 +1827,7 @@ class App:
                             if self.link.consume_connected():
                                 with self.profile_lock:
                                     self.fw_caps = None
+                                    self.fw_proto = None
                                     self.sync_requested = True
                                     self.profile_status = "等待设备握手"
                                     self.applied_version = None

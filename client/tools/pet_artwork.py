@@ -16,9 +16,16 @@
 
 用法：python3 tools/pet_artwork.py [输出目录]
 """
+import json
 import math
 import os
 import sys
+from pathlib import Path
+
+# 让生成器能复用客户端同一套 manifest 构建逻辑（per-frame CRC32 / 尺寸 / 预算），
+# 保证「生成即自描述」，与 Web 库、上传预检口径完全一致。
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))  # client/
+from workbuddy.pet_render import build_pack_manifest  # noqa: E402
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -529,6 +536,7 @@ def main():
     os.makedirs(out, exist_ok=True)
     states = ["working", "thinking", "sleeping", "greeting",
               "happy", "error", "idle", "sleepy"]
+    generated = []
     for st in states:
         img = draw_frame(st, 0, scene, palette).resize((320, 480), Image.LANCZOS)
         path = os.path.join(out, f"pet_{st}.jpg")
@@ -539,6 +547,7 @@ def main():
                 break
             q -= 8
         print(f"{path}  {os.path.getsize(path)} bytes (q={q})")
+        generated.append(st)
         if st == "working":                   # 动态版：B 帧（右爪抬起）
             img_b = draw_frame(st, pose=1, scene=scene, palette=palette).resize((320, 480), Image.LANCZOS)
             path_b = os.path.join(out, "pet_working_b.jpg")
@@ -549,6 +558,15 @@ def main():
                     break
                 q -= 8
             print(f"{path_b}  {os.path.getsize(path_b)} bytes (q={q})")
+            generated.append("working_b")
+    # 生成即写 manifest（自描述 + 可审计），与 Web 库 / 上传预检同一口径。
+    name = pack or os.path.basename(out).replace("petpack_", "")
+    manifest = build_pack_manifest(name, Path(out), generated, [], {})
+    (Path(out) / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"{os.path.join(out, 'manifest.json')}  {len(generated)} frames, "
+          f"total_decoded_kb={manifest['total_decoded_kb']}, "
+          f"within_budget={manifest['within_budget']}")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ import re
 from urllib.parse import parse_qs, urlsplit
 
 from .profile import validate_profile
+from .pet_render import render_model
 
 
 def petpack_base_dir() -> Path:
@@ -99,7 +100,12 @@ _PETPACK_FALLBACK_DEFAULT = "idle"
 
 
 def compute_pack_info(d: Path) -> dict:
-    """盘点一个角色包目录：规范帧的 present / missing / fallback / manifest。"""
+    """盘点一个角色包目录：规范帧的 present / missing / fallback / manifest。
+
+    返回结构同时携带 per-frame CRC32 / 源尺寸 / 解码 KB / 预算与源上限标志
+    （P1-4），供 Web 库展示与上传预检复用；`manifest` 为磁盘上已存的 manifest.json
+    （可能为 None），`manifest_live` 为本次实时构建的完整 manifest。"""
+    from .pet_render import build_pack_manifest
     present = set()
     for st in PETPACK_CANON_STATES + PETPACK_OPTIONAL_STATES:
         if (d / f"pet_{st}.jpg").is_file():
@@ -108,9 +114,22 @@ def compute_pack_info(d: Path) -> dict:
     fallback = {s: _PETPACK_FALLBACK.get(s, _PETPACK_FALLBACK_DEFAULT)
                 for s in missing}
     order = PETPACK_CANON_STATES + PETPACK_OPTIONAL_STATES
-    return {"present": sorted(present, key=order.index),
-            "missing": missing, "fallback": fallback,
-            "manifest": read_pack_manifest(d)}
+    present_sorted = sorted(present, key=order.index)
+    live = build_pack_manifest(d.name.replace("petpack_", ""), d,
+                               present_sorted, missing, fallback)
+    stored = read_pack_manifest(d)
+    return {
+        "present": present_sorted,
+        "missing": missing,
+        "fallback": fallback,
+        "frames": live["frames"],
+        "total_decoded_kb": live["total_decoded_kb"],
+        "over_source_cap": live["over_source_cap"],
+        "within_budget": live["within_budget"],
+        "cache_pressure": live["cache_pressure"],
+        "manifest": stored,            # 磁盘上已存的 manifest.json 或 None
+        "manifest_live": live,         # 本次实时构建（含 CRC）
+    }
 
 
 def read_pack_manifest(d: Path) -> dict | None:
@@ -122,6 +141,35 @@ def read_pack_manifest(d: Path) -> dict | None:
         return json.loads(m.read_text(encoding="utf-8"))
     except Exception:
         return None
+
+
+def petpack_integrity_check(d: Path) -> tuple[bool, str]:
+    """上传前资产管线预检（P1-4）：比对磁盘帧 CRC32 与存储 manifest + 单帧源上限。
+
+    1) 若含已存 manifest，逐帧比对磁盘实际 CRC32 与记录；不一致说明文件自生成/导入
+       后被改坏或仅部分下载 —— 线路层 IMG 事务的 CRC32 只能保证传输无误，抓不到源
+       文件本身已坏。
+    2) 任一帧源 JPEG 超过 PET_SKIN_SOURCE_CAP_KB（固件 MAX_IMG 解码缓冲上限）直接
+       拒绝，避免设备解码失败/崩溃。
+    返回 (ok, reason)。"""
+    info = compute_pack_info(d)
+    live = info["manifest_live"]
+    stored = info["manifest"]
+    if stored and stored.get("frames"):
+        live_by_state = {fr["state"]: fr["crc32"] for fr in live["frames"]}
+        for fr in stored["frames"]:
+            st = fr["state"]
+            actual = live_by_state.get(st)
+            if actual is None:
+                return False, f"帧 {st} 缺失（manifest 记录但磁盘无此帧）"
+            if actual != fr.get("crc32"):
+                return False, (f"帧 {st} 本地校验失败（CRC32 与 manifest 不符，"
+                               f"可能损坏/部分下载）")
+    over = live.get("over_source_cap") or []
+    if over:
+        return False, (f"帧 {', '.join(over)} 超过单帧源上限 "
+                       f"{live['source_cap_kb']}KB，设备解码会失败")
+    return True, ""
 
 
 def write_pack_manifest(d: Path, info: dict) -> None:
@@ -315,21 +363,25 @@ def start_settings_server(app, port):
                 self._json(200, smcpriv.status())
                 return
             if path == "/api/petpacks":
-                # 场景包：列出 outputs/petpack_*/ 目录（8 状态图集，GET）
-                base = Path(__file__).resolve().parents[2] / "outputs"
-                packs = []
+                # 宠物渲染模型（P1-2 收口）：canonical 内置矢量 vs 可选皮肤 的
+                # 单一事实源。返回 builtin + 各皮肤包 + 当前激活/回落/PSRAM 预算。
+                base = petpack_base_dir()
+                packs_raw = []
                 if base.is_dir():
                     for d in sorted(base.glob("petpack_*")):
                         if d.is_dir():
                             info = compute_pack_info(d)
-                            packs.append({"name": d.name.replace("petpack_", ""),
-                                          "dir": str(d),
-                                          "frames": len(info["present"]),
-                                          "frame_list": info["present"],
-                                          "missing": info["missing"],
-                                          "fallback": info["fallback"],
-                                          "manifest": info["manifest"]})
-                self._json(200, {"packs": packs})
+                            packs_raw.append((d.name.replace("petpack_", ""), info))
+                profile_pet = ((getattr(app, "profile", None) or {}).get("pet")) or {}
+                self._json(200, render_model(profile_pet, packs_raw))
+                return
+            if path == "/api/petpack-clear":
+                # 恢复内置像素宠物（P1-2）：清空设备 pet_*.jpg 皮肤 + 清 profile 包选择。
+                if not app.link or not app.link.status.startswith("connected:"):
+                    self._json(400, {"error": "设备未连接", "ok": False})
+                    return
+                result = app.clear_pet_skins()
+                self._json(200, result)
                 return
             if path == "/api/petpack-download":
                 # 分享场景包：目录内 pet_*.jpg 打 zip 回流（浏览器下载）
@@ -748,13 +800,9 @@ def start_settings_server(app, port):
                     for fn, content in files.items():
                         (d / fn).write_bytes(content)
                     info = compute_pack_info(d)
-                    write_pack_manifest(d, {
-                        "name": name,
-                        "states": info["present"],
-                        "missing": info["missing"],
-                        "fallback": info["fallback"],
-                        "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                                                   time.gmtime())})
+                    # 写完整 manifest（含 per-frame CRC32 / 尺寸 / 预算），
+                    # 供后续上传预检与 Web 库审计。
+                    write_pack_manifest(d, info["manifest_live"])
                     self._json(200, {"status": f"已导入 {len(files)} 帧（{name} 包）",
                                      "frames": len(files)})
                     return
@@ -917,6 +965,16 @@ def start_settings_server(app, port):
                 elif path == "/api/music-play":
                     # 试一下：启动默认软件并开始播放（设置页「试一下」按钮）
                     self._json(200, app.music_play())
+                elif path == "/api/music-key":
+                    # 与真实设备屏一致的播放控制：PLAY 切换/打开、NEXT/PREV 切歌。
+                    action = str(data.get("action", "")).upper()
+                    if action in ("PLAY", "NEXT", "PREV"):
+                        handler = getattr(app, "_handle_key", None)
+                        if callable(handler):
+                            handler(action)
+                        self._json(200, {"ok": True, "action": action})
+                    else:
+                        self._json(400, {"error": "未知动作"})
                 elif path == "/api/hooks-install":
                     from . import hooks
                     result = hooks.install(hooks_settings_path(),
