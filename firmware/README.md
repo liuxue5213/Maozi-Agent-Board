@@ -38,5 +38,5 @@ macOS 下 FT232/CH340 串口形如 `/dev/cu.usbserial-*`；原生 USB 口形如 
 ## 待办（后续里程碑）
 
 - [ ] 主题/背景图传输（二进制分帧通道）
-- [ ] PIR 无人熄屏（GPIO7，引脚已留）、4 路 LED（GPIO1/2/3/5 已留）
+- [ ] PIR 无人熄屏（GPIO7，引脚已留）；LED 仅 GPIO3/5 预留，GPIO1/2 已用于传感器 I²C
 - [ ] 断连离线温湿度记录（NVS/LittleFS）

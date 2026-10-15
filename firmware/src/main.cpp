@@ -53,6 +53,8 @@ void send_fw_handshake() {
     // 开机 + 每次"新客户端接入"（链路超时后再次收到数据）都会重发。
     Serial.printf("FW=proto:0.3.2,n16r8,schema:1,pages:%u,widgets:10,apps:12,reminders:20,calendar:50,alarms:16\n",
                   (unsigned)(sizeof(((DeviceProfile*)0)->pages) / sizeof(((DeviceProfile*)0)->pages[0])));
+    // 启动早期的三次 SN 诊断可能发生在客户端连接前；握手时补发一次。
+    if (g_i2c_scan[0]) Serial.printf("SN=%s\n", g_i2c_scan);
 }
 
 void loop() {

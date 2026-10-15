@@ -1,6 +1,6 @@
 /**
  * 三传感器集成：VL6180X（测距）+ AHT20/BMP280（温湿压）+ DS1302（RTC）。
- * I2C 传感器共享 Wire1（GPIO47/48）；DS1302 三线（GPIO40/41/42）。
+ * I2C 传感器共享 Wire1（GPIO1/2）；DS1302 三线（GPIO40/41/42）。
  * AHT20 替代 DHT11 作为主温湿源，DHT11 降为备份。
  */
 #pragma once
@@ -27,10 +27,12 @@ static bool aht_ok = false, bmp_ok = false, tof_ok = false;
 extern char g_i2c_scan[64];   // 诊断：I2C 扫描结果（main.cpp 定义）
 
 inline void sensors_init() {
-    // 自动探测 SDA/SCL 组合：试 (47,48) 和 (48,47) 两种方向
+    // 自动探测配置的 SDA/SCL 以及反接方向。
     // 哪种扫描到设备就用哪种——不需要用户确认接线方向
     const int COMBOS[2][2] = {{PIN_SSDA, PIN_SSCL}, {PIN_SSCL, PIN_SSDA}};
-    const char* combo_name[2] = {"SDA=47,SCL=48", "SDA=48,SCL=47"};
+    char combo_name[2][28];
+    snprintf(combo_name[0], sizeof(combo_name[0]), "SDA=%d,SCL=%d", PIN_SSDA, PIN_SSCL);
+    snprintf(combo_name[1], sizeof(combo_name[1]), "SDA=%d,SCL=%d", PIN_SSCL, PIN_SSDA);
     int best = -1, best_n = 0;
     char best_addrs[32] = "";
 
