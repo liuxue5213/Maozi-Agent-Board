@@ -610,6 +610,8 @@
                 aria-selected="true" aria-controls="spane-music">音乐</button>
         <button type="button" class="tab" id="stab-weather" role="tab"
                 aria-selected="false" aria-controls="spane-weather">天气</button>
+        <button type="button" class="tab" id="stab-sensor" role="tab"
+                aria-selected="false" aria-controls="spane-sensor">传感器</button>
         <button type="button" class="tab" id="stab-pet" role="tab"
                 aria-selected="false" aria-controls="spane-pet">宠物</button>
         <button type="button" class="tab" id="stab-health" role="tab"
@@ -817,6 +819,26 @@
             <button type="button" class="button primary" id="weather-sync-btn">应用到设备</button>
           </div>
         </div>
+        </div>
+      </div>
+      <div class="tabpane" id="spane-sensor" role="tabpanel" hidden>
+        <div class="settings-pane-grid">
+        <section class="panel settings-card" aria-labelledby="sensor-heading">
+          <div class="panel-head">
+            <div><h2 id="sensor-heading">设备传感器</h2><p class="panel-kicker">AHT20 · BMP280 · VL6180X 实时读数</p></div>
+            <span class="count-pill muted" id="sensor-source">—</span>
+          </div>
+          <div class="entry-list" id="sensor-readings"></div>
+          <p class="hint">显示设备上传的最新环境读数（超过约 6 秒没有新数据即视为陈旧）。
+            温度/湿度默认来自 AHT20（缺 AHT20 时温度回退 BMP280）；<b>气压来自 BMP280</b>；距离来自 VL6180X。
+            设备未接入、传感器未接线或固件未烧录时显示 ——。</p>
+        </section>
+        <section class="panel settings-card" aria-labelledby="sensor-link-heading">
+          <div class="panel-head"><div><h2 id="sensor-link-heading">链路与新鲜度</h2><p class="panel-kicker">判断数据是否在流</p></div></div>
+          <div class="entry-list" id="sensor-link"></div>
+          <p class="hint">读数长期为 —— 时：确认设备在线；BMP280/AHT20 接线为 SDA=GPIO2、SCL=GPIO1；
+            并已烧录带传感器读取的最新固件（本机可用 firmware/tools/i2c_sensor_probe 单独测接线）。</p>
+        </section>
         </div>
       </div>
       <div class="tabpane" id="spane-pet" role="tabpanel" hidden>

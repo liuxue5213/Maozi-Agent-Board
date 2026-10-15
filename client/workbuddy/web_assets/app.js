@@ -3178,6 +3178,7 @@ function renderMusicNow(){
 const SETTINGS_TABS = {
   music:  ['stab-music', 'spane-music'],
   weather:['stab-weather','spane-weather'],
+  sensor: ['stab-sensor','spane-sensor'],
   pet:   ['stab-pet',   'spane-pet'],
   health:['stab-health','spane-health'],
   system: ['stab-system','spane-system'],
@@ -3277,7 +3278,7 @@ function renderTaskView(){
 /* ================= 轮询与保存 ================= */
 function render(){
   renderOverview();
-  if(currentView==='settings'){renderMusicNow();renderSelfcheck();renderHealthTab()}
+  if(currentView==='settings'){renderMusicNow();renderSelfcheck();renderHealthTab();renderSensorPane()}
   if(currentView==='tasks')renderTaskView();if(currentView==='saver')renderSaverView();if(currentView==='extras')renderExtras()}
 
 /* ================= 运行自检（设置 → 系统） =================
@@ -3293,6 +3294,28 @@ function renderSyscalView(){
   if(st)st.textContent = !on ? '未启用'
     : (s.ok ? `已读取 ${(s.events||[]).length} 条（未来 14 天）`
             : (s.error||'读取失败'));
+}
+/* 设置 → 传感器：把设备上传的环境读数一屏列清（只读展示） */
+function renderSensorPane(){
+  const box=$('sensor-readings'); if(!box) return;
+  const s=(live&&live.sensors)||{};
+  const fmt=(v,unit,digits)=>{
+    if(v==null||v==='') return '—';
+    if(typeof v==='number'){ if(!isFinite(v)) return '—'; return v.toFixed(digits==null?1:digits)+(unit||''); }
+    return String(v)+(unit||'');
+  };
+  const put=(target,rows)=>{
+    target.replaceChildren();
+    rows.forEach(([k,v])=>{ const r=el('div','kv'); r.append(el('span','',k),el('strong','',v)); target.append(r); });
+  };
+  put(box,[['温度',fmt(s.temp,' ℃')],['湿度',fmt(s.hum,' %')],['气压',fmt(s.pressure,' hPa')],
+           ['距离',fmt(s.distance,' mm',0)],['来源',s.env_source||'—']]);
+  const link=$('sensor-link');
+  if(link) put(link,[['设备连接', isConnected()?'已连接':'未连接'],
+                     ['数据新鲜度', (live&&typeof live.telemetry_age==='number')
+                        ?`${Math.round(live.telemetry_age)} 秒前更新`:'暂无数据'],
+                     ['传感器总线', s.sensor_bus||'—']]);
+  const src=$('sensor-source'); if(src) src.textContent=s.env_source||'—';
 }
 function renderSelfcheck(){
   const root=$('selfcheck-list'); if(!root||!live)return;
