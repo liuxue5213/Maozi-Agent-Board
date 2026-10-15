@@ -192,6 +192,11 @@ class App:
         # 设备最近一次成功应用的内容快照：「回到设备版本」的数据源。
         # 新版本应用失败时用户可以把客户端配置退回去，而不是卡在失败态。
         self.applied_profile = None
+        # M1：配置版本端到端留痕（Web 自检 / 真机验收可验证「同一配置版本」）
+        self.config_trace = []            # 最近版本事件环：{ts, kind, version, ...}
+        self._config_trace_cap = 24
+        self._last_saved_version = None
+        self._last_sent_version = None
         self.sync_requested = False
         self.sync_sent_at = 0.0
         self._caps_sent_at = 0.0
@@ -282,6 +287,8 @@ class App:
                         self.applied_profile = deepcopy(self.profile)
             self.health.event("sync_ack" if reply["ok"] else "sync_nak",
                               version=reply["version"], reason=reply["reason"])
+            self._trace("sync_ack" if reply["ok"] else "sync_nak",
+                        version=reply["version"], reason=reply["reason"][:32])
         self.env.update(d)
         seen = time.monotonic()
         for key in ("temp", "hum", "pressure", "distance", "env_source", "sensor_bus"):
@@ -969,6 +976,8 @@ class App:
             self.profile_status = "待同步"
             self.profile_error = ""
             self.sync_requested = False
+            self._last_saved_version = candidate["version"]
+            self._trace("profile_saved", version=candidate["version"])
         self.weather.kick()   # 城市列表可能变了：立刻按新表拉一轮
         return self.profile
 
@@ -998,6 +1007,32 @@ class App:
             self.health.event("restore_applied", version=self.profile["version"])
             return self.profile
 
+    def _trace(self, kind: str, **fields):
+        """记录一次配置版本状态跃迁（内存环，供 status_snapshot 暴露给 Web）。"""
+        ring = getattr(self, "config_trace", None)
+        if ring is None:
+            return
+        ring.append({"ts": time.strftime("%H:%M:%S"), "kind": kind, **fields})
+        cap = getattr(self, "_config_trace_cap", 24)
+        if len(ring) > cap:
+            del ring[: len(ring) - cap]
+
+    def _config_trace_snapshot(self) -> dict:
+        """M1：同一配置版本的端到端视图——保存/下发/设备应用是否同源。
+
+        调用方必须已持有 profile_lock（status_snapshot 内调用，避免重入死锁）。
+        """
+        ring = list(getattr(self, "config_trace", []))
+        return {
+            "events": ring,
+            "saved_version": getattr(self, "_last_saved_version", None),
+            "sent_version": getattr(self, "_last_sent_version", None),
+            "applied_version": self.applied_version,
+            "consistent": (self.applied_version is not None
+                           and self.applied_version == self.profile["version"]
+                           and self.profile_status == "设备已应用"),
+        }
+
     def status_snapshot(self):
         """Web 轮询的数据源。
 
@@ -1014,6 +1049,7 @@ class App:
             return {"profile": self.profile, "profile_status": self.profile_status,
                     "profile_error": self.profile_error,
                     "applied_version": self.applied_version,
+                    "config_trace": self._config_trace_snapshot(),
                     "fw_caps": self.fw_caps,
                     "usage_error": self.usage_scanner.last_error if self.usage_scanner else "off",
                     # 配置/档案损坏被隔离回退的提示（Web 自检面板用）
@@ -1110,10 +1146,35 @@ class App:
             self.profile_status = "传输中"
             self.sync_requested = False
             self.health.event("sync_sent", version=profile["version"])
+            self._last_sent_version = profile["version"]
+            self._trace("sync_sent", version=profile["version"])
         # 限速发送：115200 下设备串口缓冲有限，突发会丢字节导致 NAK
         for line in encode_profile(profile):
             self.link.send(line)
             time.sleep(0.012)
+
+    def _on_reconnect(self):
+        """链路重连（设备回到 / 客户端重连串口）：刷新能力握手所需状态。
+
+        关键：*保留* applied_version —— 设备 NVS 仍持有该版本，重连后无需重推
+        全量配置，也让 M1「同一配置版本」的端到端记录可回溯；版本一致时不进入
+        「待同步」，避免每次重连都闪一次「传输中」并重传整份配置。
+        """
+        with self.profile_lock:
+            self.fw_caps = None
+            self.fw_proto = None
+            if (self.applied_version is not None
+                    and self.applied_version == self.profile["version"]):
+                self.profile_status = "设备已应用"
+                self.sync_requested = False
+                self._trace("reconnect_resync",
+                            version=self.applied_version, changed=False)
+            else:
+                self.sync_requested = True
+                self.profile_status = "待同步"
+                self._trace("reconnect_resync",
+                            version=self.profile["version"],
+                            changed=True, prev=self.applied_version)
 
     def send_bg_image(self, data: bytes, name: str = "bg.jpg") -> bool:
         """背景图/相册图分帧下发（IMG=BEGIN/DATA/END，同 CFG 事务风格）。
@@ -1825,12 +1886,7 @@ class App:
                     try:
                         if image_slot and not ota_active and not image_active:
                             if self.link.consume_connected():
-                                with self.profile_lock:
-                                    self.fw_caps = None
-                                    self.fw_proto = None
-                                    self.sync_requested = True
-                                    self.profile_status = "等待设备握手"
-                                    self.applied_version = None
+                                self._on_reconnect()
                                 self.link.send(encode_caps(self.collector.caps))
                                 self._caps_sent_at = time.monotonic()
                             elif self.fw_caps is None and online:
