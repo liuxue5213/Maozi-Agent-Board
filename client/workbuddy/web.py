@@ -26,23 +26,38 @@ def petpack_frame_path(name: str, state: str) -> Path | None:
     if not re.fullmatch(r"[a-z0-9_]{1,24}", str(name or "")):
         return None
     if not re.fullmatch(
-            r"(idle|thinking|working|working_b|sleepy|sleeping|greeting|happy|error)",
+            r"(idle|idle_b|thinking|thinking_b|working|working_b|sleepy|sleeping|sleeping_b|greeting|greeting_b|happy|happy_b|error|feeding|feeding_b|drinking|drinking_b|playing|playing_b)",
             str(state or "")):
         return None
     frame = petpack_base_dir() / f"petpack_{name}" / f"pet_{state}.jpg"
     return frame if frame.is_file() else None
 
 
+def validate_pet_jpeg(content: bytes) -> str | None:
+    """设备按 320×480 RGB JPEG 解码；上传前拒绝损坏或尺寸不符的帧。"""
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(content)) as image:
+            if image.format != "JPEG" or image.size != (320, 480):
+                return "角色帧需为 320×480 JPEG"
+            if image.mode not in ("RGB", "L"):
+                return "角色帧需为 RGB JPEG"
+            image.load()
+    except Exception:
+        return "角色帧无法解码"
+    return None
+
+
 def validate_pack_zip(zb: bytes):
     """场景包 zip 校验（导入安全闸）。
 
-    只接受 pet_<a-z0-9_>{2,14}.jpg 的平铺文件；≤12 个文件、单文件 ≤200KB、
-    解压总量 ≤1.5MB（防 zip 炸弹）。返回 (files, err)：成功 err=None。
+    只接受 pet_<a-z0-9_>{2,14}.jpg 的平铺文件；≤20 个文件、单文件 ≤200KB、
+    解压总量 ≤2MB（防 zip 炸弹）。返回 (files, err)：成功 err=None。
     """
     if not zb:
         return None, "空文件"
-    if len(zb) > 512 * 1024:
-        return None, "zip 超过 512KB"
+    if len(zb) > 1024 * 1024:
+        return None, "zip 超过 1MB"
     try:
         zf = zipfile.ZipFile(io.BytesIO(zb))
     except zipfile.BadZipFile:
@@ -50,8 +65,8 @@ def validate_pack_zip(zb: bytes):
     names = [n for n in zf.namelist() if not n.endswith("/")]
     if not names:
         return None, "包内没有文件"
-    if len(names) > 12:
-        return None, "包内文件过多（≤12）"
+    if len(names) > 20:
+        return None, "包内文件过多（≤20）"
     files: dict[str, bytes] = {}
     total = 0
     for n in names:
@@ -62,8 +77,11 @@ def validate_pack_zip(zb: bytes):
         if len(content) > 200 * 1024:
             return None, f"{n} 超过 200KB"
         total += len(content)
-        if total > 1536 * 1024:
-            return None, "解压总量超过 1.5MB"
+        if total > 2048 * 1024:
+            return None, "解压总量超过 2MB"
+        image_error = validate_pet_jpeg(content)
+        if image_error:
+            return None, f"{n}：{image_error}"
         files[n] = content
     return files, None
 
@@ -71,6 +89,9 @@ def validate_pack_zip(zb: bytes):
 # 全状态九宫格的规范 9 帧：8 个状态 + working 动画双帧（B 帧交替）
 PETPACK_CANON_STATES = ("idle", "thinking", "working", "working_b",
                         "sleepy", "sleeping", "greeting", "happy", "error")
+PETPACK_OPTIONAL_STATES = ("feeding", "drinking", "playing", "idle_b",
+                           "thinking_b", "sleeping_b", "greeting_b", "happy_b",
+                           "feeding_b", "drinking_b", "playing_b")
 # 缺帧回退目标：状态帧缺→回退 idle（设备该状态不更新、停在上一帧/基础帧）；
 # working_b 缺→回退 working（无交替动画，仅 A 帧常显）
 _PETPACK_FALLBACK = {"working_b": "working"}
@@ -80,13 +101,14 @@ _PETPACK_FALLBACK_DEFAULT = "idle"
 def compute_pack_info(d: Path) -> dict:
     """盘点一个角色包目录：规范帧的 present / missing / fallback / manifest。"""
     present = set()
-    for st in PETPACK_CANON_STATES:
+    for st in PETPACK_CANON_STATES + PETPACK_OPTIONAL_STATES:
         if (d / f"pet_{st}.jpg").is_file():
             present.add(st)
     missing = [s for s in PETPACK_CANON_STATES if s not in present]
     fallback = {s: _PETPACK_FALLBACK.get(s, _PETPACK_FALLBACK_DEFAULT)
                 for s in missing}
-    return {"present": sorted(present, key=PETPACK_CANON_STATES.index),
+    order = PETPACK_CANON_STATES + PETPACK_OPTIONAL_STATES
+    return {"present": sorted(present, key=order.index),
             "missing": missing, "fallback": fallback,
             "manifest": read_pack_manifest(d)}
 
@@ -174,11 +196,14 @@ def start_settings_server(app, port):
                 while not app._stop:
                     snap = app.status_snapshot()
                     sig = json.dumps(
-                        {"telemetry": snap["telemetry"], "tasks": snap["tasks"],
+                        {"telemetry": snap["telemetry"], "music": snap.get("music"),
+                         "tasks": snap["tasks"],
                          "device": snap["device"], "profile_status": snap["profile_status"],
                          "profile_error": snap["profile_error"],
                          "applied_version": snap["applied_version"],
                          "profile_version": (snap["profile"] or {}).get("version"),
+                         "pack_progress": snap.get("pack_progress"),
+                         "work_break": snap.get("work_break"),
                          "tools": snap.get("tools"),
                          "done": snap.get("done")},
                         sort_keys=True, default=str)
@@ -241,8 +266,10 @@ def start_settings_server(app, port):
                     self._json(503, {"error": f"背景图失败：{reason}"})
                 return
             if path == "/api/bgimg-clear":
-                app.clear_bg_image()
-                self._json(200, {"status": "已请求恢复纯色"})
+                if app.clear_bg_image():
+                    self._json(200, {"status": "已请求恢复纯色"})
+                else:
+                    self._json(503, {"error": "设备忙碌或未连接，请稍后重试"})
                 return
             if path == "/api/bgimg-delete":
                 # ?target=svN → 删除屏保相册第 N 张（无 body 的 POST，须在 JSON 门槛前放行）
@@ -250,8 +277,10 @@ def start_settings_server(app, port):
                 if not re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,14})", target):
                     self._json(400, {"error": "相册槽位无效"})
                     return
-                app.delete_album_image(f"{target}.jpg")
-                self._json(200, {"status": f"已删除（{target}）"})
+                if app.delete_album_image(f"{target}.jpg"):
+                    self._json(200, {"status": f"已删除（{target}）"})
+                else:
+                    self._json(503, {"error": "删除未获设备确认，请稍后重试"})
                 return
             if path == "/api/pet":
                 self._json(200, app.pet.snapshot())
@@ -522,6 +551,11 @@ def start_settings_server(app, port):
                 target = parse_qs(urlsplit(self.path).query).get("target", ["bg"])[0]
                 name = (f"{target}.jpg" if re.fullmatch(r"(bg|sv[1-8]|pet_[a-z0-9_]{2,14})", target)
                         else "bg.jpg")
+                if name.startswith("pet_"):
+                    image_error = validate_pet_jpeg(data)
+                    if image_error:
+                        self._json(400, {"error": image_error})
+                        return
                 if app.send_bg_image(data, name):
                     self._json(200, {"status": f"已应用（{name}）"})
                 else:
@@ -588,12 +622,35 @@ def start_settings_server(app, port):
                         "density": (lambda v: max(0, min(2, int(v) if str(v).isdigit() else 2)))(
                             data.get("density", old_pet.get("density", 2))),
                         "break_min": break_min,
+                        "rest_min": old_pet.get("rest_min", 5),
+                        "desktop_notify": old_pet.get("desktop_notify", 1),
                         "day_pack": str(data.get("day_pack", old_pet.get("day_pack", "")) or ""),
                         "night_pack": str(data.get("night_pack", old_pet.get("night_pack", "")) or ""),
                         "weather_pack": str(data.get("weather_pack", old_pet.get("weather_pack", "")) or "")}
                     result = app.save_profile(candidate)
                     self._json(200, {"status": "已保存，待同步",
                                      "version": result["version"]})
+                    return
+                if path == "/api/health-config":
+                    candidate = dict(app.profile)
+                    pet = dict(candidate.get("pet") or {})
+                    try:
+                        pet["break_min"] = max(0, min(240, int(data.get("work_min", 0) or 0)))
+                        pet["rest_min"] = max(1, min(60, int(data.get("rest_min", 5) or 5)))
+                    except (TypeError, ValueError):
+                        self._json(400, {"error": "提醒时间必须是分钟数"})
+                        return
+                    pet["desktop_notify"] = 1 if data.get(
+                        "desktop_notify", pet.get("desktop_notify", 1)) else 0
+                    candidate["pet"] = pet
+                    result = app.save_profile(candidate)
+                    self._json(200, {"status": "健康提醒已保存", "version": result["version"]})
+                    return
+                if path == "/api/health-action":
+                    if data.get("action") != "snooze" or not app.snooze_break(10):
+                        self._json(409, {"error": "当前没有可延后的活动提醒"})
+                        return
+                    self._json(200, {"status": "已延后 10 分钟"})
                     return
                 if path == "/api/smc-interval":
                     # 温度/风扇采样间隔（秒）：存 profile；已安装的采样器需要
@@ -650,20 +707,21 @@ def start_settings_server(app, port):
                     if not (app.petpack_base() / f"petpack_{name}").is_dir():
                         self._json(404, {"error": "包不存在"})
                         return
-                    result = app.apply_petpack(name)
-                    period = app.pack_period()
-                    app.mark_pack_applied(name, period, ok=result.get("ok", False))
-                    pet = dict(app.profile.get("pet") or {})
-                    if pet.get("autopack"):
-                        candidate = dict(app.profile)
-                        candidate["pet"] = {**pet,
-                                            "night_pack" if period == "night"
-                                            else "day_pack": name}
-                        app.save_profile(candidate)
+                    if not (app.link and app.link.status.startswith("connected:")):
+                        self._json(503, {"error": "设备未连接，请连接后重试"})
+                        return
+                    result = app.apply_petpack_manual(name)
+                    if result.get("busy"):
+                        self._json(503, {"error": result["reasons"]["busy"]})
+                        return
                     self._json(200, {"sent": result["sent"],
                                      "failed": result["failed"],
                                      "reasons": result["reasons"],
-                                     "status": f"已下发 {result['sent']} 张（{name} 包）"})
+                                     "ok": result.get("ok", False),
+                                     "status": (f"已完整下发 {result['sent']} 张（{name} 包）"
+                                                if result.get("ok") else
+                                                f"仅下发 {result['sent']} 张，失败："
+                                                + "、".join(result["failed"]))})
                     return
                 elif path == "/api/petpack-import":
                     # 导入场景包：网页端读 .zip → base64 上传 → 校验落盘
@@ -683,6 +741,10 @@ def start_settings_server(app, port):
                         return
                     d = petpack_base_dir() / f"petpack_{name}"
                     d.mkdir(parents=True, exist_ok=True)
+                    # 同名重新导入是替换整包；清理上一个版本遗留的动作帧。
+                    for old in d.glob("pet_*.jpg"):
+                        if old.name not in files:
+                            old.unlink()
                     for fn, content in files.items():
                         (d / fn).write_bytes(content)
                     info = compute_pack_info(d)

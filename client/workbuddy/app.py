@@ -6,12 +6,13 @@ import subprocess
 import sys
 import time
 import threading
+from contextlib import nullcontext
 from copy import deepcopy
 from pathlib import Path
 
 from .collect import create
 from .control import ControlApp
-from .protocol import encode_caps, encode_hb, encode_telemetry
+from .protocol import encode_caps, encode_hb, encode_telemetry, now_playing_wire
 import base64 as _b64
 import zlib as _zlib
 
@@ -48,6 +49,7 @@ INBOX_STATE_PATH = Path.home() / ".workbuddy" / "inbox-state.json"
 # 场景包昼夜自动切换的「当前已应用包」落盘：客户端重启后不重复下发，
 # 部分失败时靠 at 时间戳做 ≥10 分钟的重试退避。
 PACK_STATE_PATH = Path.home() / ".workbuddy" / "petpack-state.json"
+BREAK_STATE_PATH = Path.home() / ".workbuddy" / "break-state.json"
 
 
 def _fmt_mmss(seconds: int) -> str:
@@ -125,6 +127,12 @@ def ai_wire_lines(tasks, done):
     return lines
 
 
+def _focus_wire_text(value, byte_limit=60):
+    """One line of UTF-8 text that fits firmware's 67-byte focus buffers."""
+    clean = " ".join(str(value or "").replace("=", " ").split())
+    return clean.encode("utf-8")[:byte_limit].decode("utf-8", "ignore")
+
+
 class App:
     def __init__(self, cfg):
         import psutil
@@ -136,10 +144,21 @@ class App:
         self.env_seen = {}
         self.control = ControlApp()
         self.health = HealthLog()
+        from .healthcoach import load_break_state
+        self._work_break_lock = threading.RLock()
+        self._work_break_path = BREAK_STATE_PATH
+        self._work_break_saved_at = 0.0
+        self.work_break = load_break_state(self._work_break_path)
         self.trend = TrendStore()    # P1-4 行为遥测：每分钟一拍趋势样本
         self.pet = Pet(lambda: self.profile.get("pet", {}))
         self._np_cache = {"supported": None, "now": {}}
         self._img_reply = None
+        self._img_lock = threading.Lock()  # 单张 IMG 事务不得与另一张交错
+        self._transfer_lock = threading.RLock()  # IMG/整包/OTA 共用串口事务闸
+        self._img_active = False
+        self._pack_lock = threading.Lock() # 整包上传与昼夜自动切包串行
+        self._pack_worker = None
+        self.pack_progress = {"active": False}
         self._ota_reply = None
         self._ota_event = threading.Event()
         self._ota_active = False
@@ -203,8 +222,10 @@ class App:
         self._last_tick_at = 0.0     # 最近一次成功采集的时刻，供 Web 判定数据新鲜度
         self.paused = False          # 托盘「暂停采集」：暂停期间复播上一帧遥测
         self._kick = threading.Event()   # Hook 快通道：立即唤醒主循环（附录A）
+        self._np_kick = threading.Event()  # 媒体按键后立即补采当前歌曲
         self.on_tick = None   # GUI 回调：每个采集周期调用一次
         self.on_ai_notice = None  # 托盘回调：焦点任务跨入 DONE/ERROR/WAIT_INPUT/ASK 时调用
+        self.on_health_notice = None  # 可选托盘回调；普通常驻模式使用 macOS 通知
         self._stop = False
         threading.Thread(target=self._np_loop, daemon=True,
                          name="now-playing").start()
@@ -212,17 +233,17 @@ class App:
         self.window_visible = True  # 主窗口是否可见（隐藏到托盘时为 False）
 
     def _on_uplink(self, d: dict):
-        if "snap" not in d and "snap_nak" not in d:
-            # 设备能发非 snap 上行 = 主循环已恢复响应，实拍静默窗提前收尾
-            self._snap_until = 0.0
         if "firmware" in d:
             self._parse_fw_caps(d["firmware"])
         if "snap" in d:
             self._handle_snap_frame(d["snap"])
         if "snap_nak" in d:
+            self._snap_until = 0.0
             self.health.event("snap_nak", reason=d["snap_nak"]["reason"][:24])
         if "slow_loop" in d:
             self.health.event("slow_loop", us=d["slow_loop"])
+        if "pet_frame_perf" in d:
+            self.pet_frame_perf = {**d["pet_frame_perf"], "at": time.time()}
         if "launch" in d:
             self._launch_app(d["launch"])
             self.health.event("launch", app=d["launch"][:16])
@@ -234,6 +255,8 @@ class App:
             self.health.event("key", action=d["key"])
         if "touch" in d:
             self.health.event("touch", target=d["touch"][:16])
+            if d["touch"] == "BREAK10":
+                self.snooze_break(10)
         if "img_reply" in d:
             self.health.event("img_ack" if d["img_reply"]["ok"] else "img_nak",
                               reason=d["img_reply"]["reason"])
@@ -259,12 +282,12 @@ class App:
                               version=reply["version"], reason=reply["reason"])
         self.env.update(d)
         seen = time.monotonic()
-        for key in ("temp", "hum"):
+        for key in ("temp", "hum", "pressure", "distance", "env_source", "sensor_bus"):
             if key in d:
                 self.env_seen[key] = seen
 
     def _parse_fw_caps(self, raw: str):
-        """FW=0.3.2,n16r8,schema:1,pages:6,widgets:10,apps:12,... → 能力字典。"""
+        """FW=0.3.2,n16r8,schema:1,pages:10,widgets:10,apps:12,... → 能力字典。"""
         caps = {"raw": raw[:64]}
         for part in raw.split(","):
             if ":" in part:
@@ -407,12 +430,23 @@ class App:
         """工作台「实拍」按钮：下发 SNAP=1，设备约 10s 内分帧回传。"""
         if not self.link or not self.link.status.startswith("connected:"):
             return False
-        self._snap_buf = None
-        self.snap_at = None
-        self._snap_until = time.monotonic() + 25.0
-        self.link.send("SNAP=1\n")
-        self.health.event("snap_req")
-        return True
+        lock = getattr(self, "_transfer_lock", None)
+        if lock and not lock.acquire(blocking=False):
+            return False
+        try:
+            if getattr(self, "_ota_active", False) or getattr(self, "_img_active", False) or time.monotonic() < getattr(self, "_snap_until", 0):
+                return False
+            self._snap_buf = None
+            self.snap_at = None
+            self._snap_until = time.monotonic() + 25.0
+            if not self.link.send("SNAP=1\n"):
+                self._snap_until = 0.0
+                return False
+            self.health.event("snap_req")
+            return True
+        finally:
+            if lock:
+                lock.release()
 
     def _handle_snap_frame(self, frame: dict):
         if frame["kind"] == "begin":
@@ -423,8 +457,10 @@ class App:
                 self._snap_buf += _b64.b64decode(frame["b64"])
             except Exception:
                 self._snap_buf = None
-        elif frame["kind"] == "end" and self._snap_buf is not None:
-            self._finish_snapshot()
+        elif frame["kind"] == "end":
+            self._snap_until = 0.0
+            if self._snap_buf is not None:
+                self._finish_snapshot()
 
     def _finish_snapshot(self, path: Path | None = None):
         """RGB565 小端 → PNG。像素数不符（丢帧）则整帧丢弃，不保存半图。"""
@@ -489,23 +525,35 @@ class App:
         return result
 
     def _np_loop(self):
-        """正在播放后台刷新：3 秒一轮，遥测与 Web 共用缓存，零阻塞。"""
-        time.sleep(2)
+        """正在播放后台每秒刷新；慢播放器查询不阻塞主采集循环。"""
         while not self._stop:
             try:
                 info = music.now_playing(timeout=0.2)
             except Exception:
                 info = None
             self._np_cache = {"supported": info is not None,
-                              "now": info if isinstance(info, dict) else {}}
-            time.sleep(3)
+                              "now": info if isinstance(info, dict) else {},
+                              "sampled_at": time.monotonic()}
+            self._np_kick.wait(timeout=1.0)
+            self._np_kick.clear()
 
     def _music_status(self) -> dict:
-        """正在播放信息（后台线程已缓存，这里只读）。"""
-        return getattr(self, "_np_cache", {"supported": None, "now": {}})
+        """把后台采样的播放位置推进到本次查询时刻。"""
+        cache = getattr(self, "_np_cache", {"supported": None, "now": {}})
+        info = dict(cache.get("now") or {})
+        sampled_at = cache.get("sampled_at")
+        if info.get("playing") and sampled_at is not None:
+            try:
+                elapsed = min(2.0, max(0.0, time.monotonic() - sampled_at))
+                position = float(info.get("position") or 0) + elapsed
+                duration = float(info.get("duration") or 0)
+                info["position"] = int(min(position, duration) if duration > 0 else position)
+            except (TypeError, ValueError):
+                pass
+        return {"supported": cache.get("supported"), "now": info}
 
     def _handle_key(self, action: str):
-        # ±10：osascript 改音量不触发 macOS 音量 HUD，步长太小用户会以为没反应
+        # ±10：直接改系统音量不触发 macOS 音量 HUD，步长太小用户会以为没反应
         if action == "VOL+":
             self.control.volume_step(+10)
         elif action == "VOL-":
@@ -513,10 +561,10 @@ class App:
         elif action == "MUTE":
             self.control.toggle_mute()
         elif action == "PLAY":
-            # 中间键是「播放/暂停」而不是单向播放。存在系统媒体会话时只切换
-            # 当前播放器；没有会话时才启动用户在 Web 中选定的那一个软件。
-            # 这样既能从冷启动开始听歌，也不会再依次弹出 Music/Spotify。
-            if music.has_running_player(self.cfg):
+            # 进程仍在运行不代表存在可控制的歌曲会话。无会话时应带用户去
+            # 选定播放器选歌，不能向系统发 toggle（会无响应或误启 Music）。
+            session = music.now_playing(timeout=0.2)
+            if session and session.get("title"):
                 self.control.media("toggle")
             else:
                 music.play_default(self.cfg)
@@ -524,6 +572,14 @@ class App:
             self.control.media("next")
         elif action == "PREV":
             self.control.media("prev")
+        if action in ("PLAY", "NEXT", "PREV"):
+            np_kick = getattr(self, "_np_kick", None)
+            if np_kick:
+                np_kick.set()
+        if action in ("VOL+", "VOL-", "MUTE", "PLAY", "NEXT", "PREV"):
+            kick = getattr(self, "_kick", None)
+            if kick:
+                kick.set()
 
     # ---- 需要处理（收件箱）：Web / 设备角标 / 推送共用的服务端事实源 ----
 
@@ -787,31 +843,83 @@ class App:
         return cached
 
     def _break_tick(self, now: float) -> int:
-        """久坐提醒（竞品「偶尔提醒休息」）：键鼠空闲超过 pet.break_min
-        分钟且非凌晨 → pb=1（宠物犯困姿态）+ 一次性推送；用户回来
-        （空闲 <60s）复位，同一轮不重复打扰。"""
+        """连续用电脑后提醒活动；离开电脑一段时间后开始新一轮。"""
+        from .healthcoach import WorkBreakMonitor
+        monitor = getattr(self, "work_break", None)
+        if monitor is None:
+            monitor = self.work_break = WorkBreakMonitor()
         pet = self.profile.get("pet") or {}
         try:
             limit = int(pet.get("break_min", 0) or 0)
         except (TypeError, ValueError):
             limit = 0
+        try:
+            rest = max(1, int(pet.get("rest_min", 5) or 5))
+        except (TypeError, ValueError):
+            rest = 5
         idle = self._input_idle_secs() if limit > 0 else -1.0
-        if 0 <= idle < 60:
-            self._break_notified = False
-        if limit <= 0 or idle < limit * 60:
-            return 0
-        hh = time.localtime(now).tm_hour
-        if 1 <= hh < 6:
-            return 0                        # 凌晨保持安静
-        if not getattr(self, "_break_notified", False):
-            self._break_notified = True
-            mins = max(1, int(idle // 60))
-            if not _in_quiet_hours(str(getattr(self.cfg, "push_quiet", "") or "")):
-                self._push_message("WorkBuddy · 久坐提醒",
-                                   f"已经 {mins} 分钟没有活动了，"
-                                   "起来喝口水、活动一下吧")
-            self.health.event("break_remind", mins=mins)
-        return 1
+        with getattr(self, "_work_break_lock", nullcontext()):
+            previous = (monitor.state, monitor.due)
+            newly_due = monitor.tick(now, idle, limit, rest)
+            self._save_work_break(now, monitor,
+                                  force=(monitor.state, monitor.due) != previous)
+            due = int(monitor.due)
+        if newly_due:
+            hh = time.localtime(now).tm_hour
+            if not 1 <= hh < 6 and not _in_quiet_hours(
+                    str(getattr(self.cfg, "push_quiet", "") or "")):
+                if pet.get("desktop_notify", 1):
+                    self._desktop_break_notice(limit, rest)
+                self._push_message("WorkBuddy · 该活动和休息了",
+                                   f"已连续使用电脑约 {limit} 分钟，"
+                                   f"建议离开屏幕活动，休息至少 {rest} 分钟。")
+            self.health.event("break_remind", mins=limit)
+        return due
+
+    def _save_work_break(self, now: float, monitor, force: bool = False):
+        path = getattr(self, "_work_break_path", None)
+        if path is None or (not force and
+                now - getattr(self, "_work_break_saved_at", 0) < 30):
+            return
+        self._work_break_saved_at = now
+        try:
+            from .healthcoach import save_break_state
+            save_break_state(path, monitor, now)
+        except OSError:
+            self.health.event("break_state_save_fail")
+
+    def _desktop_break_notice(self, work_min: int, rest_min: int):
+        """普通启动模式也能通知；常量 AppleScript 避免配置文本注入。"""
+        title = "WorkBuddy · 该活动了"
+        body = f"已使用电脑 {work_min} 分钟，建议休息 {rest_min} 分钟。"
+        callback = getattr(self, "on_health_notice", None)
+        if callback:
+            try:
+                if callback(title, body):
+                    return
+            except Exception:
+                pass
+        if sys.platform != "darwin":
+            return
+        try:
+            # 内容只含经范围校验的整数；不拼接用户输入。
+            script = (f'display notification "{body}" '
+                      f'with title "{title}"')
+            subprocess.Popen(["osascript", "-e", script],
+                             stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        except OSError:
+            self.health.event("break_desktop_notice_fail")
+
+    def snooze_break(self, minutes: int = 10) -> bool:
+        monitor = getattr(self, "work_break", None)
+        with getattr(self, "_work_break_lock", nullcontext()):
+            now = time.time()
+            if monitor is None or not monitor.snooze(now, minutes):
+                return False
+            self._save_work_break(now, monitor, force=True)
+        self.health.event("break_snooze", minutes=minutes)
+        return True
 
     def _migrate_legacy_city(self):
         """旧档案只有 weather.city 单字段：地理编码补坐标后迁入 cities[]。
@@ -898,6 +1006,8 @@ class App:
         """
         with self.profile_lock:
             last_tick = self._last_tick_at
+            env = getattr(self, "env", {})
+            env_seen = getattr(self, "env_seen", {})
             return {"profile": self.profile, "profile_status": self.profile_status,
                     "profile_error": self.profile_error,
                     "applied_version": self.applied_version,
@@ -923,9 +1033,19 @@ class App:
                     "thermal_hint": getattr(getattr(self, "collector", None),
                                             "thermal_hint", ""),
                     "device": self.link.status if self.link else "串口关闭",
+                    "sensors": {k: env[k] for k in
+                                ("temp", "hum", "pressure", "distance", "env_source", "sensor_bus")
+                                if k in env and (k == "sensor_bus" or
+                                    time.monotonic() - env_seen.get(k, 0) < 6)},
+                    "pet_frame_perf": getattr(self, "pet_frame_perf", None),
                     "tasks": self._tasks_with_trace(), "telemetry": self.last,
                     # Web 设备预览据此读取当前实机角色包的对应状态帧。
                     "petpack": self._pack_state(),
+                    "work_break": getattr(self, "work_break", None).snapshot(
+                        int((self.profile.get("pet") or {}).get("break_min", 0) or 0),
+                        int((self.profile.get("pet") or {}).get("rest_min", 5) or 5))
+                        if getattr(self, "work_break", None) else None,
+                    "pack_progress": dict(getattr(self, "pack_progress", {})),
                     "telemetry_age": (round(time.time() - last_tick, 1)
                                       if last_tick else None),
                     "telemetry_at": last_tick,
@@ -1002,23 +1122,60 @@ class App:
             return False
         if not self.link or not self.link.status.startswith("connected:"):
             return False
+        lock = getattr(self, "_transfer_lock", None)
+        if lock and not lock.acquire(blocking=False):
+            self._last_bg_result = {"ok": False, "reason": "设备正忙于其他传输"}
+            return False
+        try:
+            if getattr(self, "_ota_active", False) or time.monotonic() < getattr(self, "_snap_until", 0):
+                self._last_bg_result = {"ok": False, "reason": "设备正在升级或实拍"}
+                return False
+            with self._img_lock:
+                self._img_active = True
+                try:
+                    self.link.clear_pending()
+                    return self._send_bg_image_exclusive(data, name)
+                finally:
+                    self._img_active = False
+        finally:
+            if lock:
+                lock.release()
+
+    def _send_bg_image_exclusive(self, data: bytes, name: str) -> bool:
         crc = _zlib.crc32(data) & 0xFFFFFFFF
-        self.link.send(f"IMG=BEGIN,{len(data)},{crc:08X}\n".encode())
+        self._img_reply = None
+        if not self.link.send(f"IMG=BEGIN,{len(data)},{crc:08X}\n".encode(), block=True):
+            self._last_bg_result = {"ok": False, "reason": "串口队列不可用"}
+            return False
         for seq, start in enumerate(range(0, len(data), 90)):
             chunk = _b64.b64encode(data[start:start + 90]).decode("ascii")
-            self.link.send(f"IMG=DATA,{seq},{chunk}\n".encode())
-            time.sleep(0.012)
-        self._img_reply = None   # 先清确认标志（防快速 ACK 被清掉的竞态）
-        self.link.send(f"IMG=END,{name}\n".encode())
+            if not self.link.send(f"IMG=DATA,{seq},{chunk}\n".encode(), block=True):
+                self._last_bg_result = {"ok": False, "reason": "串口队列中断"}
+                return False
+            # 真机 12ms 间隔偶发 CRC 失败；20ms 可稳定写入 LittleFS。
+            time.sleep(0.020)
+        if not self.link.send(f"IMG=END,{name}\n".encode(), block=True):
+            self._last_bg_result = {"ok": False, "reason": "串口队列中断"}
+            return False
         self.health.event("bgimg_sent", size=len(data))
-        # 等设备解码确认（ACK=IMG,APPLIED / NAK=IMG,原因）；超时如实上报
+        # 只接受本次文件的确认，旧事务的 ACK 不能让下一帧误报成功。
+        expected = "APPLIED" if name == "bg.jpg" else f"/{name},{len(data)}"
         waited = 0.0
-        while waited < 5.0 and self._img_reply is None and not self._stop:
+        unexpected = ""
+        reply = None
+        while waited < 8.0 and not self._stop:
+            current = self._img_reply
+            if current is not None:
+                self._img_reply = None
+                if not current.get("ok") or current.get("reason") == expected:
+                    reply = current
+                    break
+                unexpected = str(current.get("reason", ""))
             time.sleep(0.1); waited += 0.1
-        reply = self._img_reply
         if reply is None:
             self._last_bg_result = {"ok": False,
-                                    "reason": "设备未确认（传输或解码超时）"}
+                                    "reason": (f"确认不匹配：{unexpected}" if unexpected
+                                               else "设备未确认（传输或解码超时）")}
         elif reply.get("ok"):
             self._last_bg_result = {"ok": True, "reason": "APPLIED"}
         else:
@@ -1028,14 +1185,28 @@ class App:
     def clear_bg_image(self) -> bool:
         if not self.link or not self.link.status.startswith("connected:"):
             return False
-        self.link.send("IMG=DELETE\n".encode())
-        self.health.event("bgimg_cleared")
-        return True
+        lock = getattr(self, "_transfer_lock", None)
+        if lock and not lock.acquire(blocking=False):
+            return False
+        try:
+            if getattr(self, "_ota_active", False) or time.monotonic() < getattr(self, "_snap_until", 0):
+                return False
+            with self._img_lock:
+                sent = self.link.send("IMG=DELETE\n".encode(), block=True)
+            if sent:
+                self.health.event("bgimg_cleared")
+            return sent
+        finally:
+            if lock:
+                lock.release()
 
     # ---- 场景包（outputs/petpack_<名>/）：整套应用 + 昼夜自动切换 ----
 
     PACK_STATES = ("working", "thinking", "sleeping", "greeting",
                    "happy", "error", "idle", "sleepy")
+    PACK_INTERACTIONS = ("feeding", "drinking", "playing")
+    PACK_MOTION = ("idle_b", "thinking_b", "sleeping_b", "greeting_b",
+                   "happy_b", "feeding_b", "drinking_b", "playing_b")
 
     def petpack_base(self) -> Path:
         return Path(__file__).resolve().parents[2] / "outputs"
@@ -1046,6 +1217,42 @@ class App:
         return "night" if (t.tm_hour >= 22 or t.tm_hour < 6) else "day"
 
     def apply_petpack(self, name: str) -> dict:
+        with self._pack_lock:
+            return self._apply_petpack_locked(name)
+
+    def apply_petpack_manual(self, name: str) -> dict:
+        """手动选择与整包上传原子化，避免自动切包在最后一帧后覆盖它。"""
+        with self._pack_lock:
+            result = self._apply_petpack_locked(name)
+            period = self.pack_period()
+            if result.get("ok"):
+                self.mark_pack_applied(name, period, ok=True)
+            pet = dict(self.profile.get("pet") or {})
+            if result.get("ok") and pet.get("autopack"):
+                candidate = dict(self.profile)
+                candidate["pet"] = {**pet,
+                                    "night_pack" if period == "night"
+                                    else "day_pack": name}
+                self.save_profile(candidate)
+            return result
+
+    def _apply_petpack_locked(self, name: str) -> dict:
+        lock = getattr(self, "_transfer_lock", None)
+        if lock and not lock.acquire(blocking=False):
+            return {"sent": 0, "failed": ["busy"],
+                    "reasons": {"busy": "设备正忙于其他传输"}, "ok": False,
+                    "busy": True}
+        try:
+            if getattr(self, "_ota_active", False) or time.monotonic() < getattr(self, "_snap_until", 0):
+                return {"sent": 0, "failed": ["busy"],
+                        "reasons": {"busy": "设备正在升级或实拍"}, "ok": False,
+                        "busy": True}
+            return self._apply_petpack_transaction(name)
+        finally:
+            if lock:
+                lock.release()
+
+    def _apply_petpack_transaction(self, name: str) -> dict:
         """整套下发 pet_<状态>.jpg。单帧 ACK 偶发超时（设备端 workanim
         解码与串口竞争），每帧最多重试 3 次并回报原因。不写状态文件——
         由调用方（手动路由/自动切换）决定语义。"""
@@ -1055,14 +1262,27 @@ class App:
             return {"sent": 0,
                     "failed": list(self.PACK_STATES),
                     "reasons": {"pack": "包不存在"}}
+        optional = ("working_b",) + self.PACK_INTERACTIONS + self.PACK_MOTION
+        total = sum((d / f"pet_{st}.jpg").is_file()
+                    for st in self.PACK_STATES + optional)
+        self.pack_progress = {"active": True, "name": name,
+                              "sent": 0, "total": total, "current": "准备中"}
+        def progress(st: str) -> None:
+            self.pack_progress = {"active": True, "name": name,
+                                  "sent": sent, "total": total, "current": st}
         # 应用包 = 切换当前形象：清自定义形象（pet_custom 优先级恒高于状态帧）
-        self.delete_album_image("pet_custom.jpg")
+        if not self.delete_album_image("pet_custom.jpg"):
+            self.pack_progress = {"active": False, "name": name, "sent": 0,
+                                  "total": total, "current": "清理旧形象失败", "ok": False}
+            return {"sent": 0, "failed": ["pet_custom"],
+                    "reasons": {"pet_custom": "设备未确认删除"}, "ok": False}
         for st in self.PACK_STATES:
             f = d / f"pet_{st}.jpg"
             if not f.is_file():
                 failed.append(st)
                 reasons[st] = "包内缺帧"
                 continue
+            progress(st)
             ok = False
             for _ in range(3):
                 if self.send_bg_image(f.read_bytes(), f"pet_{st}.jpg"):
@@ -1075,23 +1295,48 @@ class App:
                 sent += 1
             else:
                 failed.append(st)
-        # 动画 B 帧：包里有就一并下发——workanim 每 900ms 交替 working/
-        # working_b，只更新 A 帧会让 B 帧残留旧画风（白天包配夜空 B 帧 =
-        # 用户看到的「白天夜晚不断闪烁」）
-        b = d / "pet_working_b.jpg"
-        if b.is_file():
-            okb = False
+            progress(st)
+        missing_images = []
+        # 可选互动帧与动作 B 帧统一上传；缺失者清除设备旧包遗留图，避免
+        # 新旧画风混合。B 帧失败必须计入 failed，否则不会自动重试整包。
+        for st in optional:
+            f = d / f"pet_{st}.jpg"
+            if not f.is_file():
+                missing_images.append(f"pet_{st}.jpg")
+                continue
+            progress(st)
+            ok = False
             for _ in range(3):
-                if self.send_bg_image(b.read_bytes(), "pet_working_b.jpg"):
-                    okb = True
+                if self.send_bg_image(f.read_bytes(), f"pet_{st}.jpg"):
+                    ok = True
                     break
-                reasons["working_b"] = str(getattr(self, "_last_bg_result", {})
-                                           .get("reason", "未知"))
+                reasons[st] = str(getattr(self, "_last_bg_result", {})
+                                  .get("reason", "未知"))
                 time.sleep(0.4)
-            if okb:
+            if ok:
                 sent += 1
             else:
-                failed.append("working_b")   # B 帧失败必须计入，否则 ok=true 永不重发
+                failed.append(st)
+            progress(st)
+        # 最后一张图 ACK 后再删旧包遗留帧，避免下一张图开始时清队列把
+        # DELETE 一并丢掉。缺 B 帧也要清掉，否则工作动画会新旧画风交替。
+        for image_name in missing_images:
+            if not self.delete_album_image(image_name):
+                state = image_name[4:-4]
+                failed.append(state)
+                reasons[state] = "设备未确认删除旧帧"
+        # 必选帧缺失或任意上传帧失败时，也清掉设备中同名的上一个角色帧。
+        # 宁可该状态回退像素宠物，也不能让两套角色在状态切换时交替出现。
+        for state in tuple(failed):
+            image_name = f"pet_{state}.jpg"
+            if image_name in missing_images:
+                continue
+            if not self.delete_album_image(image_name):
+                reasons[state] = f"{reasons.get(state, '上传失败')}；旧帧清理失败"
+        self.pack_progress = {"active": False, "name": name,
+                              "sent": sent, "total": total,
+                              "current": "完成" if not failed else "部分失败",
+                              "ok": not failed}
         return {"sent": sent, "failed": failed, "reasons": reasons,
                 "ok": not failed}
 
@@ -1114,14 +1359,39 @@ class App:
 
     def _pack_tick(self, now: float) -> None:
         """昼夜自动切包：每 60s 检查一次；同包 10 分钟内不重发（部分帧
-        失败时靠这个退避自动补齐，不会每分钟轰一遍串口）。"""
-        # 未开启即返回；getattr 兜底测试用 __new__ 构造的轻量实例
+        失败时靠这个退避自动补齐，不会每分钟轰一遍串口）。整包发送在后台
+        执行，不能让主采集循环停摆几分钟。"""
         pet = (getattr(self, "profile", None) or {}).get("pet") or {}
         if not pet.get("autopack"):
             return
+        link = getattr(self, "link", None)
+        if not (link and link.status.startswith("connected:")):
+            return
+        # 新连接先完成能力握手和 CFG。图片包是长事务，抢在配置前上传会让
+        # Web 持续显示「待同步」数分钟，用户甚至看不到新加的天气页面。
+        if (self.fw_caps is None or self.sync_requested
+                or self.profile_status in ("待同步", "等待设备握手", "传输中")):
+            return
         if now < getattr(self, "_pack_next", 0.0):
             return
+        worker = getattr(self, "_pack_worker", None)
+        if worker and worker.is_alive():
+            return
         self._pack_next = now + 60
+        self._pack_worker = threading.Thread(
+            target=self._auto_pack_worker, args=(now,), daemon=True,
+            name="petpack-auto")
+        self._pack_worker.start()
+
+    def _auto_pack_worker(self, now: float) -> None:
+        # 锁内重新选包：手动上传等待或已修改了 profile 时，不能沿用旧目标。
+        with self._pack_lock:
+            self._auto_pack_locked(now)
+
+    def _auto_pack_locked(self, now: float) -> None:
+        pet = (getattr(self, "profile", None) or {}).get("pet") or {}
+        if not pet.get("autopack"):
+            return
         period = self.pack_period(now)
         desired = str(pet.get("night_pack" if period == "night"
                               else "day_pack") or "")
@@ -1140,22 +1410,58 @@ class App:
         if not (self.link and self.link.status.startswith("connected:")):
             print(f"[PACK] skip: link not connected", flush=True)
             return
+        if (self.fw_caps is None or self.sync_requested
+                or self.profile_status in ("待同步", "等待设备握手", "传输中")):
+            return
         print(f"[PACK] apply {desired} (st={st.get('pack')})", flush=True)
-        result = self.apply_petpack(desired)
+        result = self._apply_petpack_locked(desired)
+        if result.get("busy"):
+            return
         self.health.event("petpack_auto", pack=desired, sent=result["sent"])
         # 失败也记 ok=False：at 提供 10 分钟重试退避，成功后永不再发
         self.mark_pack_applied(desired, period, ok=result.get("ok", False))
 
     def delete_album_image(self, name: str) -> bool:
-        """删除相册/角色图（name = sv1..sv8.jpg 或 pet_<状态>.jpg，白名单同上传）。"""
+        """等待设备确认删除，防止旧动作帧混进新角色包。"""
         import re as _re
         if not _re.fullmatch(r"(sv[1-8]|pet_[a-z0-9_]{2,14})\.jpg", name):
             return False
         if not self.link or not self.link.status.startswith("connected:"):
             return False
-        self.link.send(f"IMG=DELETE,{name}\n".encode())
-        self.health.event("album_deleted", name=name[:8])
-        return True
+        lock = getattr(self, "_transfer_lock", None)
+        if lock and not lock.acquire(blocking=False):
+            return False
+        try:
+            if getattr(self, "_ota_active", False) or time.monotonic() < getattr(self, "_snap_until", 0):
+                return False
+            return self._delete_album_image_transaction(name)
+        finally:
+            if lock:
+                lock.release()
+
+    def _delete_album_image_transaction(self, name: str) -> bool:
+        with self._img_lock:
+            self._img_active = True
+            try:
+                self.link.clear_pending()
+                self._img_reply = None
+                if not self.link.send(f"IMG=DELETE,{name}\n".encode(), block=True):
+                    return False
+                waited = 0.0
+                expected = f"DELETED,{name}"
+                while waited < 5.0 and not self._stop:
+                    reply = self._img_reply
+                    if reply is not None:
+                        self._img_reply = None
+                        if reply.get("reason") == expected and reply.get("ok"):
+                            self.health.event("album_deleted", name=name[:8])
+                            return True
+                        if not reply.get("ok"):
+                            return False
+                    time.sleep(0.1); waited += 0.1
+                return False
+            finally:
+                self._img_active = False
 
     def send_ota(self, data: bytes) -> bool:
         """OTA 固件分帧下发（OTA=BEGIN/DATA/END）。成功后设备自动重启。
@@ -1166,11 +1472,20 @@ class App:
         """
         if not self.link or not self.link.status.startswith("connected:"):
             return False
-        self._ota_active = True
+        lock = getattr(self, "_transfer_lock", None)
+        if lock and not lock.acquire(blocking=False):
+            self.ota_result = {"ok": False, "reason": "设备正忙于其他传输"}
+            return False
         try:
+            if getattr(self, "_ota_active", False) or time.monotonic() < getattr(self, "_snap_until", 0):
+                self.ota_result = {"ok": False, "reason": "设备正在升级或实拍"}
+                return False
+            self._ota_active = True
             return self._send_ota_transaction(data)
         finally:
             self._ota_active = False
+            if lock:
+                lock.release()
 
     def _send_ota_transaction(self, data: bytes) -> bool:
         import base64 as _b64
@@ -1294,11 +1609,14 @@ class App:
                     pass
                 # 屏幕只在桌前有用；人走开了，「等你/出错」必须能追到手机
                 self._push_notify(name, state)
+        # 焦点会话结束或用量源暂不可用时显式清空，避免小屏沿用上一轮模型/Token。
+        t.update({"aiu": "", "afm": "", "aiout": "", "aitotal": "",
+                  "aititle": "", "ait": "0", "aitok": "0"})
         if self.usage_scanner:
             snap = self.usage_scanner.snapshot()
             day = snap["today"]
-            if day.get("total"):
-                t["ait"] = str(day["total"] // 1000)   # 今日总 token（K）
+            t["ait"] = str(day.get("total", 0) // 1000)  # 兼容旧固件的千 token
+            t["aitok"] = str(day.get("total", 0))        # 精确今日 token
             # 分模型今日消耗（AIB0..2 = 模型名,token；竞品「多智能体分组指标」
             # 的本地口径——软件本身用几个模型就显示几个，按消耗降序最多 3）
             for i, (model, tok) in enumerate(
@@ -1308,23 +1626,24 @@ class App:
             sby = snap.get("sessions_by_tool") or {}
             if sby:
                 t["ast"] = " · ".join(f"{tool}:{n}" for tool, n in sby.items())
-            # 焦点会话最近消息（AFM 线，竞品「任务补充·最近消息」）：
-            # 按焦点工具取该工具的最新消息（会话 id 两源格式不同，工具级匹配
-            # 语义也更对——「这个智能体最近在说什么」）
-            focus_tool = (self.tasks[0] or {}).get("tool") if self.tasks else ""
-            fm = (snap.get("last_msg_by_tool") or {}).get(focus_tool or "")
-            if fm:
-                t["afm"] = fm
+            # 焦点消息与模型均按 sid 绑定；同软件多会话时工具级最近值会串屏。
             focus = self.tasks[0] if self.tasks else None
+            focus_sid = (focus or {}).get("sid") or ""
+            fm = (snap.get("last_msg_by_sid") or {}).get(focus_sid, "")
+            if fm:
+                t["afm"] = _focus_wire_text(fm)
             if focus:
-                model = (snap["models"].get(focus["tool"]) or "")[:15]
+                title = focus.get("title") or fm or focus.get("project") or ""
+                t["aititle"] = _focus_wire_text(title)
+                model = ((snap.get("model_by_sid") or {}).get(focus_sid) or "")[:15]
                 if model:
                     t["aiu"] = f"{focus['tool']},{model},{focus['elapsed']}"
                 # 焦点会话本轮 token（ai_cost 卡「本轮 X.Xk」，AIOUT= 下行）：
                 # usage 按会话文件累计，sid 与 aiwatch 会话 id 同源
                 acc = (snap.get("by_sid") or {}).get(focus.get("sid") or "")
-                if acc and acc.get("out"):
-                    t["aiout"] = str(acc["out"])
+                if acc:
+                    t["aiout"] = str(acc.get("out", 0))
+                    t["aitotal"] = str(acc.get("total", 0))
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
         # 农历+节气倒计时（屏保日期行；计算失败不打扰主循环）
@@ -1333,7 +1652,7 @@ class App:
             t["lunar"] = today_line(now)
         except Exception:
             pass
-        # 久坐提醒：输入空闲超阈值 → pb=1（宠物犯困）+ 一次性推送
+        # 连续使用电脑达到阈值 → pb=1（宠物提示休息）+ 一次性推送
         try:
             t["pb"] = self._break_tick(now)
         except Exception:
@@ -1350,11 +1669,12 @@ class App:
         except Exception:
             t["inbox"] = 0
         t.update(self.control.snapshot())  # VOL/MUT（不可用平台自动省略）
+        t["np"] = now_playing_wire(self._music_status().get("now"))
         with self.weather._lock:
             w = dict(self.weather.data)
         if w.get("temp") is not None:
             t["wx"] = f"{w['temp']},{w['code']},{w['hi']},{w['lo']}"
-        for k in ("temp", "hum"):
+        for k in ("temp", "hum", "pressure", "distance", "env_source"):
             if (self.env.get(k) is not None
                     and time.monotonic() - self.env_seen.get(k, 0) < 6.0
                     and self.link and self.link.status.startswith("connected:")):
@@ -1443,29 +1763,35 @@ class App:
                         self._was_online = online
                         self._online_since = now if online else 0.0
                     ota_active = getattr(self, "_ota_active", False)
-                    # OTA 与实拍都是独占串口事务。传输期间插入遥测、HB 或
-                    # 配置帧会让设备的 DATA 序号错位，必须保持下行静默。
-                    if not ota_active:
-                        if self.link.consume_connected():
-                            with self.profile_lock:
-                                self.fw_caps = None
-                                self.sync_requested = True
-                                self.profile_status = "等待设备握手"
-                                self.applied_version = None
-                            self.link.send(encode_caps(self.collector.caps))
-                            self._caps_sent_at = time.monotonic()
-                        elif self.fw_caps is None and online:
-                            if time.monotonic() - self._caps_sent_at >= 3:
+                    image_active = getattr(self, "_img_active", False)
+                    # OTA、图片与实拍都是独占串口事务。传输期间插入遥测、
+                    # HB 或配置帧会让设备的 DATA 序号错位。
+                    image_slot = self._img_lock.acquire(blocking=False)
+                    try:
+                        if image_slot and not ota_active and not image_active:
+                            if self.link.consume_connected():
+                                with self.profile_lock:
+                                    self.fw_caps = None
+                                    self.sync_requested = True
+                                    self.profile_status = "等待设备握手"
+                                    self.applied_version = None
                                 self.link.send(encode_caps(self.collector.caps))
                                 self._caps_sent_at = time.monotonic()
-                        elif self.sync_requested and not snapping:
-                            self.push_profile()
-                    # 实拍静默窗：设备正阻塞在回传帧上，任何下行都会打断传输
-                    if not snapping and not ota_active:
-                        self.link.send(text)
-                        if now - hb_last >= 5.0:
-                            self.link.send(encode_hb())
-                            hb_last = now
+                            elif self.fw_caps is None and online:
+                                if time.monotonic() - self._caps_sent_at >= 3:
+                                    self.link.send(encode_caps(self.collector.caps))
+                                    self._caps_sent_at = time.monotonic()
+                            elif self.sync_requested and not snapping:
+                                self.push_profile()
+                        # 实拍静默窗：设备正阻塞在回传帧上。
+                        if image_slot and not snapping and not ota_active and not image_active:
+                            self.link.send(text)
+                            if now - hb_last >= 5.0:
+                                self.link.send(encode_hb())
+                                hb_last = now
+                    finally:
+                        if image_slot:
+                            self._img_lock.release()
                 if self.on_tick:
                     try:
                         self.on_tick(t)

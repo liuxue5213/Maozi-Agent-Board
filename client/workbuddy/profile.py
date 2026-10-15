@@ -14,7 +14,7 @@ PROFILE_PATH = Path.home() / ".workbuddy" / "profile.json"
 WIDGET_UNITS = {
     "ai_list": 4, "hw_cards": 4, "clock": 1, "environment": 1,
     "reminder_list": 2, "today_calendar": 2, "alarm": 1,
-    "weather": 1, "countdown": 1, "ai_cost": 1, "pet": 4,
+    "weather": 1, "countdown": 1, "ai_cost": 1, "pet": 4, "control": 4,
 }
 DEFAULT_PROFILE = {
     "schema": 1, "version": 1,
@@ -24,6 +24,7 @@ DEFAULT_PROFILE = {
         {"id": "computer", "title": "电脑", "layout": "grid_2x2", "widgets": ["hw_cards"]},
         {"id": "environment", "title": "环境", "layout": "grid_2x2",
          "widgets": ["environment", "clock"]},
+        {"id": "control", "title": "控制", "layout": "list", "widgets": ["control"]},
     ],
     "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
     "weather": {"city": ""},
@@ -99,14 +100,14 @@ def validate_profile(raw):
     if not isinstance(raw, dict):
         raise ValueError("配置必须是对象")
     pages = raw.get("pages")
-    if not isinstance(pages, list) or not 1 <= len(pages) <= 6:
-        raise ValueError("页面数量需为 1–6")
+    if not isinstance(pages, list) or not 1 <= len(pages) <= 10:
+        raise ValueError("页面数量需为 1–10")
     pet = raw.get("pet", {})
     if not isinstance(pet, dict):
         raise ValueError("宠物配置格式无效")
     ptype = str(pet.get("type", "robot"))
-    if ptype not in ("robot", "cat", "chick"):
-        raise ValueError("宠物类型只支持 robot / cat / chick")
+    if ptype not in ("robot", "cat", "chick", "dog"):
+        raise ValueError("宠物类型只支持 robot / cat / chick / dog")
     def _pet_flag(key, default):
         try:
             return 1 if int(pet.get(key, default)) else 0
@@ -137,11 +138,19 @@ def validate_profile(raw):
     else:
         pet_fields = ["today"] if pet_overlay == 1 else (["tool", "state"] if pet_overlay == 2 else [])
     # 昼夜自动切包：包名只作 outputs/petpack_<名>/ 目录引用，白名单字符集
-    # 久坐提醒阈值（分钟，0=关）：键鼠空闲超限 → 宠物犯困 + 一次性推送
+    # 连续使用电脑的活动提醒（分钟，0=关）；键鼠活动只能估算电脑使用，不能计步。
     try:
         pet_break = max(0, min(240, int(pet.get("break_min", 0) or 0)))
     except (TypeError, ValueError):
         pet_break = 0
+    try:
+        pet_rest = max(1, min(60, int(pet.get("rest_min", 5) or 5)))
+    except (TypeError, ValueError):
+        pet_rest = 5
+    try:
+        pet_desktop_notify = 1 if int(pet.get("desktop_notify", 1)) else 0
+    except (TypeError, ValueError):
+        pet_desktop_notify = 1
     pet_day = str(pet.get("day_pack", "") or "")
     pet_night = str(pet.get("night_pack", "") or "")
     pet_weather = str(pet.get("weather_pack", "") or "")
@@ -172,6 +181,8 @@ def validate_profile(raw):
             "density": pet_density,
             "fields": pet_fields,
             "break_min": pet_break,
+            "rest_min": pet_rest,
+            "desktop_notify": pet_desktop_notify,
             "day_pack": pet_day, "night_pack": pet_night,
             "weather_pack": pet_weather}}
     # 自动分页：开启时由客户端按活跃工具重排 AI 页（全部 + 每工具一页）。
@@ -326,7 +337,7 @@ def validate_profile(raw):
         if len(widgets) != len(set(widgets)):
             raise ValueError("同一页面不能重复放置同一组件")
         if any(WIDGET_UNITS[w] == 4 for w in widgets) and len(widgets) != 1:
-            raise ValueError("AI 列表和硬件四卡片需独占页面")
+            raise ValueError("全屏组件需独占页面")
         if sum(WIDGET_UNITS[w] for w in widgets) > 4:
             raise ValueError("组件超过页面四个插槽")
         if layout == "grid_2x2":
@@ -479,7 +490,7 @@ def validate_profile(raw):
         "task_value": _tv_int("task_value", 0, 0, 1),
         "tl_mode": _tv_int("tl_mode", 0, 0, 1),
         "tl_time": _tv_int("tl_time", 0, 0, 2),
-        "idle_page": _tv_int("idle_page", 0, 0, 6),
+        "idle_page": _tv_int("idle_page", 0, 0, 10),
         "name_mode": _tv_int("name_mode", 0, 0, 1),   # 0=页面标题 1=自动智能体名
         "tl_range": _tv_int("tl_range", 0, 0, 1),     # 0=含近期完成 1=仅进行中
         "task_detail": _tv_int("task_detail", 0, 0, 2),  # 0=运行信息 1=最近消息 2=不显示

@@ -193,6 +193,7 @@ class UsageScanner:
         self._session_ids: dict[str, set[str]] = {
             "zcode": set(), "claude": set(), "codex": set()}
         self.last_msg_by_sid: dict[str, str] = {}   # 会话最近消息（≤80 字符）
+        self.model_by_sid: dict[str, str] = {}      # 与焦点任务同一 sid 的模型
         self.last_msg_by_tool: dict[str, str] = {}  # 工具级最近消息（焦点显示用）
         self.steps_by_tool: dict[str, int] = {}     # 今日工具调用步数
         self.last_step_by_tool: dict[str, str] = {}  # 最近工具输出片段
@@ -226,6 +227,7 @@ class UsageScanner:
                     "last_step_by_tool": dict(self.last_step_by_tool),
                     "last_msg_by_tool": dict(self.last_msg_by_tool),
                     "last_msg_by_sid": dict(self.last_msg_by_sid),
+                    "model_by_sid": dict(self.model_by_sid),
                     "by_sid": {k: dict(v) for k, v in self.by_sid.items()},
                     # P1-2：趋势 / 排行 / 来源与更新时间
                     "trend_hourly": dict(sorted(self.hourly.items())[-24:]),
@@ -299,6 +301,7 @@ class UsageScanner:
                 self.steps_by_tool = {}
                 self.last_step_by_tool = {}
                 self.last_msg_by_sid = {}
+                self.model_by_sid = {}
                 self.last_msg_by_tool = {}
                 self.by_sid = {}
             totals = dict(self.today)
@@ -311,6 +314,7 @@ class UsageScanner:
             last_step_by_tool: dict[str, str] = dict(self.last_step_by_tool)
             session_ids = {tool: set(ids) for tool, ids in self._session_ids.items()}
             last_msg_by_sid = dict(self.last_msg_by_sid)
+            model_by_sid = dict(self.model_by_sid)
             last_msg_by_tool = dict(self.last_msg_by_tool)
             by_sid = {sid: dict(values) for sid, values in self.by_sid.items()}
 
@@ -345,6 +349,8 @@ class UsageScanner:
                             by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem.replace("model-io-", "")
                         session_ids["zcode"].add(sid)
+                        if model:
+                            model_by_sid[sid] = model
                         if r_total:   # 该行有用量 = 模型真实跑过一轮
                             txt = _zcode_last_text(d)
                             if txt:
@@ -391,6 +397,8 @@ class UsageScanner:
                             by_model[model] = by_model.get(model, 0) + r_total
                         sid = f.stem
                         session_ids["claude"].add(sid)
+                        if model:
+                            model_by_sid[sid] = model
                         txt = _claude_last_text(d)
                         if txt:
                             last_msg_by_sid[sid] = txt
@@ -442,6 +450,7 @@ class UsageScanner:
                         if rec_model:
                             by_model[rec_model] = by_model.get(rec_model, 0) + r_total
                             models["codex"] = rec_model
+                            model_by_sid[sid] = rec_model
                         session_ids["codex"].add(sid)
                         acc = by_sid.setdefault(
                             sid, {"total": 0, "out": 0, "input": 0,
@@ -465,6 +474,7 @@ class UsageScanner:
             self.steps_by_tool = dict(steps_by_tool)
             self.last_step_by_tool = dict(last_step_by_tool)
             self.last_msg_by_sid = last_msg_by_sid
+            self.model_by_sid = model_by_sid
             self.last_msg_by_tool = last_msg_by_tool
             self.by_sid = by_sid
             self.models.update(models)

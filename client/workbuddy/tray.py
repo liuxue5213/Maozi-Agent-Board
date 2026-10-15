@@ -479,6 +479,7 @@ def run_with_tray(app, cfg, use_window: bool = True):
                     "WAIT_INPUT": "等你回复", "ASK": "等你确认"}
     app.on_ai_notice = lambda name, state: ctrl.notify(
         name, _NOTICE_TEXT.get(state, state))
+    app.on_health_notice = lambda title, body: ctrl.notify(title, body)
 
     # 采集循环先跑起来，窗口与托盘随后就位
     worker = threading.Thread(target=app.run, kwargs={"duration": 0.0},
