@@ -2,6 +2,57 @@
 import math
 import time
 
+# --- 协议版本协商（P1-1：握手版本校验） ---
+# 客户端与固件通过握手交换协议版本，旧固件不推送 v0.3.2 新增字段。
+PROTOCOL_VERSION = (0, 3, 2)       # 本客户端遵循的线协议版本（与 FW 握手串一致）
+PROTOCOL_VERSION_STR = "0.3.2"
+
+# v0.3.2 才引入的下行字段（旧固件解析不了/无对应渲染）。握手版本 < (3,2) 时压掉。
+# AI0~AI3 为基线保留；NP/用量/焦点/久坐统计/分模型消耗均为 v0.3.2 新增。
+PROTO_V032_DOWNLINK_ONLY = frozenset({
+    "ai4", "ai5", "ai6", "ai7",      # AI 槽 4→7（0-3 为基线）
+    "np",                             # 正在播放
+    "aiu", "aitok", "aiout", "aitotal", "aititle", "afm",  # 用量 / 焦点会话
+    "pb", "ast",                      # 久坐阈值 / 会话统计
+    "aib0", "aib1", "aib2",           # 分模型消耗
+})
+
+
+def _split_version(token: str):
+    """'0.3.2' / '3.2' → (3, 2) / (0, 3, 2)；非法返回 None。"""
+    parts = token.split(".")
+    if not 2 <= len(parts) <= 3:
+        return None
+    try:
+        return tuple(int(p) for p in parts)
+    except ValueError:
+        return None
+
+
+def parse_protocol_version(raw: str):
+    """从 FW 握手串提取固件协议版本。优先 `proto:X.Y`，否则取首个版本形态 token。"""
+    if not raw:
+        return None
+    for part in raw.split(","):           # 1) 显式 proto: 字段（新固件）
+        if part.startswith("proto:"):
+            v = _split_version(part[len("proto:"):].strip())
+            if v:
+                return v
+    head = raw.split(",")[0].strip()      # 2) 兼容旧固件 `FW=0.2,n16r8,...`
+    if "." in head:
+        v = _split_version(head)
+        if v:
+            return v
+    return None
+
+
+def negotiated_supports_v032(fw_proto) -> bool:
+    """固件是否支持 v0.3.2 全部新字段。fw_proto=None（未知）按支持处理，避免误伤。"""
+    if fw_proto is None:
+        return True
+    return fw_proto >= PROTOCOL_VERSION
+
+
 # 下行遥测字段输出顺序（无值自动省略）
 _ORDER = [
     "time",
@@ -75,10 +126,17 @@ def now_playing_wire(info: dict | None) -> str:
                      "1" if info.get("playing") else "0"))
 
 
-def encode_telemetry(t: dict) -> str:
-    """把采集/检测合并后的遥测字典编码为多行 KV 文本。"""
+def encode_telemetry(t: dict, fw_proto=None) -> str:
+    """把采集/检测合并后的遥测字典编码为多行 KV 文本。
+    fw_proto 为固件握手版本；若 < (3,2) 则压掉 v0.3.2 才引入的下行字段（旧固件兼容）。
+    fw_proto=None（未知）按全量发送，保持历史行为。"""
+    skip = (PROTO_V032_DOWNLINK_ONLY
+            if fw_proto is not None and not negotiated_supports_v032(fw_proto)
+            else frozenset())
     lines = []
     for key in _ORDER:
+        if key in skip:
+            continue
         v = t.get(key)
         if v is None or (v == "" and key not in _SLOT_KEYS):
             continue
@@ -86,9 +144,9 @@ def encode_telemetry(t: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def encode_caps(caps: dict) -> str:
+def encode_caps(caps: dict, proto: str = PROTOCOL_VERSION_STR) -> str:
     kv = ",".join(f"{k}:{1 if v else 0}" for k, v in caps.items())
-    return f"CAPS={kv}\n"
+    return f"CAPS={kv},proto:{proto}\n"
 
 
 def encode_hb() -> str:
