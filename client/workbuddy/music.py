@@ -8,8 +8,8 @@
 
 macOS 的控制走 **MediaRemote**（系统的「正在播放」中枢）：任何向
 MPNowPlayingInfoCenter 注册过的播放器都能接收统一命令，与具体软件无关。
-同步发送接口通过 ctypes 调用；异步曲目信息接口不在 Python 中手工桥接（now_playing
-恒 None，稳定性优先）。
+同步发送接口通过 ctypes 调用。异步曲目信息由独立的小进程读取，避免系统
+回调越过 Python 对象生命周期时把常驻上位机带崩。
 
 Windows 走 **SMTC**（GlobalSystemMediaTransportControlsSessionManager，winsdk 包）：
 与 MediaRemote 同级的中枢，读写当前媒体会话。曲目信息用常驻事件循环线程承接
@@ -21,6 +21,9 @@ Linux 沿用 playerctl，本模块不参与（control.py 直接调命令行）�
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import json
+import os
 import re
 import subprocess
 import sys
@@ -57,6 +60,9 @@ MUSIC_COMMAND = "@music"
 
 _lock = threading.Lock()
 _lib = None            # CDLL 或 False（不可用）
+_reader_lock = threading.Lock()
+_reader_failed = False
+_reader_path = None
 
 
 def _load():
@@ -94,6 +100,11 @@ def send(action: str) -> bool:
     code = _COMMANDS.get(action)
     if not lib or code is None:
         return False
+    # 没有活动曲目时，macOS 会把 PLAY/TOGGLE 路由给 Music.app 并启动它。
+    # 必须先确认系统存在真实的当前媒体会话。
+    session = now_playing()
+    if not session or not session.get("title"):
+        return False
     try:
         return bool(lib.MRMediaRemoteSendCommand(code, None))
     except Exception:
@@ -105,14 +116,64 @@ def now_playing(timeout: float = 1.0):
 
     Windows：SMTC 读取（歌名/歌手/播放状态/进度），供 Web「正在播放」块与
     设备 NP 线级字段使用。
-    macOS：MediaRemote 的读取接口要求 Objective-C Block。用 ctypes 手工构造的
-    Block 在播放器真正返回数据后可能被系统异步持有，Python 回调释放后会令
-    上位机退出。稳定性优先，明确返回 None，Web 端显示「不支持读取」，
-    控制按钮仍然完整可用。
+    macOS：通过隔离的 Objective-C 进程读取 MediaRemote。空字典表示当前没有
+    媒体会话；None 表示读取能力不可用，Web 与屏幕据此诚实降级。
     """
     if sys.platform == "win32":
         return _smtc_now_playing(timeout)
+    if sys.platform == "darwin":
+        binary = _mac_reader_binary()
+        if not binary:
+            return None
+        try:
+            proc = subprocess.run([str(binary)], capture_output=True, text=True,
+                                  timeout=max(2.5, timeout))
+            if proc.returncode != 0:
+                return None
+            data = json.loads(proc.stdout)
+            return data if isinstance(data, dict) else None
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            return None
     return None
+
+
+def _mac_reader_binary() -> Path | None:
+    """优先用打包时生成的 helper；源码运行时编译一次并缓存。"""
+    global _reader_failed, _reader_path
+    if _reader_path is not None:
+        return _reader_path
+    if _reader_failed:
+        return None
+    with _reader_lock:
+        if _reader_path is not None:
+            return _reader_path
+        if _reader_failed:
+            return None
+        source = Path(__file__).with_name("macos_now_playing.m")
+        bundled = source.with_suffix("")
+        if bundled.is_file() and os.access(bundled, os.X_OK):
+            _reader_path = bundled
+            return bundled
+        try:
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+            cache = Path.home() / ".workbuddy" / "bin"
+            cache.mkdir(parents=True, exist_ok=True)
+            binary = cache / f"macos_now_playing-{digest}"
+            if not binary.is_file():
+                temp = cache / f".{binary.name}.{os.getpid()}.tmp"
+                proc = subprocess.run(
+                    ["clang", "-fobjc-arc", "-fblocks", str(source),
+                     "-framework", "Foundation", "-o", str(temp)],
+                    capture_output=True, timeout=20)
+                if proc.returncode != 0:
+                    _reader_failed = True
+                    return None
+                os.replace(temp, binary)
+            _reader_path = binary
+            return binary
+        except (OSError, subprocess.TimeoutExpired):
+            _reader_failed = True
+            return None
 
 
 # ---------------------------------------------------------------- Windows SMTC
@@ -317,13 +378,46 @@ def play_default(cfg, settle: float = 1.2) -> dict:
     launched = False
     if not is_running(app):
         launched = open_app(app)
-        if launched:
-            time.sleep(settle)          # 等它把「正在播放」客户端注册到系统
+        if not launched:
+            return {"ok": False, "app": app["name"], "launched": False,
+                    "reason": "未能打开所选音乐软件"}
+    if sys.platform == "darwin":
+        # 只控制所选播放器已经注册的媒体会话。新打开的播放器若还没有歌曲，
+        # 发送通用 PLAY 反而会弹出 Apple Music。
+        deadline = time.monotonic() + max(0, settle)
+        session = now_playing()
+        while launched and not (session or {}).get("title") and time.monotonic() < deadline:
+            time.sleep(0.2)
+            session = now_playing()
+        if not session or not session.get("title"):
+            # 软件可能已在后台运行，但尚未选择歌曲；切到所选播放器让用户
+            # 直接选歌。只打开这一个应用，绝不向空会话发送系统 PLAY。
+            activated = open_app(app) if not launched else True
+            return {"ok": False, "app": app["name"], "launched": launched,
+                    "activated": activated,
+                    "reason": "已打开播放器；请先在软件中选择一首歌曲"}
+        if session.get("bundle") != app["id"]:
+            return {"ok": False, "app": app["name"], "launched": launched,
+                    "reason": "当前媒体会话属于其他软件；请先在所选播放器中选择歌曲"}
     delivered = send("play")
-    result = {"ok": bool(delivered), "app": app["name"],
+    confirmed = bool(delivered)
+    if delivered and sys.platform == "darwin":
+        # MediaRemote 的返回值只表示命令已投递，不表示播放器真的开始放歌。
+        # 尤其会员/离线曲目可能仍停在暂停态。
+        deadline = time.monotonic() + 1.5
+        current = now_playing()
+        while (current or {}).get("bundle") == app["id"] and \
+                not current.get("playing") and time.monotonic() < deadline:
+            time.sleep(0.2)
+            current = now_playing()
+        confirmed = bool(current and current.get("bundle") == app["id"]
+                         and current.get("playing"))
+    result = {"ok": confirmed, "app": app["name"],
               "launched": launched, "command": "play",
-              "delivered": bool(delivered)}
-    if not delivered:
+              "delivered": bool(delivered), "confirmed": confirmed}
+    if delivered and not confirmed:
+        result["reason"] = "已发送播放命令，但播放器未进入播放；请检查歌曲是否可播放"
+    elif not delivered:
         result["reason"] = ("播放器已启动，但系统暂时没有可控制的播放队列"
                             if launched else "系统没有可控制的播放会话")
     return result

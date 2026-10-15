@@ -16,7 +16,7 @@ from pathlib import Path
 
 DATA = Path.home() / ".workbuddy" / "pet.json"
 
-PET_TYPES = {"robot": "机器人", "cat": "小猫", "chick": "小鸡"}
+PET_TYPES = {"robot": "机器人", "cat": "小猫", "chick": "小鸡", "dog": "小狗"}
 
 # 每小时自然衰减
 DECAY_PER_HOUR = {"hunger": 3.0, "thirst": 4.0, "energy": 1.5}

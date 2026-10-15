@@ -1,6 +1,7 @@
 """跨平台电脑控制：音量 / 静音 / 媒体播放 / 应用启动（触屏控制中心的后端）。
 
-- macOS：音量用 osascript 精确读写；媒体命令走 MediaRemote（见 music.py）。
+- macOS：音量优先走 CoreAudio 原生接口，失败时回退 osascript；
+  媒体命令走 MediaRemote（见 music.py）。
   旧实现用 AppleScript 逐个试播放器，而只有 Apple Music/Spotify 有 AppleScript
   字典，于是无论用户装了什么，命令最终都会落到 Apple Music。
 - Windows：虚拟键码（VK_VOLUME_* / VK_MEDIA_*）
@@ -11,6 +12,10 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+import hashlib
+import json
+import os
+import threading
 from pathlib import Path
 
 def _run(args, timeout=2.0):
@@ -24,6 +29,62 @@ def _osascript(script: str):
     return _run(["osascript", "-e", script], timeout=2.5)
 
 
+_volume_binary = None
+_volume_binary_failed = False
+_volume_binary_lock = threading.Lock()
+
+
+def _mac_volume_binary():
+    """Use the bundled CoreAudio helper, or compile it once for source installs."""
+    global _volume_binary, _volume_binary_failed
+    if _volume_binary is not None or _volume_binary_failed:
+        return _volume_binary
+    with _volume_binary_lock:
+        if _volume_binary is not None or _volume_binary_failed:
+            return _volume_binary
+        source = Path(__file__).with_name("macos_volume.c")
+        bundled = source.with_suffix("")
+        if bundled.is_file() and os.access(bundled, os.X_OK):
+            _volume_binary = bundled
+            return bundled
+        try:
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
+            cache = Path.home() / ".workbuddy" / "bin"
+            cache.mkdir(parents=True, exist_ok=True)
+            binary = cache / f"macos_volume-{digest}"
+            if not binary.is_file():
+                temp = cache / f".{binary.name}.{os.getpid()}.tmp"
+                proc = subprocess.run(
+                    ["clang", "-std=c11", str(source), "-framework", "CoreAudio",
+                     "-framework", "AudioToolbox", "-o", str(temp)],
+                    capture_output=True, timeout=20)
+                if proc.returncode != 0:
+                    _volume_binary_failed = True
+                    return None
+                os.replace(temp, binary)
+            _volume_binary = binary
+            return binary
+        except (OSError, subprocess.TimeoutExpired):
+            _volume_binary_failed = True
+            return None
+
+
+def _mac_volume_command(*args):
+    binary = _mac_volume_binary()
+    if not binary:
+        return None
+    try:
+        result = subprocess.run([str(binary), *map(str, args)], capture_output=True,
+                                text=True, timeout=1.5)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            if isinstance(data, dict) and "vol" in data:
+                return {"vol": int(data["vol"]), "mut": int(data.get("mut", 0))}
+    except (OSError, subprocess.TimeoutExpired, ValueError, TypeError):
+        pass
+    return None
+
+
 class ControlApp:
     """触屏动作执行器 + 音量状态采样（带节流缓存）。"""
 
@@ -31,11 +92,11 @@ class ControlApp:
         self._cache: dict = {}
         self._cache_at = 0.0
 
-    # ---- 音量状态（3s 节流；不可用平台返回空）----
+    # ---- 音量状态（1s 节流；不可用平台返回空）----
 
     def snapshot(self) -> dict:
         now = time.monotonic()
-        if now - self._cache_at < 3.0:
+        if now - self._cache_at < 1.0:
             return dict(self._cache)
         self._cache_at = now
         self._cache = self._read_volume() or {}
@@ -43,6 +104,9 @@ class ControlApp:
 
     def _read_volume(self):
         if sys.platform == "darwin":
+            native = _mac_volume_command()
+            if native is not None:
+                return native
             result = _osascript("get volume settings")
             if result and result.returncode == 0:
                 text = result.stdout
@@ -85,9 +149,16 @@ class ControlApp:
 
     def volume_step(self, delta: int):
         if sys.platform == "darwin":
+            native = _mac_volume_command("step", delta)
+            if native is not None:
+                self._cache = native
+                self._cache_at = time.monotonic()
+                return
             sign = "+" if delta >= 0 else "-"
             _osascript(f"set volume output volume ((output volume of (get volume settings)) "
                        f"{sign} {abs(delta)})")
+            if delta > 0:
+                _osascript("set volume output muted false")
         elif sys.platform.startswith("linux"):
             _run(["pactl", "set-sink-volume", "@DEFAULT_SINK@",
                   f"{delta:+d}%".replace("+", "+")])
@@ -110,6 +181,11 @@ class ControlApp:
 
     def toggle_mute(self):
         if sys.platform == "darwin":
+            native = _mac_volume_command("toggle-mute")
+            if native is not None:
+                self._cache = native
+                self._cache_at = time.monotonic()
+                return
             _osascript("set volume output muted (not (output muted of (get volume settings)))")
         elif sys.platform.startswith("linux"):
             _run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
