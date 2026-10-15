@@ -47,6 +47,9 @@ def _iso_ts(s: str) -> float:
 
 
 class ZCodeSource:
+    NAME = "zcode"
+    KIND = "session"   # 读取真实会话状态
+
     def __init__(self, root: Path):
         self.root = Path(root)
 

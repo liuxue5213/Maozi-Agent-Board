@@ -26,8 +26,12 @@ def _now_ms() -> int:
 
 
 class OpenCodeSource:
+    NAME = "opencode"
+    KIND = "session"   # 读取真实会话状态
+
     def __init__(self, root: Path):
-        self.db = Path(root) / DB_NAME
+        self.root = Path(root)
+        self.db = self.root / DB_NAME
 
     def poll_all(self, now, cache) -> list:
         if not self.db.exists():

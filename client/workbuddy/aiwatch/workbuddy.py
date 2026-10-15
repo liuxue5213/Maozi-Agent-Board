@@ -47,6 +47,9 @@ def _ms_to_s(value) -> float:
 
 
 class WorkBuddySource:
+    NAME = "workbuddy"
+    KIND = "session"   # 读取真实会话状态（sqlite 只读 + 心跳）
+
     def __init__(self, root: Path):
         self.root = Path(root)
 

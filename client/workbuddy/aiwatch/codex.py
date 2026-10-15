@@ -43,6 +43,9 @@ def _project_from_head(path: Path) -> str:
 
 
 class CodexSource:
+    NAME = "codex"
+    KIND = "session"   # 读取真实会话日志（rollout jsonl）
+
     def __init__(self, root: Path):
         self.root = Path(root)
 

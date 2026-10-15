@@ -418,6 +418,19 @@ class App:
                     t["trace"] = []
         return tasks
 
+    def _ai_sources(self) -> list:
+        """每个 AI 来源的读取能力快照（M1）：读取方式 / 数据时间戳 / 失败原因。
+
+        供自检面板逐来源说明「读到了什么、为什么没有数据」，AI 检测关闭时为空。
+        """
+        ai = getattr(self, "ai", None)
+        if not ai:
+            return []
+        try:
+            return ai.source_status()
+        except Exception:
+            return []
+
     def _done_recent(self) -> list:
         """最近完成的会话（新→旧）。AI 检测关闭时返回空列表。"""
         ai = getattr(self, "ai", None)
@@ -1078,6 +1091,7 @@ class App:
                                     time.monotonic() - env_seen.get(k, 0) < 6)},
                     "pet_frame_perf": getattr(self, "pet_frame_perf", None),
                     "tasks": self._tasks_with_trace(), "telemetry": self.last,
+                    "ai_sources": self._ai_sources(),
                     # Web 设备预览据此读取当前实机角色包的对应状态帧。
                     "petpack": self._pack_state(),
                     "work_break": getattr(self, "work_break", None).snapshot(

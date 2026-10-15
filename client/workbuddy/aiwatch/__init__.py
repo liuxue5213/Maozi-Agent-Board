@@ -135,6 +135,7 @@ class AIWatcher:
         else:
             self._processes = processes
         self._cache = {}
+        self._src_status = []   # 每来源读取能力快照（M1）
         self._bursts = {}   # (tool, sid) -> burst 起始时间
         # 阶段事件（优化#13 活动时间线）：(tool, sid) -> [(t, state), ...]。
         # 只记状态切换边沿，用来回答「瓶颈在 想 还是 在 等」。
@@ -152,11 +153,33 @@ class AIWatcher:
 
     def poll_all(self, now: float) -> list:
         acts = []
+        src_status = []
         for src in self.sources:
+            entry = {
+                "name": getattr(src, "NAME", type(src).__name__),
+                "kind": getattr(src, "KIND", "session"),
+                "root": str(getattr(src, "root", "") or ""),
+                "root_exists": False, "readable": False,
+                "sessions": 0, "last_age": None, "error": "",
+            }
             try:
-                acts.extend(src.poll_all(now, self._cache) or [])
-            except Exception:
+                entry["root_exists"] = bool(entry["root"]) and Path(entry["root"]).exists()
+            except OSError:
+                entry["root_exists"] = False
+            try:
+                got = src.poll_all(now, self._cache) or []
+            except Exception as exc:
+                # 刻意吞掉异常继续其他来源，但记录下来供自检面板说明「为什么没有数据」
+                entry["error"] = f"{type(exc).__name__}: {exc}"[:120]
+                src_status.append(entry)
                 continue
+            acts.extend(got)
+            entry["readable"] = True
+            entry["sessions"] = len(got)
+            if got:
+                entry["last_age"] = max(0, int(now - max(a.ts for a in got)))
+            src_status.append(entry)
+        self._src_status = src_status
         # 仅保留活跃任务，同会话去重（高优先级状态优先），按活跃度排序
         fresh = {}
         for a in acts:
@@ -224,6 +247,14 @@ class AIWatcher:
         for k in [k for k, v in self._trace.items() if not v or now - v[-1][0] > 3600]:
             del self._trace[k]
         return out
+
+    def source_status(self) -> list:
+        """每个 AI 来源的读取能力快照（M1）：读取方式 / 数据时间戳 / 失败原因。
+
+        在最近一次 poll_all 时采集，供 /api/status 与自检面板逐来源说明
+        「读到了什么、为什么没有数据」，而不是只给一个总开关。
+        """
+        return list(getattr(self, "_src_status", []))
 
     def _gate_inactive(self, fresh: dict, now: float) -> dict:
         """丢掉「进程已不在」的工具的会话。

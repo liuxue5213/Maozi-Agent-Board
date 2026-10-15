@@ -18,6 +18,9 @@ def _project_name(dir_name: str) -> str:
 
 
 class ClaudeSource:
+    NAME = "claude"
+    KIND = "session"   # 读取真实会话日志（jsonl）
+
     def __init__(self, root: Path):
         self.root = Path(root)
 
