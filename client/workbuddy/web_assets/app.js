@@ -3284,6 +3284,19 @@ function renderSelfcheck(){
   const tools=live.tools||{};
   rows.push({ok:tools.ok!==false, label:'进程识别',
     value: tools.ok===false?`不可用：${tools.error||'未知原因'}`:'可用'});
+  // M1：逐来源标注读取能力 / 数据时间戳 / 失败原因，避免「没数据」时无从判断
+  const srcs=live.ai_sources||[];
+  if(srcs.length){
+    const desc=s=>{
+      if(s.error) return `读取失败：${s.error}`;
+      if(!s.readable) return '未安装 / 未使用';
+      if(s.sessions>0) return `${s.sessions} 会话（${s.last_age!=null?s.last_age+'s 前':'刚更新'}）`;
+      return '可读取（暂无活跃会话）';
+    };
+    rows.push({ok:!srcs.some(s=>!!s.error), warn:srcs.some(s=>!!s.error),
+      label:'AI 来源读取',
+      value: srcs.map(s=>`${s.name} ${desc(s)}`).join(' · ')});
+  }
   rows.push({ok:!!(hooksInfoCache&&hooksInfoCache.wired), warn:!!(hooksInfoCache&&!hooksInfoCache.settings_found),
     label:'Hook 快通道',
     value: hooksInfoCache?(hooksInfoCache.wired?'已接入':'未接入（秒级亮屏依赖它）'):'检测中'});
