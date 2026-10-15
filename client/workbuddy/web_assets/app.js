@@ -3271,6 +3271,14 @@ function renderSelfcheck(){
   rows.push({ok:synced&&live.profile_status!=='同步失败', warn:live.profile_status==='同步失败',
     label:'配置同步',
     value:`${live.profile_status||'—'}${live.profile_error?'：'+live.profile_error:''}`});
+  // M1：配置版本端到端链路——保存/下发/设备应用是否同源，便于真机验收逐项核对
+  const ct=live.config_trace||{};
+  if(ct.saved_version!=null||ct.applied_version!=null){
+    const recent=(ct.events||[]).slice(-3).map(e=>`${e.kind}${e.version!=null?' v'+e.version:''}`).join(' · ');
+    rows.push({ok:!!ct.consistent, warn:!ct.consistent&&live.profile_status!=='传输中'&&live.profile_status!=='待同步',
+      label:'配置版本链路',
+      value:`保存 v${ct.saved_version!=null?ct.saved_version:'—'} → 下发 v${ct.sent_version!=null?ct.sent_version:'—'} → 设备 v${ct.applied_version!=null?ct.applied_version:'—'}${recent?'（'+recent+'）':''}`});
+  }
   rows.push({ok: typeof live.telemetry_age==='number'&&live.telemetry_age<8, label:'遥测新鲜度',
     value: typeof live.telemetry_age==='number'?`${Math.round(live.telemetry_age)} 秒前更新`:'暂无数据'});
   const tools=live.tools||{};
