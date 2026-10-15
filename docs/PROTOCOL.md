@@ -11,7 +11,7 @@
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `HB` | int | 心跳，Unix 秒。≥10s 未收到视为链路断开 |
-| `CAPS` | kv | 连接后发一次，能力位图：`CAPS=cpu_temp:0,gpu:1,fan:0,bat:1` |
+| `CAPS` | kv | 连接后发一次，能力位图：`CAPS=cpu_temp:0,gpu:1,fan:0,bat:1,proto:0.3.2`（末尾 `proto` 为客户端线协议版本） |
 | `CFG` | kv | 配置推送：`CFG=theme:dark,lang:cn,font:24,bright:80,pages:1,2,3` |
 | `CPU` | int | CPU 占用 %（0-100） |
 | `CPUFREQ` | int | CPU 频率 MHz（不可用时省略） |
@@ -60,6 +60,7 @@
 
 ## 2.1 版本握手与固件升级（OTA）
 
+- **协议版本协商（P1-1）**：握手串显式携带版本——固件 `FW=proto:0.3.2,n16r8,...`（亦兼容旧式首段版本 `FW=0.2,...`）；客户端 `CAPS` 末尾带 `proto:0.3.2`。客户端解析出固件元组版本后，与自身 `PROTOCOL_VERSION=(0,3,2)` 比较：**仅当固件版本 < (0,3,2) 时，下行压掉 v0.3.2 才引入的字段**（`AI4~AI7`、`NP`、`AIU`、`AITOK`、`AIOUT`、`AITOTAL`、`AITITLE`、`AFM`、`PB`、`AST`、`AIB0~2`），基线字段（`AI0~3`、`AIT`、`CPU` 等）始终发送。`fw_proto=None`（握手未完成/无法解析）按全量发送以保证历史行为。
 - 客户端解析 `FW` 并与随客户端分发的固件版本比对：
   - 主版本一致 → 静默兼容；
   - 不一致 → 托盘提示"固件有新版本，一键升级"。
