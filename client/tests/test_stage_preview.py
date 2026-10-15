@@ -15,12 +15,12 @@ CSS = (ROOT / "client" / "workbuddy" / "web_assets" / "app.css").read_text(encod
 
 def test_firmware_has_stage_parts():
     assert "struct MiniPet" in UI
-    assert "pet_mini[3]" in UI
+    assert "pet_mini[10][3]" in UI  # AI 页面各自持有 3 只，不跨页借用控件
     assert "static void draw_pet_mini(MiniPet& p, lv_obj_t* parent, int x, int y);" in UI
     assert "pet_mini_apply(MiniPet& p, const AITask& task, bool blink_on)" in UI
     # AI 页 3 行：状态点已被迷你角色取代
-    assert "draw_pet_mini(pet_mini[i], row, 7, 14);" in UI
-    assert "pet_mini_apply(pet_mini[row], task, blink_on && state_running(task.state));" in UI
+    assert "draw_pet_mini(pet_mini[widget_page_slot(&view)][i], row, 7, 14);" in UI
+    assert "pet_mini_apply(pet_mini[widget_page_slot(&view)][row], task," in UI
 
 
 def test_firmware_tool_page_keeps_dot():

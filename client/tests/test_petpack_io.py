@@ -2,6 +2,7 @@
 import io
 import unittest
 import zipfile
+from PIL import Image
 
 from workbuddy import web
 from workbuddy.web import petpack_frame_path, validate_pack_zip
@@ -12,6 +13,12 @@ def _zip(entries: dict) -> bytes:
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, content in entries.items():
             zf.writestr(name, content)
+    return buf.getvalue()
+
+
+def _jpeg() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (320, 480), "#385a74").save(buf, format="JPEG")
     return buf.getvalue()
 
 
@@ -30,9 +37,9 @@ def test_petpack_frame_path_is_whitelisted_and_requires_file(tmp_path, monkeypat
 class ValidatePackZipTests(unittest.TestCase):
     def test_good_pack_passes(self):
         files, err = validate_pack_zip(_zip({
-            "pet_idle.jpg": b"j" * 100,
-            "pet_working.jpg": b"j" * 100,
-            "pet_working_b.jpg": b"j" * 100,
+            "pet_idle.jpg": _jpeg(),
+            "pet_working.jpg": _jpeg(),
+            "pet_working_b.jpg": _jpeg(),
         }))
         self.assertIsNone(err)
         self.assertEqual(sorted(files), ["pet_idle.jpg", "pet_working.jpg",
@@ -48,7 +55,7 @@ class ValidatePackZipTests(unittest.TestCase):
     def test_rejects_oversize_and_count(self):
         files, err = validate_pack_zip(_zip({"pet_big.jpg": b"j" * (201 * 1024)}))
         self.assertIn("200KB", err)
-        many = {f"pet_f{i:02d}.jpg": b"x" for i in range(13)}
+        many = {f"pet_f{i:02d}.jpg": b"x" for i in range(21)}
         files, err = validate_pack_zip(_zip(many))
         self.assertIn("过多", err)
 
@@ -59,6 +66,11 @@ class ValidatePackZipTests(unittest.TestCase):
         self.assertIn("没有文件", err)
         files, err = validate_pack_zip(b"")
         self.assertIn("空", err)
+
+    def test_rejects_corrupt_jpeg_before_device_upload(self):
+        files, err = validate_pack_zip(_zip({"pet_idle.jpg": b"not-a-jpeg"}))
+        self.assertIsNone(files)
+        self.assertIn("无法解码", err)
 
 
 if __name__ == "__main__":

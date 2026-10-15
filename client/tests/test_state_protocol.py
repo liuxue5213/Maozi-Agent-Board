@@ -7,9 +7,21 @@ import re
 import queue
 from pathlib import Path
 
-from workbuddy.app import App
+from workbuddy.app import App, _focus_wire_text
 from workbuddy.aiwatch import AIWatcher, Activity, DONE, THINKING, WAIT_INPUT
-from workbuddy.protocol import encode_telemetry, parse_uplink
+from workbuddy.protocol import encode_telemetry, now_playing_wire, parse_uplink
+
+
+def test_now_playing_wire_clears_and_bounds_fields():
+    assert "NP=\n" in encode_telemetry({"np": now_playing_wire({})})
+    value = now_playing_wire({"title": "歌,🎵\n曲" * 15,
+                              "artist": "作者" * 15,
+                              "position": 12.8, "duration": float("inf"),
+                              "playing": True})
+    fields = value.split(",")
+    assert len(fields) == 5
+    assert len(fields[0].encode()) <= 48 and len(fields[1].encode()) <= 24
+    assert fields[2:] == ["12", "0", "1"]
 from workbuddy.serial_link import SerialLink
 
 
@@ -59,6 +71,23 @@ class StateProtocolTests(unittest.TestCase):
     def test_fan_value_encoded(self):
         self.assertIn("FAN=5301", encode_telemetry({"fan": 5301}))
 
+    def test_pet_usage_values_and_focus_clear_survive_wire_encoding(self):
+        frame = encode_telemetry({"ait": "1", "aitok": "1234",
+                                  "aitotal": "2100", "aiout": "350",
+                                  "aititle": "修复显示"})
+        self.assertIn("AITOK=1234\n", frame)  # 不丢掉不足 1k 的余数
+        self.assertIn("AITOTAL=2100\n", frame)
+        self.assertIn("AITITLE=修复显示\n", frame)
+        cleared = encode_telemetry({"aiu": "", "afm": "", "aiout": "",
+                                    "aitotal": "", "aititle": ""})
+        for key in ("AIU", "AFM", "AIOUT", "AITOTAL", "AITITLE"):
+            self.assertIn(f"{key}=\n", cleared)
+
+    def test_focus_text_fits_device_buffer_without_broken_utf8(self):
+        value = _focus_wire_text("任务=" + "中文" * 40)
+        self.assertLessEqual(len(value.encode("utf-8")), 60)
+        self.assertNotIn("=", value)
+
     def test_pet_actions_forward_to_device(self):
         # 三种互动都必须下行，数值变化与视觉反馈才形成闭环。
         class RecLink:
@@ -91,6 +120,14 @@ class StateProtocolTests(unittest.TestCase):
                          {"ota_reply": {"ok": True, "reason": "BEGIN"}})
         self.assertEqual(parse_uplink("NAK=OTA,SEQ"),
                          {"ota_reply": {"ok": False, "reason": "SEQ"}})
+
+    def test_optional_sensor_readings_report_absence_explicitly(self):
+        self.assertEqual(parse_uplink("PRESSURE=1013.2"), {"pressure": 1013.2})
+        self.assertEqual(parse_uplink("DISTANCE=NA"), {"distance": None})
+        self.assertEqual(parse_uplink("ENVSRC=AHT20"), {"env_source": "AHT20"})
+        self.assertIsNone(parse_uplink("PRESSURE=nan"))
+        self.assertEqual(parse_uplink("[PETPERF] frame=play load_ms=48 psram=1"),
+                         {"pet_frame_perf": {"frame": "play", "load_ms": 48, "psram": 1}})
 
     def test_ota_uses_lossless_queue_and_waits_for_device_ack(self):
         class Health:

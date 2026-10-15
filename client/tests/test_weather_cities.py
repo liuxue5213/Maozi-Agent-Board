@@ -131,7 +131,7 @@ class FirmwareParityTests(unittest.TestCase):
     def test_preview_and_firmware_share_geometry(self):
         ui = (FIRMWARE / "ui.cpp").read_text()
         js = (CLIENT / "workbuddy" / "web_assets" / "app.js").read_text()
-        for constant in ("184 + 50 * i", "304, 116", "304, 46"):
+        for constant in ("176 + 53 * i", "304, 116", "304, 50"):
             self.assertIn(constant, ui, f"固件缺少天气页几何：{constant}")
             self.assertIn(constant.replace(" ", ""), js.replace(" ", ""),
                           f"预览缺少天气页几何：{constant}")

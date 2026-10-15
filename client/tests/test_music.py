@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -46,10 +47,21 @@ class MusicModuleTests(unittest.TestCase):
     def test_actions_map_to_mediaremote_commands(self):
         fake = _FakeLib()
         music._lib = fake
-        for action, expected in (("play", 0), ("pause", 1), ("toggle", 2),
-                                 ("stop", 3), ("next", 4), ("prev", 5)):
-            self.assertTrue(music.send(action), action)
-            self.assertEqual(fake.calls[-1][0], expected, action)
+        with patch.object(music.sys, "platform", "darwin"), \
+             patch.object(music, "now_playing", return_value={"title": "歌"}):
+            for action, expected in (("play", 0), ("pause", 1), ("toggle", 2),
+                                     ("stop", 3), ("next", 4), ("prev", 5)):
+                self.assertTrue(music.send(action), action)
+                self.assertEqual(fake.calls[-1][0], expected, action)
+
+    def test_empty_session_never_dispatches_to_apple_music(self):
+        fake = _FakeLib()
+        music._lib = fake
+        with patch.object(music.sys, "platform", "darwin"), \
+             patch.object(music, "now_playing", return_value={}):
+            self.assertFalse(music.send("play"))
+            self.assertFalse(music.send("toggle"))
+        self.assertEqual(fake.calls, [])
 
     def test_unknown_action_is_not_sent(self):
         fake = _FakeLib()
@@ -67,8 +79,35 @@ class MusicModuleTests(unittest.TestCase):
         self.assertFalse(music.send("play"))
 
     def test_now_playing_is_none_when_unsupported(self):
-        music._lib = False
-        self.assertIsNone(music.now_playing())
+        with patch.object(music, "_mac_reader_binary", return_value=None):
+            self.assertIsNone(music.now_playing())
+
+    def test_now_playing_empty_session_is_supported(self):
+        if sys.platform != "darwin":
+            self.skipTest("macOS helper")
+        result = type("Result", (), {"returncode": 0, "stdout": "{}"})()
+        with patch.object(music, "_mac_reader_binary", return_value=Path("/tmp/helper")), \
+             patch.object(music.subprocess, "run", return_value=result):
+            self.assertEqual(music.now_playing(), {})
+
+    def test_volume_up_unmutes_on_mac(self):
+        from workbuddy import control
+        calls = []
+        with patch.object(control.sys, "platform", "darwin"), \
+             patch.object(control, "_mac_volume_command", return_value=None), \
+             patch.object(control, "_osascript", side_effect=lambda s: calls.append(s)):
+            control.ControlApp().volume_step(10)
+        self.assertIn("set volume output muted false", calls)
+
+    def test_native_volume_step_updates_visible_cache_immediately(self):
+        from workbuddy import control
+        ctl = control.ControlApp()
+        with patch.object(control.sys, "platform", "darwin"), \
+             patch.object(control, "_mac_volume_command",
+                          return_value={"vol": 40, "mut": 0}) as native:
+            ctl.volume_step(10)
+            self.assertEqual(ctl.snapshot(), {"vol": 40, "mut": 0})
+        native.assert_called_once_with("step", 10)
 
     # ---- 应用发现 ----
 
@@ -155,7 +194,10 @@ class MusicModuleTests(unittest.TestCase):
         music.open_app = lambda app: calls.append(("open", app["id"])) or True
         music.send = lambda action: calls.append(("send", action)) or True
         try:
-            result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
+            with patch.object(music.sys, "platform", "darwin"), \
+                 patch.object(music, "now_playing", return_value={
+                     "title": "歌", "bundle": "com.netease.163music", "playing": True}):
+                result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
         finally:
             music.is_running, music.open_app, music.send = saved
         self.assertEqual(calls, [("open", "com.netease.163music"), ("send", "play")])
@@ -169,11 +211,53 @@ class MusicModuleTests(unittest.TestCase):
         music.open_app = lambda app: calls.append("open") or True
         music.send = lambda action: calls.append(action) or True
         try:
-            result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
+            with patch.object(music.sys, "platform", "darwin"), \
+                 patch.object(music, "now_playing", return_value={
+                     "title": "歌", "bundle": "com.netease.163music", "playing": True}):
+                result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
         finally:
             music.is_running, music.open_app, music.send = saved
         self.assertEqual(calls, ["play"])
         self.assertFalse(result["launched"])
+
+    def test_running_player_without_song_is_activated_for_selection(self):
+        self._patch_apps([{"id": "com.netease.163music", "name": "网易云音乐",
+                           "path": "/A/NM.app"}])
+        with patch.object(music.sys, "platform", "darwin"), \
+             patch.object(music, "is_running", return_value=True), \
+             patch.object(music, "now_playing", return_value={}), \
+             patch.object(music, "open_app", return_value=True) as opener, \
+             patch.object(music, "send") as sender:
+            result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["activated"])
+        opener.assert_called_once()
+        sender.assert_not_called()
+
+    def test_play_default_does_not_control_other_player(self):
+        self._patch_apps([{"id": "com.netease.163music", "name": "网易云音乐", "path": "/A/NM.app"}])
+        with patch.object(music.sys, "platform", "darwin"), \
+             patch.object(music, "is_running", return_value=True), \
+             patch.object(music, "now_playing", return_value={
+                 "title": "其他歌曲", "bundle": "com.apple.Music"}), \
+             patch.object(music, "send") as sender:
+            result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
+        self.assertFalse(result["ok"])
+        sender.assert_not_called()
+
+    def test_command_accepted_but_song_still_paused_is_not_success(self):
+        self._patch_apps([{"id": "com.netease.163music", "name": "网易云音乐", "path": "/A/NM.app"}])
+        paused = {"title": "歌", "bundle": "com.netease.163music", "playing": False}
+        with patch.object(music.sys, "platform", "darwin"), \
+             patch.object(music, "is_running", return_value=True), \
+             patch.object(music, "now_playing", return_value=paused), \
+             patch.object(music, "send", return_value=True), \
+             patch.object(music.time, "monotonic", side_effect=iter(range(100))), \
+             patch.object(music.time, "sleep"):
+            result = music.play_default(type("C", (), {"music_app": "auto"})(), settle=0)
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["delivered"])
+        self.assertIn("未进入播放", result["reason"])
 
     def test_play_default_without_any_app_reports_reason(self):
         self._patch_apps([])
@@ -254,25 +338,33 @@ class TouchMediaRoutingTests(unittest.TestCase):
 
     def test_play_key_toggles_existing_session(self):
         app, calls = self._app()
-        saved_running, saved_play = music.has_running_player, music.play_default
-        music.has_running_player = lambda cfg: True
-        music.play_default = lambda cfg: calls.append(("launch", cfg.music_app))
-        try:
+        with patch.object(music, "now_playing", return_value={"title": "歌"}), \
+             patch.object(music, "play_default",
+                          side_effect=lambda cfg: calls.append(("launch", cfg.music_app))):
             app._handle_key("PLAY")
-        finally:
-            music.has_running_player, music.play_default = saved_running, saved_play
         self.assertEqual(calls, [("media", "toggle")])
 
-    def test_play_key_starts_only_configured_default_without_session(self):
+    def test_play_key_opens_selected_player_when_process_has_no_song(self):
         app, calls = self._app()
-        saved_running, saved_play = music.has_running_player, music.play_default
-        music.has_running_player = lambda cfg: False
-        music.play_default = lambda cfg: calls.append(("launch", cfg.music_app))
-        try:
+        with patch.object(music, "now_playing", return_value={}), \
+             patch.object(music, "has_running_player", return_value=True), \
+             patch.object(music, "play_default",
+                          side_effect=lambda cfg: calls.append(("launch", cfg.music_app))):
             app._handle_key("PLAY")
-        finally:
-            music.has_running_player, music.play_default = saved_running, saved_play
         self.assertEqual(calls, [("launch", "com.netease.163music")])
+
+    def test_cached_playback_position_advances_without_mutating_sample(self):
+        from workbuddy.app import App
+        import time
+        app = App.__new__(App)
+        sample = {"title": "Song", "position": 12.2, "duration": 50,
+                  "playing": True}
+        app._np_cache = {"supported": True, "now": sample,
+                         "sampled_at": time.monotonic() - 1.3}
+        self.assertEqual(app._music_status()["now"]["position"], 13)
+        self.assertEqual(sample["position"], 12.2)
+        sample["playing"] = False
+        self.assertEqual(app._music_status()["now"]["position"], 12.2)
 
 
 if __name__ == "__main__":

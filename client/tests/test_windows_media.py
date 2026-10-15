@@ -101,9 +101,11 @@ def test_smtc_method_mapping():
     assert "toggle" not in music._SMTC_METHODS     # toggle 按播放状态二选一
 
 
-def test_now_playing_macos_returns_none():
+def test_now_playing_macos_reader_unavailable():
     from workbuddy import music
-    assert music.now_playing() is None
+    with mock.patch.object(music.sys, "platform", "darwin"), \
+         mock.patch.object(music, "_mac_reader_binary", return_value=None):
+        assert music.now_playing() is None
 
 
 def test_send_win32_without_loop_returns_false():

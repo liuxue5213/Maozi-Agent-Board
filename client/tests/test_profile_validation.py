@@ -14,13 +14,19 @@ def base(**overrides):
 class PageRuleTests(unittest.TestCase):
     def test_default_profile_passes(self):
         out = validate_profile(default_profile())
-        self.assertEqual(len(out["pages"]), 3)
+        self.assertEqual(len(out["pages"]), 4)
+        self.assertEqual(out["pages"][-1]["widgets"], ["control"])
 
     def test_too_many_pages_rejected(self):
         pages = [{"id": f"p{i}", "title": "页", "layout": "grid_2x2",
-                  "widgets": ["clock"]} for i in range(7)]
+                  "widgets": ["clock"]} for i in range(11)]
         with self.assertRaisesRegex(ValueError, "页面数量"):
             validate_profile(base(pages=pages))
+
+    def test_ten_pages_accepted(self):
+        pages = [{"id": f"p{i}", "title": "页", "layout": "grid_2x2",
+                  "widgets": ["clock"]} for i in range(10)]
+        self.assertEqual(len(validate_profile(base(pages=pages))["pages"]), 10)
 
     def test_duplicate_page_id_rejected(self):
         pages = [{"id": "same", "title": "A", "layout": "grid_2x2", "widgets": ["clock"]},
@@ -186,6 +192,11 @@ if __name__ == "__main__":
 
 
 class PetFlagTests(unittest.TestCase):
+    def test_dog_type_roundtrip(self):
+        out = validate_profile(base(pet={"type": "dog", "name": "阿柴"}))
+        self.assertEqual(out["pet"]["type"], "dog")
+        self.assertEqual(out["pet"]["name"], "阿柴")
+
     def test_defaults_sleep_on_greet_off(self):
         out = validate_profile(default_profile())
         self.assertEqual(out["pet"]["sleep"], 1)
@@ -316,19 +327,25 @@ class PetShowFlagsTests(unittest.TestCase):
 
 
 class BreakReminderTests(unittest.TestCase):
-    """久坐提醒阈值（pet.break_min，分钟，0=关）。"""
+    """连续使用电脑提醒与休息完成阈值。"""
 
     def test_default_off(self):
         out = validate_profile(default_profile())
         self.assertEqual(out["pet"]["break_min"], 0)
+        self.assertEqual(out["pet"]["rest_min"], 5)
+        self.assertEqual(out["pet"]["desktop_notify"], 1)
 
     def test_roundtrip_and_clamp(self):
         out = validate_profile(base(pet={"type": "cat", "name": "x",
-                                         "break_min": 45}))
+                                         "break_min": 45, "rest_min": 8,
+                                         "desktop_notify": 0}))
         self.assertEqual(out["pet"]["break_min"], 45)
+        self.assertEqual(out["pet"]["rest_min"], 8)
+        self.assertEqual(out["pet"]["desktop_notify"], 0)
         out2 = validate_profile(base(pet={"type": "cat", "name": "x",
-                                          "break_min": 999}))
+                                          "break_min": 999, "rest_min": 999}))
         self.assertEqual(out2["pet"]["break_min"], 240)
+        self.assertEqual(out2["pet"]["rest_min"], 60)
         out3 = validate_profile(base(pet={"type": "cat", "name": "x",
                                           "break_min": "abc"}))
         self.assertEqual(out3["pet"]["break_min"], 0)

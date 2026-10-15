@@ -41,6 +41,21 @@ def test_compute_pack_info_missing_falls_back():
         assert info["fallback"]["error"] == "idle"
 
 
+def test_optional_interactions_are_listed_without_marking_older_packs_incomplete():
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td) / "petpack_test"
+        d.mkdir()
+        for state in PETPACK_CANON_STATES:
+            (d / f"pet_{state}.jpg").write_bytes(b"x")
+        assert compute_pack_info(d)["missing"] == []
+        (d / "pet_feeding.jpg").write_bytes(b"x")
+        (d / "pet_idle_b.jpg").write_bytes(b"x")
+        info = compute_pack_info(d)
+        assert "feeding" in info["present"]
+        assert "idle_b" in info["present"]
+        assert info["missing"] == []
+
+
 def test_manifest_roundtrip():
     with tempfile.TemporaryDirectory() as td:
         d = Path(td) / "petpack_test"

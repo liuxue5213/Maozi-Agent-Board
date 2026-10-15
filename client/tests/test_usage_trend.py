@@ -56,6 +56,21 @@ def test_scan_buckets_hourly_top_sessions_and_meta(tmp_path):
     assert saved["hourly"][f"{TODAY}T01"] == 3000
 
 
+def test_same_tool_sessions_keep_their_own_model_and_message(tmp_path):
+    root = tmp_path / "claude"
+    first = _claude_rec(f"{TODAY}T01:00:00+08:00", 100, 20)
+    first["message"].update(model="claude-a", content="第一会话")
+    second = _claude_rec(f"{TODAY}T02:00:00+08:00", 200, 30)
+    second["message"].update(model="claude-b", content="第二会话")
+    _write_claude(root, "session-a", [first])
+    _write_claude(root, "session-b", [second])
+    scanner = UsageScanner({"claude": str(root)}, trend_path=tmp_path / "trend.json")
+    scanner._scan_once()
+    snap = scanner.snapshot()
+    assert snap["model_by_sid"] == {"session-a": "claude-a", "session-b": "claude-b"}
+    assert snap["last_msg_by_sid"] == {"session-a": "第一会话", "session-b": "第二会话"}
+
+
 def test_day_rollover_archives_daily_and_survives_restart(tmp_path):
     croot = tmp_path / "claude"
     _write_claude(croot, "sessA", [_claude_rec(f"{TODAY}T03:00:00+08:00", 3000, 1000)])
