@@ -1438,7 +1438,7 @@ function devGenericCard(screen, ctx, kind, x, y, w, h){
 function devWidgetUnits(kind){ return (kind === 'reminder_list' || kind === 'today_calendar') ? 2 : 1 }
 /* 自由布局页预览：组件按 (x,y) 直接摆放，值来自 live 遥测（缺省占位）。 */
 function devFreePage(screen, ctx, page){
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28],stat:[304,28],music:[304,64],ai_focus:[304,64],calendar:[304,28]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28],stat:[304,28],music:[304,76],ai_focus:[304,64],calendar:[304,28]};
   const now=new Date();
   const t=(live.telemetry||{});
   const vals={
@@ -2095,9 +2095,15 @@ function renderPalette() {
    画布 0.85 缩放显示 320×480，写回 draft 的仍是设备像素坐标。 */
 function renderFreeEditor(page, root){
   const SCALE=0.85;
-  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28],stat:[304,28],music:[304,64],ai_focus:[304,64],calendar:[304,28]};
-  const BIG={clock:[260,64],weather:[240,40]};
+  const SIZE={clock:[220,60],date:[260,28],lunar:[304,28],weather:[240,36],sys:[280,28],quote:[300,96],ai_cost:[304,116],pet:[96,120],remind:[304,28],alarm:[280,28],countdown:[304,28],env:[240,28],net:[240,28],text:[200,28],stat:[304,28],music:[304,76],ai_focus:[304,64],calendar:[304,28]};
   const NAME={clock:'时间',date:'日期',lunar:'农历节气',weather:'天气',sys:'CPU/内存',quote:'短句',ai_cost:'AI 用量',pet:'角色',remind:'下一提醒',alarm:'闹钟',countdown:'倒计时',env:'温湿度',net:'网速',text:'自定义文字',stat:'任务统计',music:'正在播放',ai_focus:'AI 焦点',calendar:'今日日程'};
+  // 大/小卡统一口径：必须与 profile.py 的 big_sizes（决定下发到设备）一致，否则
+  // 预览≠真机。clock/weather 有专属大字档，其余 + (40,12)；ai_cost/pet/music 不支持。
+  const NO_STYLE=new Set(['ai_cost','pet','music']);
+  const BIG_FIXED={clock:[260,64],weather:[240,40]};
+  const dimsOf=c=>{ const s=SIZE[c.t]||[120,30];
+    if(!(c.big&&!NO_STYLE.has(c.t))) return s;
+    const f=BIG_FIXED[c.t]; return f?f.slice():[s[0]+40,s[1]+12]; };
   page.components=page.components||[];
   if(!Array.isArray(page._undo)) page._undo=[];
   if(!Array.isArray(page._redo)) page._redo=[];
@@ -2130,8 +2136,7 @@ function renderFreeEditor(page, root){
     b.style.borderColor = sel.includes(i) ? '#57C8F5' : 'rgba(87,200,245,.35)';
   });};
   page.components.forEach((c,i)=>{
-    const NO=new Set(['ai_cost','pet','music']);
-    const [w,h]=(c.big&&!NO.has(c.t))?[SIZE[c.t][0]+40,SIZE[c.t][1]+12]:(SIZE[c.t]||[120,30]);
+    const [w,h]=dimsOf(c);
     const b=el('div','', (NAME[c.t]||c.t)+(c.hidden?'（隐）':'')+(c.lock?' 🔒':''));
     b.style.cssText=`position:absolute;left:${c.x*SCALE}px;top:${c.y*SCALE}px;`+
       `width:${w*SCALE}px;min-height:${Math.max(22,h*SCALE)}px;`+
@@ -2150,7 +2155,7 @@ function renderFreeEditor(page, root){
       const origins=moving.map(k=>({k, x:page.components[k].x, y:page.components[k].y}));
       const sx=ev.clientX, sy=ev.clientY;
       const snap=v=>Math.round(v/4)*4;   // 4px 网格吸附（竞品「吸附/网格」）
-      const dims=k=>(page.components[k].big&&BIG[page.components[k].t])?BIG[page.components[k].t]:(SIZE[page.components[k].t]||[120,30]);
+      const dims=k=>dimsOf(page.components[k]);
       const move=ev2=>{
         const dx=snap(Math.round((ev2.clientX-sx)/SCALE));
         const dy=snap(Math.round((ev2.clientY-sy)/SCALE));
@@ -2224,13 +2229,12 @@ function renderFreeEditor(page, root){
   const style=el('button','button','大字 / 常规');
   style.onclick=()=>{
     if(need())return;
-    const NO_STYLE=new Set(['ai_cost','pet','music']);
     const targets=sel.map(i=>page.components[i]).filter(c=>!NO_STYLE.has(c.t));
     if(!targets.length)return notice('选中组件无样式档',true);
     pushUndo();
     const on=targets.some(c=>!c.big);
     targets.forEach(c=>{ if(NO_STYLE.has(c.t))return; c.big=on?1:0;
-      const dims=c.big?[SIZE[c.t][0]+40,SIZE[c.t][1]+12]:SIZE[c.t];
+      const dims=dimsOf(c);
       c.x=Math.max(0,Math.min(320-dims[0],c.x));
       c.y=Math.max(0,Math.min(480-dims[1],c.y)); });
     markDirty(); renderInspector();
@@ -2293,7 +2297,7 @@ function renderFreeEditor(page, root){
   un.onclick=undo;
   const re=el('button','button','重做');
   re.onclick=redo;
-  bar.append(del,dup,hide,lock,group,ungroup,up1,down1,un,re,clear);
+  bar.append(del,dup,style,hide,lock,group,ungroup,up1,down1,un,re,clear);
   wrap.append(form);
   canvas.tabIndex=0;
   canvas.addEventListener('keydown',ev=>{

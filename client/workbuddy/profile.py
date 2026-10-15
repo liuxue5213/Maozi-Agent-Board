@@ -36,6 +36,23 @@ DEFAULT_PROFILE = {
 }
 
 
+# 自由布局组件的「常规尺寸」（设备像素）。单一真源：Web 编辑器 app.js 的 SIZE 表
+# 必须与之一致，否则「预览 ≠ 真机」——有 test_editor_size_consistency.py 锁住。
+FREE_SIZES = {"clock": (220, 60), "date": (260, 28), "lunar": (304, 28),
+              "weather": (240, 36), "sys": (280, 28), "quote": (300, 96),
+              "ai_cost": (304, 116), "pet": (96, 120),
+              "remind": (304, 28), "alarm": (280, 28),
+              "countdown": (304, 28), "env": (240, 28), "net": (240, 28),
+              "text": (200, 28), "stat": (304, 28), "music": (304, 76),
+              "ai_focus": (304, 64), "calendar": (304, 28)}
+# 「大字档」尺寸：clock/weather 有专属档，其余非 ai_cost/pet/music 者 +40/+12；
+# ai_cost/pet/music 不支持大字（不在表中 → 校验时大字被重置）。app.js 的 BIG_FIXED 同源。
+FREE_BIG_SIZES = {"clock": (260, 64), "weather": (240, 40)}
+FREE_BIG_SIZES.update({k: (v[0] + 40, v[1] + 12)
+                       for k, v in FREE_SIZES.items()
+                       if k not in FREE_BIG_SIZES and k not in ("ai_cost", "pet", "music")})
+
+
 # 面板像素格式：与颜色映射文件 client/workbuddy/web_assets/color-map.json 的
 # panel.pixelFormat 对应（ST7796 / RGB565）。对比度必须按量化后的值核算。
 PANEL_BITS = (5, 6, 5)
@@ -287,23 +304,10 @@ def validate_profile(raw):
             comps = page.get("components")
             if not isinstance(comps, list) or len(comps) > 8:
                 raise ValueError("自由布局页组件需为 ≤8 项的列表")
-            allowed = ("clock", "date", "lunar", "weather", "sys", "quote",
-                       "ai_cost", "pet", "remind", "alarm", "countdown",
-                       "env", "net", "text", "stat", "music", "ai_focus",
-                       "calendar")
-            sizes = {"clock": (220, 60), "date": (260, 28), "lunar": (304, 28),
-                     "weather": (240, 36), "sys": (280, 28), "quote": (300, 96),
-                     "ai_cost": (304, 116), "pet": (96, 120),
-                     "remind": (304, 28), "alarm": (280, 28),
-                     "countdown": (304, 28), "env": (240, 28), "net": (240, 28),
-                     "text": (200, 28), "stat": (304, 28), "music": (304, 76),
-                     "ai_focus": (304, 64), "calendar": (304, 28)}
+            allowed = tuple(FREE_SIZES)
+            sizes = FREE_SIZES
             colors = (0, 1, 2, 3)   # 0=正文 1=强调 2=次要 3=警示
-            # 大字档尺寸：宽度 +40 容纳 28px 字号（clock/weather 保持专档）
-            big_sizes = {"clock": (260, 64), "weather": (240, 40)}
-            big_sizes.update({k: (v[0] + 40, v[1] + 12)
-                              for k, v in sizes.items()
-                              if k not in big_sizes and k not in ("ai_cost", "pet", "music")})
+            big_sizes = FREE_BIG_SIZES
             out_comps = []
             for c in comps:
                 if not isinstance(c, dict):
