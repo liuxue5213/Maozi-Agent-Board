@@ -76,19 +76,26 @@ inline void sensors_init() {
 
     // 用选定的总线方向初始化传感器
     tof_ok = tof.begin(&Wire1);
-    if (!tof_ok) Serial.println("[SN] VL6180X not found");
+    Serial.printf("[SN] VL6180X : %s\n", tof_ok ? "OK @0x29" : "not found");
     aht_ok = aht.begin(&Wire1);
-    if (!aht_ok) Serial.println("[SN] AHT20 not found");
-    bmp_ok = bmp.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID) ||
-             bmp.begin(BMP280_ADDRESS, BMP280_CHIPID);
+    Serial.printf("[SN] AHT20    : %s\n", aht_ok ? "OK @0x38" : "not found");
+    // BMP280 可能挂在 0x76（SDO→GND）或 0x77（SDO→VCC），两个地址都试
+    if (bmp.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID)) {
+        bmp_ok = true;
+        Serial.printf("[SN] BMP280   : OK @0x76\n");
+    } else if (bmp.begin(BMP280_ADDRESS, BMP280_CHIPID)) {
+        bmp_ok = true;
+        Serial.printf("[SN] BMP280   : OK @0x77\n");
+    } else {
+        bmp_ok = false;
+        Serial.printf("[SN] BMP280   : not found\n");
+    }
     if (bmp_ok) {
         bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
                         Adafruit_BMP280::SAMPLING_X2,
                         Adafruit_BMP280::SAMPLING_X16,
                         Adafruit_BMP280::FILTER_X16,
                         Adafruit_BMP280::STANDBY_MS_63);
-    } else {
-        Serial.println("[SN] BMP280 not found");
     }
 }
 
@@ -109,8 +116,14 @@ inline bool sensors_sample_environment() {
 inline void sensors_sample_auxiliary() {
     g_pressure = NAN; g_distance = NAN;
     if (bmp_ok) {
+        float t_bmp = bmp.readTemperature();
         float hpa = bmp.readPressure() / 100.0f;
         if (isfinite(hpa) && hpa >= 300 && hpa <= 1100) g_pressure = hpa;
+        // AHT20 缺失时，用 BMP280 的温度兜底（湿度仍为 NA，屏幕上会标注传感器来源）
+        if (!aht_ok && isnan(g_temp) && isfinite(t_bmp) && t_bmp >= -20 && t_bmp <= 80) {
+            g_temp = t_bmp;
+            snprintf(g_env_source, sizeof(g_env_source), "BMP280");
+        }
     }
     if (tof_ok) {
         uint8_t range = tof.readRange();

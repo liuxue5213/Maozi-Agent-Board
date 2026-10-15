@@ -19,9 +19,10 @@
 #define PIN_DHT   4
 
 // ---- I2C 传感器（VL6180X + AHT20 + BMP280）----
-// 实物接线：SDA→GPIO1、SCL→GPIO2；sensors_init 也会探测反接方向。
-#define PIN_SSDA  1
-#define PIN_SSCL  2
+// 用户实测接线：SDA→GPIO2、SCL→GPIO1（与旧文档里的 GPIO1/2 相反）。
+// sensors_init 会探测两种接法，写反也能用；这里把首选组合对齐实测，启动更快、日志更准。
+#define PIN_SSDA  2
+#define PIN_SSCL  1
 
 // ---- DS1302 RTC ----
 #define PIN_DS1302_CE  40
