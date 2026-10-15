@@ -3275,6 +3275,7 @@ function renderTaskView(){
   renderTvIdleOptions();
   renderPageSelect(); renderTaskPages(); renderTaskPreview(); renderThemeGrid();
   if(taskTab==='pages'){renderPages();renderPalette();renderInspector()}
+  else if(taskTab==='themes')renderInspector()
   if(taskTab==='look')renderInspector();
   if(taskTab==='multi')renderMultiPane();
 }
@@ -3551,6 +3552,8 @@ function bind(){
   document.querySelectorAll('.nav-item').forEach(b=>b.onclick=()=>switchView(b.dataset.view));
   const lastView=localStorage.getItem('workbuddy-view');
   if(lastView&&document.getElementById('view-'+lastView))switchView(lastView);
+  // 归一屏幕编辑的分栏可见性（draft 未就绪时 switchTaskTab 只切显示，不渲染）。
+  switchTaskTab(taskTab);
 
   // 命令面板 & 快捷键帮助（优化#5/#6）
   $('btn-cmd-hint').onclick=()=>openCmd(true);
@@ -3648,10 +3651,8 @@ function bind(){
     renderPageSelect();renderTaskPages();renderTaskPreview();
     notice('已恢复默认页面组合，保存并同步后生效');
   };
-  $('tab-layouts').onclick=()=>switchTaskTab('layouts');
   $('tab-pages').onclick=()=>switchTaskTab('pages');
   $('tab-themes').onclick=()=>switchTaskTab('themes');
-  $('tab-look').onclick=()=>switchTaskTab('look');
   $('tab-multi').onclick=()=>switchTaskTab('multi');
   $('btn-multi-edit').onclick=()=>switchTaskTab('pages');
   $('tab-preset-themes').onclick=()=>{themeTab='preset';selectedThemeKey=null;
@@ -3662,7 +3663,7 @@ function bind(){
     $('tab-my-themes').classList.add('active');$('tab-preset-themes').classList.remove('active');
     $('tab-my-themes').setAttribute('aria-selected','true');$('tab-preset-themes').setAttribute('aria-selected','false');
     renderThemeGrid()};
-  $('btn-theme-options').onclick=()=>switchTaskTab('look');
+  $('btn-theme-options').onclick=()=>switchTaskTab('themes');
   $('btn-apply-theme').onclick=pending($('btn-apply-theme'),applySelectedTheme);
   $('btn-source-jump').onclick=()=>switchView('overview');
   $('btn-deep-edit').onclick=()=>switchTaskTab('pages');
@@ -4760,26 +4761,27 @@ function bind(){
     });
   }
 }
-let taskTab='layouts';
+let taskTab='pages';
+/* 屏幕编辑已合并入口：布局方案并入「页面编排」、显示设置并入「外观」。
+   旧标识（layouts/look）重定向，深链/旧按钮仍可用。 */
 function switchTaskTab(which){
+  if(which==='layouts')which='pages';
+  if(which==='look')which='themes';
   const tabs={
-    layouts:['tab-layouts','pane-layouts'],
-    pages:['tab-pages','spane-pages'],
-    themes:['tab-themes','pane-themes'],
-    look:['tab-look','spane-look'],
-    multi:['tab-multi','pane-multi'],
+    pages:['tab-pages',['spane-pages','pane-layouts']],
+    themes:['tab-themes',['pane-themes','spane-look']],
+    multi:['tab-multi',['pane-multi']],
   };
-  if(!tabs[which])which='layouts';
+  if(!tabs[which])which='pages';
   taskTab=which;
-  Object.entries(tabs).forEach(([key,[tabId,paneId]])=>{
-    const on=key===which, tab=$(tabId), pane=$(paneId);
+  Object.entries(tabs).forEach(([key,[tabId,paneIds]])=>{
+    const on=key===which, tab=$(tabId);
     if(tab){tab.classList.toggle('active',on);tab.setAttribute('aria-selected',on?'true':'false')}
-    if(pane)pane.hidden=!on;
+    paneIds.forEach(pid=>{const p=$(pid); if(p)p.hidden=!on});
   });
   if(!draft)return;
   if(which==='pages'){renderPages();renderPalette();renderInspector()}
-  if(which==='themes')renderThemeGrid();
-  if(which==='look')renderInspector();
+  if(which==='themes'){renderThemeGrid();renderInspector()}
   if(which==='multi')renderMultiPane();
 }
 /* 多窗格：把配置里的页面逐页平铺。用的是同一个 devScreen()，
@@ -4796,7 +4798,7 @@ function renderMultiPane(){
     cell.append(el('span','multi-cap',`第 ${i+1} 页 · ${page.title}`));
     cell.onclick=()=>{
       previewPage=i;tv.layout=tv.layout;renderPageSelect();renderTaskPages();
-      switchTaskTab('layouts');renderTaskPreview();
+      switchTaskTab('pages');renderTaskPreview();
     };
     /* 多窗格点击落点保持在本视图，不进设置 */
     root.append(cell);
