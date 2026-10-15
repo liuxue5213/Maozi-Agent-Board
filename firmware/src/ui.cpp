@@ -14,6 +14,8 @@
 #include "extra/others/snapshot/lv_snapshot.h"
 
 extern float g_temp, g_hum;
+extern float g_pressure, g_distance;
+extern char g_env_source[8];
 void send_touch(const char* page);
 
 // 竖屏 320×480 几何常量
@@ -65,6 +67,7 @@ struct WidgetView {
 };
 struct PageView {
     lv_obj_t *screen = nullptr, *conn = nullptr, *alert = nullptr;
+    lv_obj_t *health_alert = nullptr;
     lv_obj_t *topclock = nullptr, *topwx = nullptr, *topdot = nullptr;
     lv_obj_t *offbar = nullptr;   // 离线状态条（顶部 4px 红条）
     lv_obj_t *inbox_lbl = nullptr;  // 收件箱角标（页脚右下「N件」，琥珀色）
@@ -77,12 +80,19 @@ struct PageView {
     WidgetView widgets[4];
 };
 
-PageView views[6];
+PageView views[10];
+static uint8_t widget_page_slot(const WidgetView* widget) {
+    for (uint8_t p = 0; p < 6; ++p)
+        for (uint8_t w = 0; w < 4; ++w)
+            if (&views[p].widgets[w] == widget) return p;
+    return 0;
+}
 uint8_t view_count = 0, current_page = 0;
 uint32_t bg = COL_BG, grad = COL_BG, card = COL_CARD, accent = COL_ACCENT;
 uint8_t card_opa = 255;              // 卡片不透明度（0-255），背景图模式下 70% 左右最有层次
 uint32_t text_color = COL_TEXT, sub_color = COL_SUB;
 bool online = false, have_data = false, alarm_active = false;
+static uint32_t health_local_snooze_ms = 0;
 static int inbox_pending = -1;   // 服务端收件箱待处理数（build_page 与角标共用）
 bool top_clock = true, top_wx = true;
 Telemetry latest;
@@ -113,7 +123,7 @@ uint8_t saver_style = 0;
 struct PetParts {
     lv_obj_t *root=nullptr, *grp=nullptr, *head=nullptr, *body=nullptr;
     lv_obj_t *eye_l=nullptr, *eye_r=nullptr, *glow_l=nullptr, *glow_r=nullptr;
-    lv_obj_t *mouth=nullptr, *beak=nullptr, *chest=nullptr;
+    lv_obj_t *mouth=nullptr, *beak=nullptr, *chest=nullptr, *muzzle=nullptr, *nose=nullptr;
     lv_obj_t *arml=nullptr, *armr=nullptr, *feetl=nullptr, *feetr=nullptr;
     lv_obj_t *earl=nullptr, *earr=nullptr, *tail=nullptr, *ant=nullptr, *badge=nullptr;
     int last_hash = -1;
@@ -121,7 +131,15 @@ struct PetParts {
     int eye_y = 0;
     int sz = 1;
 };
-static PetParts pet_ai, pet_page;
+static PetParts pet_ai[10];
+struct PetPageVisual {
+    PetParts parts;
+    lv_obj_t* photo = nullptr;
+    lv_obj_t* motion = nullptr;
+    lv_obj_t* tint = nullptr;
+    char photo_frame[24] = "";
+};
+static PetPageVisual pet_pages[10];
 
 // P1-1 活动舞台：AI 页「其余会话」行的迷你角色（24×30，头/眼/嘴/身/徽标），
 // 表情与配色由 pet_mini_apply 按该行会话状态实时刷新（见 render_ai）。
@@ -129,14 +147,13 @@ struct MiniPet {
     lv_obj_t *root=nullptr, *head=nullptr, *eye_l=nullptr, *eye_r=nullptr;
     lv_obj_t *mouth=nullptr, *body=nullptr, *badge=nullptr;
 };
-static MiniPet pet_mini[3];   // AI 页 3 行会话各一只
-static lv_obj_t* pet_photo = nullptr;    // 宠物页角色图层（图片资源包）
-static lv_obj_t* pet_tint = nullptr;     // 氛围层：昼夜/雨天色罩（盖图、低于控件）
-static lv_timer_t* work_timer = nullptr; // working 动画交替 timer（A/B 双帧）
-static bool work_alt = false;
+static MiniPet pet_mini[10][3]; // 各 AI 页独立的 3 行会话角色
+static lv_timer_t* work_timer = nullptr; // 宠物局部动作计时器
+static uint32_t pet_anim_start = 0;
+static uint8_t pet_anim_alpha = 0;
 static void work_anim_flip(lv_timer_t* t);
-static void workanim_prepare(void);      // 解码 A/B 帧（各一次）
-static char pet_photo_frame[24] = "";    // 当前显示的帧名（pet_<x>.jpg）
+static bool petanim_prepare(PetPageVisual& visual, const char* frame);
+static char pet_anim_frame[24] = "";     // 当前双帧动画所属状态
 // 相册轮播：当前文件序号 / 上次轮换时刻
 static uint8_t sv_idx = 1, sv_count = 0;
 static uint32_t sv_last_rot = 0;
@@ -279,15 +296,15 @@ void mark_alarm_fired(const char* id, const char* date) {
     save_fired_slot((uint8_t)slot);
 }
 
-// ---- 覆盖面板：0 无 1 启动器 2 控制中心 ----
-uint8_t overlay = 0;
-lv_obj_t *scr_settings = nullptr;
-lv_obj_t *launch_cells[12] = {};
+// 独立控制页的动态标签；重建页面时必须清空，避免访问已销毁对象。
 char launch_ids[12][13];
 uint8_t launch_count = 0;
 lv_obj_t *ctrl_vol_lbl = nullptr, *ctrl_mute_lbl = nullptr, *ctrl_bright_lbl = nullptr;
-// 设置页「正在播放」（NP 遥测驱动：歌名 / 歌手·进度 / 进度条）
-lv_obj_t *np_title_lbl = nullptr, *np_sub_lbl = nullptr, *np_fill = nullptr;
+lv_obj_t *ctrl_vol_fill = nullptr;
+lv_obj_t *ctrl_play_btn = nullptr, *ctrl_prev_btn = nullptr, *ctrl_next_btn = nullptr;
+// 控制页「正在播放」（NP 遥测驱动）
+lv_obj_t *np_title_lbl = nullptr, *np_sub_lbl = nullptr, *np_time_lbl = nullptr;
+lv_obj_t *np_state_lbl = nullptr, *np_fill = nullptr;
 
 lv_obj_t* label(lv_obj_t* parent, const char* value, int size, uint32_t color,
                 int x, int y, int width, int height = -1) {
@@ -453,10 +470,15 @@ int task_count() {
 }
 
 void render_all();
+void render_pet_page(WidgetView& view);
 
 void switch_page(uint8_t target, bool animated) {
     if (target >= view_count || target == current_page) return;
     current_page = target;
+    // JPEG 解码缓冲由宠物页共享；切页前把目标页绑定到当前帧。
+    pet_pages[target].photo_frame[0] = 0;
+    // 后台页不做周期性组件重绘；切入前按最新遥测补齐一次。
+    render_all();
     if (animated)
         lv_scr_load_anim(views[target].screen, LV_SCR_LOAD_ANIM_FADE_ON, 150, 0, false);
     else lv_scr_load(views[target].screen);
@@ -470,43 +492,19 @@ void page_click(lv_event_t* event) {
     switch_page(target, false);
 }
 
-void open_overlay(uint8_t which);
-void close_overlay();
-void open_settings_cb(lv_event_t*) { open_overlay(1); }
-void close_overlay_cb(lv_event_t*) { close_overlay(); }
-
-// ---------- 覆盖面板开合（设置页 = 原启动器 + 控制中心 合并） ----------
-void close_overlay() {
-    if (!overlay) return;
-    overlay = 0;
-    lv_scr_load(views[current_page].screen);
+void health_snooze_cb(lv_event_t*) {
+    health_local_snooze_ms = millis();
+    send_touch("BREAK10");
+    for (uint8_t p = 0; p < view_count; ++p)
+        if (views[p].health_alert)
+            lv_obj_add_flag(views[p].health_alert, LV_OBJ_FLAG_HIDDEN);
 }
 
-void open_overlay(uint8_t which) {
-    if (overlay == which || !scr_settings) return;
-    overlay = which;
-    lv_scr_load_anim(scr_settings, LV_SCR_LOAD_ANIM_FADE_ON, 150, 0, false);
-    send_touch("SETTINGS_OPEN");
-}
-
-void settings_close_gesture(lv_event_t*) {
-    lv_indev_t* input = lv_indev_get_act();
-    if (!input) return;
-    lv_dir_t direction = lv_indev_get_gesture_dir(input);
-    if (direction == LV_DIR_TOP || direction == LV_DIR_BOTTOM) close_overlay();
-}
-
-// 页面手势：横滑切页；面板打开时竖滑收起。
-// 原竖滑开启动器/控制中心的手势移除——入口统一为左下角 ⚙（避免误触发）。
+// 页面手势：横滑切页，控制页也是普通页面。
 void gesture(lv_event_t* event) {
     lv_indev_t* input = lv_indev_get_act();
     if (!input) return;
     lv_dir_t direction = lv_indev_get_gesture_dir(input);
-    if (overlay) {   // 面板打开时：竖滑收起
-        if (direction == LV_DIR_TOP || direction == LV_DIR_BOTTOM)
-            close_overlay();
-        return;
-    }
     if (direction == LV_DIR_LEFT && current_page + 1 < view_count)
         switch_page(current_page + 1, true);
     else if (direction == LV_DIR_RIGHT && current_page > 0)
@@ -518,7 +516,6 @@ void launch_app(lv_event_t* event) {
     uint8_t index = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
     if (index < launch_count) {
         Serial.print(uplink_launch(launch_ids[index]));
-        close_overlay();
     }
 }
 
@@ -635,7 +632,7 @@ void make_ai(WidgetView& view, lv_obj_t* screen, const char* filter) {
         lv_obj_add_event_cb(row, choose_task, LV_EVENT_CLICKED, &view);
         view.rows[i] = row;
         // P1-1 活动舞台：状态点 → 迷你角色（配色/眼高/「!」徽标随会话状态）
-        draw_pet_mini(pet_mini[i], row, 7, 14);
+        draw_pet_mini(pet_mini[widget_page_slot(&view)][i], row, 7, 14);
         view.extra[i + 1] = label(row, "", 20, text_color, 34,  4, 92, 26);   // 行1 工具
         view.extra[i + 4] = label(row, "", 20, sub_color, 126,  4, 150, 26);  // 行1 右：项目·用时
         lv_obj_set_style_text_align(view.extra[i + 4], LV_TEXT_ALIGN_RIGHT, 0);
@@ -670,7 +667,7 @@ static lv_obj_t* pet_rect(lv_obj_t* parent, int x, int y, int w, int h,
     return o;
 }
 
-/* 画一只宠物：type = robot / cat / chick；sz=1 为 AI 卡小只（64×80），
+/* 画一只宠物：type = robot / cat / chick / dog；sz=1 为 AI 卡小只（64×80），
    sz=2 为宠物页大只（128×160）。所有部件挂进 p.grp，摇摆动画作用其上，
    抖动/跳跃动画作用在 p.root——两组动画互不打架。 */
 /* 十六进制混色：wa = a 的权重（0-255）。宠物身体色 = 主题强调色×背景，
@@ -689,10 +686,12 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
     p.base_x = x; p.base_y = y; p.sz = sz;
     bool is_cat = !strcmp(type, "cat");
     bool is_chick = !strcmp(type, "chick");
-    bool is_robot = !is_cat && !is_chick;
+    bool is_dog = !strcmp(type, "dog");
+    bool is_robot = !is_cat && !is_chick && !is_dog;
     // 猫=强调色浓（62%）体积感强，小鸡=淡（38%）更娇嫩；描边统一主题强调色
     uint32_t body_c = is_cat ? mix_hex(accent, bg, 158)
                     : is_chick ? mix_hex(accent, bg, 97)
+                    : is_dog ? 0xB98150
                     : 0x46689C;
     uint32_t edge_c = accent;
     uint32_t limb_c = body_c;
@@ -715,13 +714,24 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
     lv_obj_set_style_pad_all(p.grp, 0, 0);
     lv_obj_clear_flag(p.grp, LV_OBJ_FLAG_SCROLLABLE);
 
+    // 低对比投影给小尺寸角色一个稳定的落点，不改变主题背景。
+    pet_rect(p.grp, 12*sz, 73*sz, 42*sz, 5*sz, 3*sz,
+             mix_hex(card, bg, 100));
     if (is_robot) p.ant = pet_rect(p.grp, 29*sz, 0, 6*sz, 6*sz, 3*sz, COL_OK);
-    if (is_cat) {
-        p.earl = pet_rect(p.grp, 12*sz, 0, 10*sz, 9*sz, 3*sz, body_c, sz, edge_c);
-        p.earr = pet_rect(p.grp, 42*sz, 0, 10*sz, 9*sz, 3*sz, body_c, sz, edge_c);
+    if (is_cat || is_dog) {
+        p.earl = pet_rect(p.grp, 12*sz, 0, 10*sz, (is_dog ? 12 : 9)*sz,
+                          3*sz, body_c, sz, edge_c);
+        p.earr = pet_rect(p.grp, 42*sz, 0, 10*sz, (is_dog ? 12 : 9)*sz,
+                          3*sz, body_c, sz, edge_c);
+        if (is_dog) {
+            pet_rect(p.earl, 2*sz, 3*sz, 6*sz, 6*sz, 2*sz, 0xDDAE83);
+            pet_rect(p.earr, 2*sz, 3*sz, 6*sz, 6*sz, 2*sz, 0xDDAE83);
+        }
     }
-    int head_y = is_cat ? 7*sz : 5*sz;
-    p.head = pet_rect(p.grp, 10*sz, head_y, 44*sz, 28*sz, 8*sz, body_c, sz, edge_c);
+    // head_y/body_y 用逻辑像素，乘 sz 只做一次。旧写法让大宠物的
+    // 眼、嘴比头多乘一次 sz，五官下沉到脸外。
+    int head_y = (is_cat || is_dog) ? 7 : 5;
+    p.head = pet_rect(p.grp, 10*sz, head_y*sz, 44*sz, 28*sz, 8*sz, body_c, sz, edge_c);
     p.glow_l = pet_rect(p.grp, 16*sz, (head_y+5)*sz, 14*sz, 14*sz, 7*sz, accent);
     p.glow_r = pet_rect(p.grp, 34*sz, (head_y+5)*sz, 14*sz, 14*sz, 7*sz, accent);
     lv_obj_set_style_bg_opa(p.glow_l, LV_OPA_50, 0);
@@ -729,17 +739,27 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
     p.eye_l = pet_rect(p.grp, 19*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, text_color);
     p.eye_r = pet_rect(p.grp, 37*sz, (head_y+8)*sz, 8*sz, 8*sz, 4*sz, text_color);
     p.eye_y = (head_y + 8) * sz;
+    if (is_dog || is_cat) {
+        p.muzzle = pet_rect(p.grp, 24*sz, (head_y+17)*sz, 16*sz, 9*sz,
+                            4*sz, is_dog ? 0xF2DFC5 : mix_hex(text_color, body_c, 170));
+        p.nose = pet_rect(p.grp, 30*sz, (head_y+17)*sz, 4*sz, 3*sz,
+                          2*sz, is_dog ? 0x382B2C : text_color);
+    }
     if (is_chick) p.beak = pet_rect(p.grp, 26*sz, (head_y+17)*sz, 12*sz, 6*sz, 2*sz, 0xFFB84D);
-    else p.mouth = pet_rect(p.grp, 24*sz, (head_y+19)*sz, 16*sz, 3*sz, 1*sz, accent);
-    int body_y = head_y + 30*sz;
-    p.body = pet_rect(p.grp, 8*sz, body_y, 48*sz, 26*sz, 8*sz, body_c, sz, edge_c);
-    p.chest = pet_rect(p.grp, 28*sz, body_y + 8*sz, 8*sz, 5*sz, 2*sz,
-                       is_robot ? accent : edge_c);
-    p.arml = pet_rect(p.grp, 0, body_y + 3*sz, 7*sz, 16*sz, 3*sz, limb_c);
-    p.armr = pet_rect(p.grp, 57*sz, body_y + 3*sz, 7*sz, 16*sz, 3*sz, limb_c);
-    if (is_cat) p.tail = pet_rect(p.grp, 58*sz, body_y - 12*sz, 6*sz, 22*sz, 3*sz, limb_c);
-    p.feetl = pet_rect(p.grp, 16*sz, body_y + 28*sz, 16*sz, 7*sz, 3*sz, limb_c);
-    p.feetr = pet_rect(p.grp, 34*sz, body_y + 28*sz, 16*sz, 7*sz, 3*sz, limb_c);
+    else p.mouth = pet_rect(p.grp, 24*sz, (head_y+22)*sz, 16*sz, 3*sz, 1*sz,
+                            is_dog ? 0x765039 : accent);
+    int body_y = head_y + 30;
+    p.body = pet_rect(p.grp, 8*sz, body_y*sz, 48*sz, 26*sz, 8*sz, body_c, sz, edge_c);
+    p.chest = pet_rect(p.grp, (is_dog ? 22 : 28)*sz, (body_y+8)*sz,
+                       (is_dog ? 20 : 8)*sz, (is_dog ? 11 : 5)*sz, 3*sz,
+                       is_robot ? accent : is_dog ? 0xF2DFC5 : edge_c);
+    p.arml = pet_rect(p.grp, 0, (body_y+3)*sz, 7*sz, 16*sz, 3*sz, limb_c);
+    p.armr = pet_rect(p.grp, 57*sz, (body_y+3)*sz, 7*sz, 16*sz, 3*sz, limb_c);
+    if (is_cat || is_dog)
+        p.tail = pet_rect(p.grp, 58*sz, (body_y-12)*sz, 6*sz,
+                          (is_dog ? 19 : 22)*sz, 3*sz, limb_c);
+    p.feetl = pet_rect(p.grp, 16*sz, (body_y+28)*sz, 16*sz, 7*sz, 3*sz, limb_c);
+    p.feetr = pet_rect(p.grp, 34*sz, (body_y+28)*sz, 16*sz, 7*sz, 3*sz, limb_c);
     p.badge = lv_label_create(p.grp);
     lv_obj_set_pos(p.badge, 44*sz, 0);
     lv_obj_set_style_text_color(p.badge, lv_color_hex(COL_WARN), 0);
@@ -774,6 +794,16 @@ static void draw_pet(PetParts& p, lv_obj_t* parent, const char* type,
         lv_anim_set_values(&a, 6 * sz, 2 * sz);
         lv_anim_set_time(&a, 800);
         lv_anim_set_playback_time(&a, 800);
+        lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_start(&a);
+    }
+    if (p.tail) {
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, p.tail);
+        lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_x);
+        lv_anim_set_values(&a, 58 * sz, 61 * sz);
+        lv_anim_set_time(&a, is_dog ? 360 : 820);
+        lv_anim_set_playback_time(&a, is_dog ? 360 : 820);
         lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
         lv_anim_start(&a);
     }
@@ -848,8 +878,7 @@ static PetLayer pet_arbitrate(const char* st, uint32_t now) {
         } else pet_calm_since = 0;
     } else pet_calm_since = 0;
 
-    // 久坐提醒（竞品「偶尔提醒休息」）：客户端检测键鼠空闲超阈值置 pb，
-    // 犯困姿态提示休息；任务运行中不打扰（working 保持工作姿态）。
+    // 连续使用电脑达到阈值后，宠物犯困提示休息；工作动画优先。
     if (latest.pb && !working) return PL_SLEEPY;
 
     // 活动层（场景过期后的 ERROR/DONE 仍以活动层形式兜底显示）
@@ -933,12 +962,37 @@ static void pet_apply_expression(PetParts& p, const char* st,
         else if (energy < 20) badge = "累";
     }
 
-    int hash = (int)L * 31 + hunger + thirst + energy;
+    // 三项值分别参与签名；简单求和会让「饿」与「渴」交换时误判为未变化。
+    int hash = (((int)L * 101 + hunger) * 101 + thirst) * 101 + energy;
     if (hash == p.last_hash) return;
     p.last_hash = hash;
 
     pet_set_eyes(p, eh, blink, dy);
     pet_set_bob(p, bob_ms, bob_amp);
+    // 运动/工作不只变表情：像素角色的双臂单独交替摆动。
+    // 状态退出先停旧动画，避免手臂停在上一状态的中间位置。
+    for (lv_obj_t* arm : {p.arml, p.armr})
+        if (arm) lv_anim_del(arm, (lv_anim_exec_xcb_t)lv_obj_set_x);
+    if (p.arml) lv_obj_set_x(p.arml, 0);
+    if (p.armr) lv_obj_set_x(p.armr, 57 * p.sz);
+    if (L == PL_PLAYING || L == PL_WORKING) {
+        const int span = (L == PL_PLAYING ? 7 : 3) * p.sz;
+        const int tempo = L == PL_PLAYING ? 240 : 420;
+        for (int side = 0; side < 2; ++side) {
+            lv_obj_t* arm = side ? p.armr : p.arml;
+            if (!arm) continue;
+            int start = side ? 57 * p.sz : 0;
+            lv_anim_t move;
+            lv_anim_init(&move);
+            lv_anim_set_var(&move, arm);
+            lv_anim_set_exec_cb(&move, (lv_anim_exec_xcb_t)lv_obj_set_x);
+            lv_anim_set_values(&move, start, start + (side ? -span : span));
+            lv_anim_set_time(&move, tempo);
+            lv_anim_set_playback_time(&move, tempo);
+            lv_anim_set_repeat_count(&move, LV_ANIM_REPEAT_INFINITE);
+            lv_anim_start(&move);
+        }
+    }
     lv_obj_set_style_border_color(p.body, lv_color_hex(edge_col), 0);
     lv_obj_set_style_bg_color(p.eye_l, lv_color_hex(eye_col), 0);
     lv_obj_set_style_bg_color(p.eye_r, lv_color_hex(eye_col), 0);
@@ -976,28 +1030,11 @@ static void pet_apply_expression(PetParts& p, const char* st,
     }
 }
 
-static lv_obj_t* pet_img_ai = nullptr;   // AI 卡角落的角色图缩略
-
 void make_pet_compact(WidgetView& view, lv_obj_t* screen) {
     (void)screen;
-    workanim_prepare();
-    // 图片优先：自定义形象 > 状态帧 > 像素降级（缩略盖 AI 卡右上角）
-    const char* pick = petimg_exists("pet_custom") ? "pet_custom"
-                     : (petimg_exists("pet_working") ? "pet_working" : nullptr);
-    if (pick && petimg_decode_name(pick)) {
-        if (!pet_img_ai) {
-            pet_img_ai = lv_img_create(view.root);
-            lv_obj_set_pos(pet_img_ai, 226, 36);
-            lv_obj_set_size(pet_img_ai, 72, 108);
-        }
-        lv_img_set_src(pet_img_ai, (const void*)petimg_source());
-        lv_img_set_zoom(pet_img_ai, 56);            // 320 宽 → 70px
-        lv_obj_clear_flag(pet_img_ai, LV_OBJ_FLAG_HIDDEN);
-        if (pet_ai.root) lv_obj_add_flag(pet_ai.root, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-    if (pet_img_ai) lv_obj_add_flag(pet_img_ai, LV_OBJ_FLAG_HIDDEN);
-    draw_pet(pet_ai, view.root, g_profile.pet_type, 229, 42, 1);
+    // AI 卡用独立的轻量 LVGL 角色。全屏 JPEG 的 pet_pixels 是可变单缓冲，
+    // 把它共享给多页缩略会在切状态/重建时让其他页面突然换图，甚至引用旧控件。
+    draw_pet(pet_ai[widget_page_slot(&view)], view.root, g_profile.pet_type, 229, 42, 1);
 }
 
 // ---------- 自由布局页（竞品拖拽编辑器 v1） ----------
@@ -1327,56 +1364,87 @@ void render_free_page(PageView& page, const char* tb) {
 }
 
 void make_pet_page(WidgetView& view, lv_obj_t* screen) {
-    (void)view;
+    PetPageVisual& visual = pet_pages[widget_page_slot(&view)];
     // 彩色角色图层（/pet_<帧>.jpg 资源包）：存在对应帧时显示图片并隐藏
     // 像素宠物；无资源包保持像素绘制（诚实降级）。
-    pet_photo = lv_img_create(screen);
-    lv_obj_set_pos(pet_photo, 0, 0);
-    lv_obj_set_size(pet_photo, 320, 480);
+    visual.photo = lv_img_create(screen);
+    lv_obj_set_pos(visual.photo, 0, 0);
+    lv_obj_set_size(visual.photo, 320, 480);
+    // build_page 已先创建顶栏/页码。全屏照片需插在背景层之上、导航之下，
+    // 否则宠物页会把标题与页脚完全盖住。
+    int pet_layer = bgimg_ready() ? 1 : 0;
+    lv_obj_move_to_index(visual.photo, pet_layer++);
     // 图源优先级：用户上传的 custom 形象 > 状态帧图集 > 无（像素降级）。
     // 统一走 photo_ok 路径：custom 分支不提前 return（否则跳过 tint/状态条
     // 的创建，首次 rebuild 时 pet_tint 悬空 → lv_obj_add_flag(NULL) panic）。
     bool photo_ok = false;
     if (petimg_exists("pet_custom") && petimg_decode_name("pet_custom")) {
         photo_ok = true;
-    } else if (petimg_exists("pet_working")) {
-        workanim_prepare();
-        photo_ok = petimg_decode_name("pet_working");
+    } else if (petimg_exists("pet_idle") || petimg_exists("pet_working")) {
+        photo_ok = petimg_decode_name(petimg_exists("pet_idle") ? "pet_idle" : "pet_working");
     }
     if (photo_ok) {
-        lv_img_set_src(pet_photo, (const void*)petimg_source());
-        lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+        lv_img_set_src(visual.photo, (const void*)petimg_source());
+        lv_obj_clear_flag(visual.photo, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(visual.photo, LV_OBJ_FLAG_HIDDEN);
     }
-    draw_pet(pet_page, screen, g_profile.pet_type, 96, 66, 2);
+    visual.motion = lv_img_create(screen);
+    lv_obj_set_pos(visual.motion, PET_MOTION_X, PET_MOTION_Y);
+    lv_obj_set_size(visual.motion, PET_MOTION_W, PET_MOTION_H);
+    lv_obj_move_to_index(visual.motion, pet_layer++);
+    lv_obj_clear_flag(visual.motion, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(visual.motion, LV_OBJ_FLAG_HIDDEN);
+    draw_pet(visual.parts, screen, g_profile.pet_type, 96, 66, 2);
+    if (visual.parts.root) lv_obj_move_to_index(visual.parts.root, pet_layer++);
     if (photo_ok) {
-        if (pet_page.root) lv_obj_add_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
-    } else if (pet_page.root) {
-        lv_obj_clear_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
+        if (visual.parts.root) lv_obj_add_flag(visual.parts.root, LV_OBJ_FLAG_HIDDEN);
+    } else if (visual.parts.root) {
+        lv_obj_clear_flag(visual.parts.root, LV_OBJ_FLAG_HIDDEN);
     }
     // 氛围层：夜间压暗 / 傍晚暖色 / 雨天淡蓝（点击穿透，不影响触控）
-    pet_tint = lv_obj_create(screen);
-    lv_obj_set_pos(pet_tint, 0, 0);
-    lv_obj_set_size(pet_tint, 320, 480);
-    lv_obj_set_style_bg_opa(pet_tint, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(pet_tint, 0, 0);
-    lv_obj_set_style_radius(pet_tint, 0, 0);
-    lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    visual.tint = lv_obj_create(screen);
+    lv_obj_set_pos(visual.tint, 0, 0);
+    lv_obj_set_size(visual.tint, 320, 480);
+    lv_obj_move_to_index(visual.tint, pet_layer);
+    lv_obj_set_style_bg_opa(visual.tint, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(visual.tint, 0, 0);
+    lv_obj_set_style_radius(visual.tint, 0, 0);
+    lv_obj_clear_flag(visual.tint, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(visual.tint, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(visual.tint, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    // 底部半透明信息台保证亮色场景中的状态和按钮仍可读。
+    lv_obj_t* pet_controls = lv_obj_create(screen);
+    lv_obj_set_pos(pet_controls, 0, 358);
+    lv_obj_set_size(pet_controls, 320, 86);
+    lv_obj_set_style_bg_color(pet_controls, lv_color_hex(bg), 0);
+    lv_obj_set_style_bg_opa(pet_controls, LV_OPA_70, 0);
+    lv_obj_set_style_border_width(pet_controls, 0, 0);
+    lv_obj_set_style_radius(pet_controls, 0, 0);
+    lv_obj_clear_flag(pet_controls, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(pet_controls, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(pet_controls, LV_OBJ_FLAG_GESTURE_BUBBLE);
     // 三项数值收成一行，留出独立按钮行及 y446 页码导航。
     static const char* names[3] = {"饱食", "水分", "活力"};
     if (g_profile.pet_show_stats)
         for (int i = 0; i < 3; ++i) {
-            label1(screen, names[i], 14, sub_color, 12 + i * 100, 370, 48);
-            view.pm_val[i] = label1(screen, "--", 14, text_color, 62 + i * 100, 370, 42);
+            label1(screen, names[i], 20, sub_color, 12 + i * 100, 364, 48);
+            view.pm_val[i] = label1(screen, "--", 24, text_color, 60 + i * 100, 362, 44);
         }
     // 独立信息行始终在角色图和氛围层上方；与交互按钮开关无关。
-    for (uint8_t i = 0; i < g_profile.pet_field_n; ++i) {
-        view.extra[i] = label1(screen, "", 14, text_color, 12, 36 + i * 26, 296);
-        lv_obj_set_style_bg_color(view.extra[i], lv_color_hex(bg), 0);
+    bool one_line = g_profile.pet_density == 0;
+    bool full_rows = g_profile.pet_density == 2 && g_profile.pet_field_n <= 2;
+    uint8_t labels = one_line ? (g_profile.pet_field_n ? 1 : 0) : g_profile.pet_field_n;
+    for (uint8_t i = 0; i < labels; ++i) {
+        int x = (one_line || full_rows) ? 12 : 12 + (i % 2) * 150;
+        int y = (one_line ? 0 : (full_rows ? i : i / 2)) * 32 + 42;
+        int w = (one_line || full_rows) ? 296 : 146;
+        int font = (one_line || full_rows) ? 20 : 14;
+        view.extra[i] = label1(screen, "", font, text_color, x, y, w);
+        lv_obj_set_style_bg_color(view.extra[i], lv_color_hex(card), 0);
         lv_obj_set_style_bg_opa(view.extra[i], LV_OPA_70, 0);
+        lv_obj_set_style_radius(view.extra[i], 7, 0);
+        lv_obj_set_style_pad_left(view.extra[i], 5, 0);
     }
     if (g_profile.pet_show_buttons) {
         button(screen, "喂食", 12, 400, 96, 42, pet_action_cb, (void*)"feed");
@@ -1388,8 +1456,8 @@ void make_pet_page(WidgetView& view, lv_obj_t* screen) {
 /* 氛围层：按时段与天气给角色场景叠色，让静态图有"活"的气息。
    夜间(22-6)深蓝压暗；傍晚(18-22)暖橙；雨天(今日预报为雨系)淡蓝优先。
    无时钟/无匹配 → 无层（原画直出）。 */
-void pet_ambient_tick() {
-    if (!pet_tint) return;
+void pet_ambient_tick(PetPageVisual& visual) {
+    if (!visual.tint) return;
     uint32_t col = 0;
     uint8_t opa = 0;
     int64_t total = 0; int sod = 0;
@@ -1403,44 +1471,95 @@ void pet_ambient_tick() {
     if ((wcode >= 51 && wcode < 90) || wcode >= 95) {   // 雨系：优先于时段
         col = 0x24344E; opa = 80;
     }
+    // 彩色图包自身已绘好夜景与光照；避免再压暗 40% 后毛发细节消失。
+    if (visual.photo && !lv_obj_has_flag(visual.photo, LV_OBJ_FLAG_HIDDEN) && opa > 32)
+        opa = 32;
     if (opa) {
-        lv_obj_set_style_bg_color(pet_tint, lv_color_hex(col), 0);
-        lv_obj_set_style_bg_opa(pet_tint, opa, 0);
-        lv_obj_clear_flag(pet_tint, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_bg_color(visual.tint, lv_color_hex(col), 0);
+        lv_obj_set_style_bg_opa(visual.tint, opa, 0);
+        lv_obj_clear_flag(visual.tint, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(pet_tint, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(visual.tint, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
-/* working 动画：A/B 两帧各解码一次到独立缓冲，900ms 交替 src（打字起伏）。
-   只在 make_pet_page 时解码——动画期间的切换只是指针切换，零解码开销。 */
-static PetLayer pet_layer_now = PL_IDLE;   // 当前仲裁层（workanim 翻页让位用）
+/* 当前状态的 A/B 帧共用两块 PSRAM 缓冲。切状态时解码一次；计时器只
+   更新局部过渡层，避免整张场景每隔几秒突然换图。 */
+static PetLayer pet_layer_now = PL_IDLE;
 
-static void workanim_prepare(void) {
-    if (!workanim_ready(0))
-        workanim_decode(0, "pet_working.jpg");
-    if (!workanim_ready(1))
-        workanim_decode(1, "pet_working_b.jpg");
-    if (workanim_ready(0) && workanim_ready(1) && !work_timer)
-        work_timer = lv_timer_create(work_anim_flip, 900, nullptr);
+static uint32_t petanim_cycle(PetLayer layer) {
+    switch (layer) {
+    case PL_IDLE:     return 5400;  // 间歇眨眼
+    case PL_SLEEPING: return 3200; // 慢呼吸
+    case PL_SLEEPY:   return 2800;
+    case PL_GREETING: return 1100;
+    case PL_PLAYING:  return 850;
+    case PL_FEEDING:
+    case PL_DRINKING: return 1300;
+    case PL_WORKING:  return 1200;
+    default:          return 1800;
+    }
+}
+
+static bool petanim_prepare(PetPageVisual& visual, const char* frame) {
+    char alt[32], first[32];
+    snprintf(alt, sizeof(alt), "%s_b", frame);
+    if (!petimg_exists(alt)) return false;
+    snprintf(first, sizeof(first), "%s.jpg", frame);
+    strncat(alt, ".jpg", sizeof(alt) - strlen(alt) - 1);
+    if (strcmp(pet_anim_frame, frame) || !workanim_ready(0) || !workanim_ready(1)) {
+        if (!workanim_decode(0, first) || !workanim_decode(1, alt)) {
+            pet_anim_frame[0] = 0;
+            return false;
+        }
+        snprintf(pet_anim_frame, sizeof(pet_anim_frame), "%s", frame);
+    }
+    // B 帧与 A 帧的边缘羽化只计算一次。动画计时器仅改变图层透明度，
+    // 避免每 70ms 在 ESP32 上逐像素混合 260×264 区域后又让 LVGL 绘制。
+    const lv_img_dsc_t* motion = workanim_blend_roi(255);
+    if (!motion || !visual.motion) return false;
+    lv_img_set_src(visual.motion, (const void*)motion);
+    lv_obj_set_style_img_opa(visual.motion, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(visual.motion, LV_OBJ_FLAG_HIDDEN);
+    pet_anim_start = millis();
+    pet_anim_alpha = 0;
+    if (!work_timer) work_timer = lv_timer_create(work_anim_flip, 70, nullptr);
+    lv_timer_set_period(work_timer, 70);
+    lv_timer_reset(work_timer);
+    lv_timer_resume(work_timer);
+    return true;
 }
 
 static void work_anim_flip(lv_timer_t* t) {
-    if (!pet_photo || lv_obj_has_flag(pet_photo, LV_OBJ_FLAG_HIDDEN)) return;
-    // 非工作层（犯困/睡觉/问候/出错…）显示的是状态帧，翻页会让位：
-    // 否则 900ms 后又被 A/B 工作帧盖回去（久坐提醒姿态曾被盖掉）。
-    if (pet_layer_now != PL_WORKING) return;
-    if (!workanim_ready(0) || !workanim_ready(1)) {
-        Serial.printf("[WA] flip skip: ready0=%d ready1=%d\n",
-                      (int)workanim_ready(0), (int)workanim_ready(1));
-        return;
+    (void)t;
+    PetPageVisual& visual = pet_pages[current_page];
+    if (!visual.photo || !visual.motion || lv_obj_has_flag(visual.photo, LV_OBJ_FLAG_HIDDEN) ||
+        lv_obj_get_parent(visual.motion) != lv_scr_act()) return;
+    if (strcmp(visual.photo_frame, pet_anim_frame) ||
+        !workanim_ready(0) || !workanim_ready(1)) return;
+    uint32_t cycle = petanim_cycle(pet_layer_now);
+    uint32_t phase = (millis() - pet_anim_start) % cycle;
+    uint32_t begin = pet_layer_now == PL_IDLE ? cycle - 620 : 0;
+    uint32_t ramp = pet_layer_now == PL_SLEEPING ? 420 :
+                    pet_layer_now == PL_IDLE ? 180 : 220;
+    uint32_t hold = pet_layer_now == PL_SLEEPING ? 1000 :
+                    pet_layer_now == PL_IDLE ? 100 : 170;
+    uint8_t alpha = 0;
+    if (phase >= begin) {
+        uint32_t p = phase - begin;
+        if (p < ramp) alpha = (uint8_t)(p * 255 / ramp);
+        else if (p < ramp + hold) alpha = 255;
+        else if (p < 2 * ramp + hold)
+            alpha = (uint8_t)((2 * ramp + hold - p) * 255 / ramp);
     }
-    work_alt = !work_alt;
-    Serial.printf("[WA] flip alt=%d\n", (int)work_alt);
-    lv_img_set_src(pet_photo, (const void*)workanim_source(work_alt ? 1 : 0));
+    // 图层每次只更新发生变化的局部；不重绘整张背景。
+    if (alpha == pet_anim_alpha) return;
+    pet_anim_alpha = alpha;
+    lv_obj_set_style_img_opa(visual.motion, alpha, 0);
 }
 
 void render_pet_page(WidgetView& view) {
+    PetPageVisual& visual = pet_pages[widget_page_slot(&view)];
     int vals[3] = {latest.pet_h, latest.pet_t, latest.pet_e};
     for (int i = 0; i < 3; ++i) {
         if (view.pm_val[i]) {
@@ -1449,23 +1568,29 @@ void render_pet_page(WidgetView& view) {
             set_text(view.pm_val[i], line);
         }
     }
-    pet_ambient_tick();
+    pet_ambient_tick(visual);
     const AITask& task = latest.tasks[0];
-    for (uint8_t i = 0; i < g_profile.pet_field_n; ++i) {
+    bool one_line = g_profile.pet_density == 0;
+    uint8_t labels = one_line ? (g_profile.pet_field_n ? 1 : 0) : g_profile.pet_field_n;
+    for (uint8_t i = 0; i < labels; ++i) {
         if (!view.extra[i]) continue;
+        uint8_t field = g_profile.pet_fields[one_line ? (millis() / 4000) % g_profile.pet_field_n : i];
         char obuf[96] = "";
-        switch (g_profile.pet_fields[i]) {
+        switch (field) {
         case 1: snprintf(obuf, sizeof(obuf), "项目  %s", task.used && task.proj[0] ? task.proj : "暂无"); break;
         case 2: snprintf(obuf, sizeof(obuf), "工具  %s", task.used ? task.tool : "暂无"); break;
         case 3: snprintf(obuf, sizeof(obuf), "状态  %s", task.used ? state_short(task.state) : "空闲"); break;
         case 4: snprintf(obuf, sizeof(obuf), "用时  %d:%02d", task.used ? task.elapse / 60 : 0,
                          task.used ? task.elapse % 60 : 0); break;
-        case 5: snprintf(obuf, sizeof(obuf), "模型  %s", latest.ai_model[0] ? latest.ai_model : "暂无"); break;
-        case 6: if (latest.ai_tok_out >= 0) snprintf(obuf, sizeof(obuf), "本轮输出  %.1fk", latest.ai_tok_out / 1000.0);
-                else strcpy(obuf, "本轮输出  暂无"); break;
+        case 5: snprintf(obuf, sizeof(obuf), "模型  %s", task.used && latest.ai_model[0] ? latest.ai_model : "暂无"); break;
+        case 6: if (task.used && latest.ai_tok_out >= 0) snprintf(obuf, sizeof(obuf), "会话输出  %.1fk", latest.ai_tok_out / 1000.0);
+                else strcpy(obuf, "会话输出  暂无"); break;
         case 7: if (latest.day_tok_total >= 0) snprintf(obuf, sizeof(obuf), "今日 Token  %.1fk", latest.day_tok_total / 1000.0);
                 else strcpy(obuf, "今日 Token  暂无"); break;
-        case 8: snprintf(obuf, sizeof(obuf), "消息  %s", latest.afm[0] ? latest.afm : "暂无"); break;
+        case 8: snprintf(obuf, sizeof(obuf), "消息  %s", task.used && latest.afm[0] ? latest.afm : "暂无"); break;
+        case 9: snprintf(obuf, sizeof(obuf), "任务  %s", task.used && latest.ai_title[0] ? latest.ai_title : "暂无"); break;
+        case 10: if (task.used && latest.ai_tok_total >= 0) snprintf(obuf, sizeof(obuf), "会话总量  %.1fk", latest.ai_tok_total / 1000.0);
+                 else strcpy(obuf, "会话总量  暂无"); break;
         }
         set_text(view.extra[i], obuf);
     }
@@ -1474,39 +1599,64 @@ void render_pet_page(WidgetView& view) {
     pet_layer_now = layer;
     static const char* frame_of[] = {
         "pet_idle", "pet_thinking", "pet_working", "pet_sleepy",
-        "pet_sleeping", "pet_greeting", "pet_happy", "pet_happy",
-        "pet_greeting", "pet_working", "pet_error",
+        "pet_sleeping", "pet_greeting", "pet_happy",
+        "pet_feeding", "pet_drinking", "pet_playing", "pet_error",
     };
     const char* frame = frame_of[(int)layer];
-    Serial.printf("[PET] layer=%d frame=%s exists=%d loaded=%s\n",
-                  (int)layer, frame, (int)petimg_exists(frame), pet_photo_frame);
+    // 旧图包只有基础 9 帧；触摸场景缺专属帧时回退到原有画面。
+    if (!petimg_exists(frame)) {
+        if (layer == PL_FEEDING || layer == PL_DRINKING) frame = "pet_greeting";
+        else if (layer == PL_PLAYING) frame = "pet_working";
+    }
     if (petimg_exists(frame)) {
-        if (strcmp(pet_photo_frame, frame)) {           // 帧变化才解码
-            if (petimg_decode_name(frame)) {
-                lv_img_set_src(pet_photo, (const void*)petimg_source());
-                snprintf(pet_photo_frame, sizeof(pet_photo_frame), "%s", frame);
+        char alt[32];
+        snprintf(alt, sizeof(alt), "%s_b", frame);
+        bool has_alt = petimg_exists(alt);
+        bool needs_load = strcmp(visual.photo_frame, frame) ||
+                          (has_alt && (strcmp(pet_anim_frame, frame) ||
+                                       !workanim_ready(0) || !workanim_ready(1)));
+        if (needs_load) {
+            uint32_t load_start = micros();
+            if (has_alt && petanim_prepare(visual, frame)) {
+                lv_img_set_src(visual.photo, (const void*)workanim_source(0));
+                snprintf(visual.photo_frame, sizeof(visual.photo_frame), "%s", frame);
+            } else if (petimg_decode_name(frame)) {
+                if (work_timer) lv_timer_pause(work_timer);
+                if (visual.motion) lv_obj_add_flag(visual.motion, LV_OBJ_FLAG_HIDDEN);
+                pet_anim_frame[0] = 0;
+                lv_img_set_src(visual.photo, (const void*)petimg_source());
+                snprintf(visual.photo_frame, sizeof(visual.photo_frame), "%s", frame);
             }
+            Serial.printf("[PETPERF] frame=%s load_ms=%lu psram=%u\n", frame,
+                          (unsigned long)((micros() - load_start) / 1000),
+                          (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         }
-        if (pet_photo_frame[0]) {
-            lv_obj_clear_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
-            if (pet_page.root) lv_obj_add_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
-            Serial.printf("[PETSHOW] frame=%s photo_hid=%d root_hid=%d "
-                          "src=%p photo_kids=%u\n",
-                          pet_photo_frame,
-                          (int)lv_obj_has_flag(pet_photo, LV_OBJ_FLAG_HIDDEN),
-                          (int)lv_obj_has_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN),
-                          (const void*)lv_img_get_src(pet_photo),
-                          (unsigned)lv_obj_get_child_cnt(pet_photo));
+        if (visual.photo_frame[0]) {
+            lv_obj_clear_flag(visual.photo, LV_OBJ_FLAG_HIDDEN);
+            if (visual.parts.root) lv_obj_add_flag(visual.parts.root, LV_OBJ_FLAG_HIDDEN);
         }
     } else {
-        lv_obj_add_flag(pet_photo, LV_OBJ_FLAG_HIDDEN);
-        if (pet_page.root) lv_obj_clear_flag(pet_page.root, LV_OBJ_FLAG_HIDDEN);
+        if (work_timer) lv_timer_pause(work_timer);
+        if (visual.motion) lv_obj_add_flag(visual.motion, LV_OBJ_FLAG_HIDDEN);
+        visual.photo_frame[0] = 0;
+        pet_anim_frame[0] = 0;
+        lv_obj_add_flag(visual.photo, LV_OBJ_FLAG_HIDDEN);
+        if (visual.parts.root) lv_obj_clear_flag(visual.parts.root, LV_OBJ_FLAG_HIDDEN);
     }
-    pet_apply_expression(pet_page, st, latest.pet_h, latest.pet_t, latest.pet_e);
+    pet_apply_expression(visual.parts, st, latest.pet_h, latest.pet_t, latest.pet_e);
 }
 
 void pet_action_cb(lv_event_t* event) {
-    Serial.print(uplink_pet((const char*)lv_event_get_user_data(event)));
+    const char* action = (const char*)lv_event_get_user_data(event);
+    // 触摸反馈由设备立即播放；上位机回传的 PET=... 仍负责同步数值。
+    // 等待串口往返会让离线状态下的按钮看起来完全失效。
+    uint8_t kind = !strcmp(action, "feed") ? 1 :
+                   !strcmp(action, "water") ? 2 :
+                   !strcmp(action, "play") ? 3 : 0;
+    if (kind) {
+        pet_interact_event(kind);
+    }
+    Serial.print(uplink_pet(action));
 }
 
 void make_hardware(WidgetView& view, lv_obj_t* screen) {
@@ -1569,9 +1719,10 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
     if (view.kind == W_AI_COST && !compact) {
         // 数据看板列表模式：多行同屏（用户反馈「要同时显示多个模型，
         // 而不是一次只轮到一个 GLM」）。行数随卡高放，放不下的指标顺延。
-        uint8_t rows = (uint8_t)constrain((h - 56) / 30, 1, 5);
+        uint8_t rows = (uint8_t)constrain((h - 56) / (h >= 300 ? 44 : 30), 1, 5);
         for (uint8_t i = 0; i < rows; ++i)
-            view.ac_rows[i] = label1(view.root, "", 20, text_color,
+            view.ac_rows[i] = label1(view.root, "", h >= 300 ? (i == 0 ? 32 : 24) : 20,
+                                     i == 0 ? accent : text_color,
                                      12, 44 + i * 30, w - 24);
         view.sub = label1(view.root, "", 20, sub_color, 12, h - 40, w - 24);
         return;
@@ -1581,76 +1732,60 @@ void make_generic(WidgetView& view, lv_obj_t* screen, int x, int y, int w, int h
     if (!compact) view.sub = label1(view.root, "", 20, sub_color, 12, h - 40, w - 24);
 }
 
-// ---------- 覆盖面板构建 ----------
-// ---------- 设置页（原启动器 + 控制中心 合并；内容超高可滚动） ----------
-void build_settings() {
-    scr_settings = lv_obj_create(nullptr);
-    lv_obj_set_style_bg_color(scr_settings, lv_color_hex(bg), 0);
-    lv_obj_set_style_bg_grad_color(scr_settings, lv_color_hex(grad), 0);
-    lv_obj_set_style_bg_grad_dir(scr_settings, LV_GRAD_DIR_VER, 0);
-    lv_obj_set_style_border_width(scr_settings, 0, 0);
-    lv_obj_clear_flag(scr_settings, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(scr_settings, settings_close_gesture, LV_EVENT_GESTURE, nullptr);
-
-    // 固定头：标题 + 收起按钮
-    label(scr_settings, "设置", 20, text_color, 10, HEAD_Y, 120);
-    lv_obj_t* close_btn = button(scr_settings, "收起", 260, HEAD_Y - 4, 52, 26,
-                                 close_overlay_cb, nullptr);
-    (void)close_btn;
-
-    // 可滚动内容区（快捷应用 + 音量/媒体 + 亮度）
-    lv_obj_t* page = lv_obj_create(scr_settings);
-    lv_obj_set_pos(page, 0, 36);
-    lv_obj_set_size(page, 320, SCR_H - 36);
+// 控制页：音乐优先，音量、亮度、快捷应用纵向滚动。
+void build_control_page(lv_obj_t* screen) {
+    lv_obj_t* page = lv_obj_create(screen);
+    lv_obj_set_pos(page, 8, BODY_Y);
+    lv_obj_set_size(page, 304, BODY_H);
     lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(page, 0, 0);
     lv_obj_set_style_pad_all(page, 0, 0);
-    // lv_obj 默认可滚动：子对象超出 444px 高度即可上下滑
+    lv_obj_add_flag(page, LV_OBJ_FLAG_GESTURE_BUBBLE);
 
-    // ---- 快捷应用（原启动器）----
-    label(page, "快捷应用", 20, sub_color, 10, 8, 160);
+    lv_obj_t* music = box(page, 0, 0, 304, 176);
+    label1(music, "音乐", 20, sub_color, 12, 8, 120);
+    np_state_lbl = label1(music, "无曲目", 18, sub_color, 184, 10, 108);
+    lv_obj_set_style_text_align(np_state_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+    np_title_lbl = label1(music, "未在播放", 24, text_color, 12, 38, 280);
+    np_sub_lbl = label1(music, "打开播放器并选择歌曲", 18, sub_color, 12, 70, 280);
+    np_time_lbl = label1(music, "", 18, sub_color, 12, 96, 280);
+    np_fill = bar_fill(bar_track(music, 12, 120, 280));
+    ctrl_prev_btn = button(music, "上一首", 8, 132, 88, 38, send_key_cb, (void*)"PREV");
+    ctrl_play_btn = button(music, "打开音乐", 104, 132, 96, 38,
+                           send_key_cb, (void*)"PLAY", accent);
+    ctrl_next_btn = button(music, "下一首", 208, 132, 88, 38, send_key_cb, (void*)"NEXT");
+    lv_obj_set_style_opa(ctrl_prev_btn, LV_OPA_50, LV_STATE_DISABLED);
+    lv_obj_set_style_opa(ctrl_next_btn, LV_OPA_50, LV_STATE_DISABLED);
+
+    lv_obj_t* volume = box(page, 0, 184, 304, 90);
+    label1(volume, "电脑音量", 20, sub_color, 12, 8, 280);
+    ctrl_vol_fill = bar_fill(bar_track(volume, 12, 34, 280));
+    button(volume, "-", 8, 40, 54, 42, send_key_cb, (void*)"VOL-");
+    ctrl_vol_lbl = label1(volume, "--", 20, text_color, 70, 46, 88);
+    lv_obj_set_style_text_align(ctrl_vol_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    button(volume, "+", 160, 40, 50, 42, send_key_cb, (void*)"VOL+");
+    ctrl_mute_lbl = button(volume, "静音", 216, 40, 80, 42, send_key_cb, (void*)"MUTE");
+
+    lv_obj_t* brightness = box(page, 0, 282, 304, 90);
+    label1(brightness, "屏幕亮度", 20, sub_color, 12, 8, 280);
+    button(brightness, "-", 8, 40, 54, 42, bright_down, nullptr);
+    ctrl_bright_lbl = label1(brightness, "90%", 20, text_color, 70, 46, 88);
+    lv_obj_set_style_text_align(ctrl_bright_lbl, LV_TEXT_ALIGN_CENTER, 0);
+    button(brightness, "+", 166, 40, 54, 42, bright_up, nullptr);
+
+    int app_rows = (g_profile.app_count + 2) / 3;
+    lv_obj_t* apps = box(page, 0, 380, 304, 44 + (app_rows ? app_rows * 68 : 38));
+    label1(apps, "快捷应用", 20, sub_color, 12, 8, 280);
     launch_count = 0;
     for (uint8_t i = 0; i < g_profile.app_count && launch_count < 12; ++i) {
         const AppEntry& app = g_profile.apps[i];
         uint8_t row = launch_count / 3, col = launch_count % 3;
-        int x = 8 + col * 102, y = 34 + row * 68;
-        lv_obj_t* cell = button(page, app.name, x, y, 96, 60,
-                                launch_app, (void*)(uintptr_t)launch_count);
-        (void)cell;
-        launch_cells[launch_count] = cell;
+        button(apps, app.name, 6 + col * 100, 38 + row * 68, 92, 60,
+               launch_app, (void*)(uintptr_t)launch_count);
         snprintf(launch_ids[launch_count], 13, "%s", app.id);
         ++launch_count;
     }
-    if (!launch_count) {
-        // 空态一行带过（整页还有音量/媒体要放，不再用大卡片占位）
-        // ⚠️ 文案用字必须在字库内（cn_20/24 全 GB2312 覆盖，安全）
-        label1(page, "暂无快捷应用", 20, sub_color, 10, 40, 300);
-    }
-    int y = 34 + ((launch_count + 2) / 3) * 68 + 6;
-    if (!launch_count) y = 34 + 36 + 6;
-
-    // ---- 音量 / 媒体（原控制中心，紧凑三行）----
-    label(page, "电脑音量", 20, sub_color, 10, y, 160);
-    button(page, "-", 10, y + 26, 64, 40, send_key_cb, (void*)"VOL-");
-    ctrl_vol_lbl = label(page, "--", 24, text_color, 84, y + 34, 92);
-    lv_obj_set_style_text_align(ctrl_vol_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    button(page, "+", 178, y + 26, 64, 40, send_key_cb, (void*)"VOL+");
-    ctrl_mute_lbl = button(page, "静音", 250, y + 26, 62, 40, send_key_cb, (void*)"MUTE");
-    y += 78;
-
-    button(page, "上一首", 10, y, 88, 40, send_key_cb, (void*)"PREV");
-    button(page, "播放暂停", 104, y, 96, 40, send_key_cb, (void*)"PLAY", accent);
-    button(page, "下一首", 206, y, 88, 40, send_key_cb, (void*)"NEXT");
-    y += 52;
-
-    label(page, "屏幕亮度", 20, sub_color, 10, y, 160);
-    button(page, "-", 10, y + 26, 64, 40, bright_down, nullptr);
-    ctrl_bright_lbl = label(page, "90%", 24, text_color, 84, y + 34, 92);
-    lv_obj_set_style_text_align(ctrl_bright_lbl, LV_TEXT_ALIGN_CENTER, 0);
-    button(page, "+", 178, y + 26, 64, 40, bright_up, nullptr);
-    y += 78;
-
-    label1(page, "音量与媒体由电脑执行", 20, sub_color, 10, y, 300);
+    if (!launch_count) label1(apps, "暂无快捷应用", 20, sub_color, 12, 38, 280);
 }
 
 void build_page(uint8_t index) {
@@ -1734,20 +1869,22 @@ void build_page(uint8_t index) {
     }
 
     // 页码按钮（底部居中）。
-    // 原实现两处不一致：总宽按 6px 间距算、绘制按 40px 步进，导致圆点组
-    // 实际偏左且页数越多偏移越大。同时 34x24 的热区远低于 44x44 可触下限。
-    // 现改为：视觉 32x22，但热区扩到 44x44（居中放置），间距统一 10px。
+    // 小页数使用 44px 热区；多页缩小节距时热区同步收窄，避免相邻页误触。
     uint8_t n = view_count;
+    // 多页时只展示当前页附近的 5 个页码；左右滑动仍可访问全部页面。
+    // 每个 screen 按自己的 index 构建窗口，切页时无需重建 UI。
+    uint8_t first = n > 6 ? (index > 2 ? index - 2 : 0) : 0;
+    if (n > 6 && first + 5 > n) first = n - 5;
+    uint8_t visible = n > 6 ? 5 : n;
     // 页数多时圆点自适应缩小：6 页 ×(32+10)=242px 会顶满并压到左下「设」
     // 与右下角标；≥5 页缩为 (24+6) 节距 30，6 页总宽 174px 居中留白充足。
     const int DOT_W = (n >= 5) ? 24 : 32, DOT_H = 22, GAP = (n >= 5) ? 6 : 10;
     const int PITCH = DOT_W + GAP;
-    const int HIT = (44 < PITCH) ? PITCH : 44;   // 热区不超节距，防互相遮挡
-    int total = n * DOT_W + (n - 1) * GAP;
+    const int HIT = PITCH < 44 ? PITCH : 44;   // 多页时避免相邻热区重叠误触
+    int total = visible * DOT_W + (visible - 1) * GAP;
     int x0 = (SCR_W - total) / 2;
     // 左下角单 ⚙：打开设置页（快捷应用 + 音量/媒体 + 亮度 合并）。
     // 原左 ☰ 右 ⚙ 双按钮按需求合并；右侧留白给页码呼吸。
-    button(page.screen, "设", 4, FOOT_Y - 2, 40, 28, open_settings_cb, nullptr);
     // 收件箱角标：页脚右下「信N件」（宽 64 完整显示，不再截成光秃「N」）。
     // 页数多时圆点自适应缩小，6 页止于 ~247，与角标 x256 不相撞。
     // 文本由 ui_set_inbox 按服务端 INBX= 维护；-1/0 隐藏。
@@ -1759,9 +1896,10 @@ void build_page(uint8_t index) {
     } else {
         lv_obj_add_flag(page.inbox_lbl, LV_OBJ_FLAG_HIDDEN);
     }
-    for (uint8_t k = 0; k < n; ++k) {
-        int cx = x0 + k * (DOT_W + GAP);
-        // 透明外扩热区：保证每颗圆点实际可触面积 >= 44x44。
+    for (uint8_t j = 0; j < visible; ++j) {
+        uint8_t k = first + j;
+        int cx = x0 + j * (DOT_W + GAP);
+        // 透明热区不超过页码节距，竖向仍保留 44px。
         lv_obj_t* hit = lv_obj_create(page.screen);
         lv_obj_set_size(hit, HIT, 44);
         lv_obj_set_pos(hit, cx + (DOT_W - HIT) / 2, FOOT_Y - (44 - DOT_H) / 2);
@@ -1806,6 +1944,7 @@ void build_page(uint8_t index) {
         }
         if (widget.kind == W_PET) { make_pet_page(widget, page.screen); continue; }
         if (widget.kind == W_HW_CARDS) { make_hardware(widget, page.screen); continue; }
+        if (widget.kind == W_CONTROL) { build_control_page(page.screen); continue; }
         if (config.list) {
             int h = BODY_H / config.count - 6;
             make_generic(widget, page.screen, 8, BODY_Y + i * (h + 6), 304, h);
@@ -1819,6 +1958,15 @@ void build_page(uint8_t index) {
         }
     }
     }
+    page.health_alert = box(page.screen, 16, 164, 288, 150);
+    lv_obj_set_style_bg_color(page.health_alert, lv_color_hex(card), 0);
+    lv_obj_set_style_border_color(page.health_alert, lv_color_hex(COL_WARN), 0);
+    lv_obj_set_style_border_width(page.health_alert, 2, 0);
+    label(page.health_alert, "该活动了", 30, text_color, 18, 12, 250);
+    label(page.health_alert, "离开屏幕，活动一下", 20, sub_color, 18, 57, 250);
+    button(page.health_alert, "稍后 10 分钟", 18, 98, 252, 40,
+           health_snooze_cb, nullptr);
+    lv_obj_add_flag(page.health_alert, LV_OBJ_FLAG_HIDDEN);
     page.alert = box(page.screen, 16, 150, 288, 160);
     lv_obj_set_style_bg_color(page.alert, lv_color_hex(COL_WARN), 0);
     label(page.alert, "闹钟提醒", 32, bg, 20, 20, 248);
@@ -2076,7 +2224,8 @@ void render_ai(WidgetView& view) {
             if (view.row_dot[row])
                 lv_obj_set_style_bg_color(view.row_dot[row],
                     lv_color_hex(state_color(task.state)), 0);
-            pet_mini_apply(pet_mini[row], task, blink_on && state_running(task.state));
+            pet_mini_apply(pet_mini[widget_page_slot(&view)][row], task,
+                           blink_on && state_running(task.state));
             lv_obj_clear_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
             ++row;
             continue;
@@ -2095,7 +2244,8 @@ void render_ai(WidgetView& view) {
         if (view.row_dot[row])
             lv_obj_set_style_bg_color(view.row_dot[row],
                 lv_color_hex(state_color(task.state)), 0);
-        pet_mini_apply(pet_mini[row], task, blink_on && state_running(task.state));
+        pet_mini_apply(pet_mini[widget_page_slot(&view)][row], task,
+                       blink_on && state_running(task.state));
         bar_set(view.row_fill[row], view.row_bar[row], task.prog, accent);
         view.row_slot[row] = i;
         lv_obj_clear_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
@@ -2105,8 +2255,8 @@ void render_ai(WidgetView& view) {
         lv_obj_add_flag(view.rows[row], LV_OBJ_FLAG_HIDDEN);
         set_text(view.extra[row + 1], "");
         set_text(view.extra[row + 4], "");
-        if (pet_mini[row].root)
-            lv_obj_add_flag(pet_mini[row].root, LV_OBJ_FLAG_HIDDEN);
+        if (pet_mini[widget_page_slot(&view)][row].root)
+            lv_obj_add_flag(pet_mini[widget_page_slot(&view)][row].root, LV_OBJ_FLAG_HIDDEN);
         if (view.row_dot[row])
             lv_obj_set_style_bg_color(view.row_dot[row], lv_color_hex(sub_color), 0);
         bar_set(view.row_fill[row], view.row_bar[row], 0, accent);
@@ -2130,7 +2280,8 @@ void render_ai(WidgetView& view) {
     }
     // 宠物表情联动 AI 状态（AI 卡小宠物与宠物页大宠物共用一套反应）
     const char* st = focus >= 0 ? latest.tasks[focus].state : "IDLE";
-    pet_apply_expression(pet_ai, st, latest.pet_h, latest.pet_t, latest.pet_e);
+    pet_apply_expression(pet_ai[widget_page_slot(&view)], st,
+                         latest.pet_h, latest.pet_t, latest.pet_e);
 }
 
 void render_hardware(WidgetView& view) {
@@ -2214,7 +2365,7 @@ long countdown_seconds(const ScheduleItem* item) {
     return day_diff + target_secs - now_secs;
 }
 
-/* 天气城市页：当前实况卡（116px）+ 5 天预报行（46px×5，今天起）。
+/* 天气城市页：当前实况卡（116px）+ 5 天预报行（50px×5，今天起）。
    数据取 latest.cities[]，下标 = 页面 city 名在 g_profile.city_names 里的序号。 */
 void make_weather_city(WidgetView& view, lv_obj_t* screen, const char* city) {
     strncpy(view.city, city ? city : "", sizeof(view.city) - 1);
@@ -2224,12 +2375,12 @@ void make_weather_city(WidgetView& view, lv_obj_t* screen, const char* city) {
     view.sub = label(view.root, "", 24, accent, 14, 70, 140, 30);
     view.extra[0] = label(view.root, "", 20, sub_color, 150, 78, 140, 26);
     for (int i = 0; i < 5; ++i) {
-        lv_obj_t* row = box(screen, 8, 184 + 50 * i, 304, 46);
-        lv_obj_set_style_bg_color(row, lv_color_hex(bg), 0);
+        lv_obj_t* row = box(screen, 8, 176 + 53 * i, 304, 50);
+        lv_obj_set_style_bg_color(row, lv_color_hex(i == 0 ? card : bg), 0);
         view.rows[i] = row;
-        view.wday_lbl[i] = label(row, "", 20, sub_color, 12, 4, 64, 26);
-        view.wcond_lbl[i] = label(row, "", 20, text_color, 80, 4, 110, 26);
-        view.wtmp_lbl[i] = label(row, "", 20, text_color, 194, 4, 98, 26);
+        view.wday_lbl[i] = label(row, "", 20, i == 0 ? accent : sub_color, 12, 10, 60, 30);
+        view.wcond_lbl[i] = label(row, "", 20, text_color, 76, 10, 104, 30);
+        view.wtmp_lbl[i] = label(row, "", 20, text_color, 182, 10, 110, 30);
         lv_obj_set_style_text_align(view.wtmp_lbl[i], LV_TEXT_ALIGN_RIGHT, 0);
     }
 }
@@ -2273,7 +2424,7 @@ void render_weather_city(WidgetView& view) {
             d.code < 0 ? "--" : weather_text(d.code));
         if (view.wtmp_lbl[i]) {
             if (d.code < 0) strcpy(line, "");
-            else snprintf(line, sizeof(line), "%d° %d°", d.lo, d.hi);
+            else snprintf(line, sizeof(line), "%d° / %d°", d.hi, d.lo);
             set_text(view.wtmp_lbl[i], line);
         }
     }
@@ -2291,31 +2442,22 @@ static void ai_cost_build_rows(char rows[5][48]) {
         strcpy(rows[n++], "今日暂无用量");
         return;
     }
-    char row0[48] = "";
     if (want[0]) {
-        if (k >= 1000) snprintf(row0, sizeof(row0), "今日 %.1fM", k / 1000.0);
-        else snprintf(row0, sizeof(row0), "今日 %ldk", k);
+        if (k >= 1000) snprintf(rows[n++], sizeof(rows[0]), "今日累计 %.1fM", k / 1000.0);
+        else snprintf(rows[n++], sizeof(rows[0]), "今日累计 %ldk", k);
     }
-    if (want[1] && latest.ai_tok_out > 0) {
-        char t2[24];
-        snprintf(t2, sizeof(t2), "%s本轮 %.1fk",
-                 row0[0] ? " · " : "", latest.ai_tok_out / 1000.0);
-        strncat(row0, t2, sizeof(row0) - strlen(row0) - 1);
-    }
-    if (row0[0]) strncpy(rows[n++], row0, sizeof(rows[0]) - 1);
+    if (want[1] && latest.ai_tok_out > 0 && n < 5)
+        snprintf(rows[n++], sizeof(rows[0]), "本轮输出 %.1fk",
+                 latest.ai_tok_out / 1000.0);
     if (want[2] && latest.ai_model[0] && n < 5)
-        snprintf(rows[n++], sizeof(rows[0]), "模型 %s", latest.ai_model);
+        snprintf(rows[n++], sizeof(rows[0]), "当前模型 %s", latest.ai_model);
     if (want[3])
         for (uint8_t m = 0; m < 3 && n < 5; ++m) {
             if (latest.ai_by_tok[m] <= 0 || !latest.ai_by_model[m][0]) continue;
             const char* full = latest.ai_by_model[m];
-            const char* dash = strchr(full, '-');
-            char short_name[9];
-            snprintf(short_name, sizeof(short_name), "%.*s",
-                     dash ? (int)(dash - full) : 8, full);
             long mt = latest.ai_by_tok[m];
-            if (mt >= 1000000) snprintf(rows[n++], sizeof(rows[0]), "%s %.1fM", short_name, mt / 1e6);
-            else snprintf(rows[n++], sizeof(rows[0]), "%s %ldk", short_name, mt / 1000);
+            if (mt >= 1000000) snprintf(rows[n++], sizeof(rows[0]), "%s  %.1fM", full, mt / 1e6);
+            else snprintf(rows[n++], sizeof(rows[0]), "%s  %ldk", full, mt / 1000);
         }
     if (!n) strcpy(rows[n++], "今日 0k");
 }
@@ -2382,8 +2524,16 @@ void render_generic(WidgetView& view) {
         if (view.ac_rows[0]) {
             char rows[5][48] = {};
             ai_cost_build_rows(rows);
+            int shown = 0;
+            for (uint8_t i = 0; i < 5 && view.ac_rows[i] && rows[i][0]; ++i) ++shown;
+            int h = lv_obj_get_height(view.root);
             for (uint8_t i = 0; i < 5; ++i)
-                set_text(view.ac_rows[i], rows[i][0] ? rows[i] : "");
+                if (view.ac_rows[i]) {
+                    set_text(view.ac_rows[i], rows[i][0] ? rows[i] : "");
+                    if (h >= 300 && i < shown)
+                        lv_obj_set_y(view.ac_rows[i], shown == 1 ? h / 2 - 12 :
+                                     62 + i * (h - 154) / (shown - 1));
+                }
             // 卡底收件箱摘要（竞品看板内通知摘要）：有待处理才显示
             if (view.sub) {
                 if (latest.inbox > 0) snprintf(sub, sizeof(sub), "待处理 %d 件", latest.inbox);
@@ -2477,7 +2627,9 @@ void render_generic(WidgetView& view) {
         if (isnan(g_temp)) strcpy(line, "温度不可用");
         else snprintf(line, sizeof(line), "%.1f ℃", g_temp);
         if (isnan(g_hum)) strcpy(sub, "传感器读取失败");
-        else snprintf(sub, sizeof(sub), "湿度 %d%%", (int)g_hum);
+        else if (view.card_w >= 300 && !isnan(g_pressure))
+            snprintf(sub, sizeof(sub), "湿度 %d%%  气压 %.0f", (int)g_hum, g_pressure);
+        else snprintf(sub, sizeof(sub), "湿度 %d%% · %s", (int)g_hum, g_env_source);
         break;
     case W_REMINDERS: {
         const ScheduleItem* found = nullptr;
@@ -2524,39 +2676,63 @@ void render_generic(WidgetView& view) {
 }
 
 void render_control() {
-    if (!scr_settings) return;
+    if (!ctrl_vol_lbl) return;
     char text[16];
     // 正在播放：歌名 / 歌手 · 进度 / 进度条（NP 遥测；无播放时如实显示）
     if (np_title_lbl) {
-        static char np_line[64];
         if (latest.np.used) {
             set_text(np_title_lbl, latest.np.title);
+            set_text(np_sub_lbl, latest.np.artist[0] ? latest.np.artist : "未知歌手");
+            set_text(np_state_lbl, latest.np.playing ? "播放中" : "已暂停");
             int pos = latest.np.pos;
+            // 媒体读取与串口发送并非同一时刻。两次 NP 之间按设备时钟推进，
+            // 暂停时保持位置；超过 5 秒无新数据则冻结，避免断线后虚报进度。
+            uint32_t age_ms = millis() - latest.np.received_ms;
+            if (latest.np.playing && online && age_ms < 5000)
+                pos += age_ms / 1000;
+            if (latest.np.dur > 0) pos = min(pos, (int)latest.np.dur);
+            char time_line[32];
             if (latest.np.dur > 0)
-                snprintf(np_line, sizeof(np_line), "%s  %d:%02d / %d:%02d",
-                         latest.np.artist, pos / 60, pos % 60,
-                         latest.np.dur / 60, latest.np.dur % 60);
-            else
-                snprintf(np_line, sizeof(np_line), "%s", latest.np.artist);
-            set_text(np_sub_lbl, np_line);
-            if (np_fill)
+                snprintf(time_line, sizeof(time_line), "%d:%02d / %d:%02d",
+                         pos / 60, pos % 60, latest.np.dur / 60, latest.np.dur % 60);
+            else snprintf(time_line, sizeof(time_line), "%d:%02d", pos / 60, pos % 60);
+            set_text(np_time_lbl, time_line);
+            if (np_fill && latest.np.dur > 0)
                 lv_obj_set_width(np_fill,
-                    300 * constrain(pos, 0, latest.np.dur) / latest.np.dur);
-            lv_obj_set_style_bg_opa(np_fill,
+                    280 * constrain(pos, 0, latest.np.dur) / latest.np.dur);
+            else if (np_fill) lv_obj_set_width(np_fill, 0);
+            if (np_fill) lv_obj_set_style_bg_opa(np_fill,
                 latest.np.playing ? LV_OPA_COVER : LV_OPA_60, 0);
         } else {
             set_text(np_title_lbl, "未在播放");
-            set_text(np_sub_lbl, "");
+            set_text(np_sub_lbl, "打开播放器并选择歌曲");
+            set_text(np_time_lbl, "");
+            set_text(np_state_lbl, "无曲目");
             if (np_fill) lv_obj_set_width(np_fill, 0);
         }
     }
     if (latest.vol >= 0) snprintf(text, sizeof(text), "%d%%", latest.vol);
     else snprintf(text, sizeof(text), "--");
     set_text(ctrl_vol_lbl, text);
+    if (ctrl_vol_fill)
+        lv_obj_set_width(ctrl_vol_fill, latest.vol >= 0 ?
+                         280 * constrain(latest.vol, 0, 100) / 100 : 0);
     snprintf(text, sizeof(text), "%d%%", display_brightness_get());
     set_text(ctrl_bright_lbl, text);
     if (ctrl_mute_lbl)
         set_text(lv_obj_get_child(ctrl_mute_lbl, 0), latest.mut == 1 ? "已静音" : "静音");
+    if (ctrl_play_btn)
+        set_text(lv_obj_get_child(ctrl_play_btn, 0),
+                 latest.np.used ? (latest.np.playing ? "暂停" : "播放") : "打开音乐");
+    if (ctrl_prev_btn && ctrl_next_btn) {
+        if (latest.np.used) {
+            lv_obj_clear_state(ctrl_prev_btn, LV_STATE_DISABLED);
+            lv_obj_clear_state(ctrl_next_btn, LV_STATE_DISABLED);
+        } else {
+            lv_obj_add_state(ctrl_prev_btn, LV_STATE_DISABLED);
+            lv_obj_add_state(ctrl_next_btn, LV_STATE_DISABLED);
+        }
+    }
 }
 
 void render_all() {
@@ -2568,27 +2744,38 @@ void render_all() {
     snprintf(tb, sizeof(tb), "%02d:%02d:%02d",
              secs / 3600, (secs / 60) % 60, secs % 60);
     const char* wx_txt = latest.wx_valid ? weather_text(latest.wx_code) : "";
+    if (!latest.pb) health_local_snooze_ms = 0;
     const char* focus_tool = latest.tasks[0].used ? latest.tasks[0].tool : "";
     for (uint8_t p = 0; p < view_count; ++p) {
         PageView& page = views[p];
         if (page.topclock) set_text(page.topclock, tb);
-        if (page.topwx) set_text(page.topwx, wx_txt);
+        if (page.topwx) set_text(page.topwx, latest.pb ? "休息" : wx_txt);
         // 冠名自动（竞品「自动显示智能体名称」）：焦点会话的工具名优先
         if (page.title_lbl) {
-            if (g_profile.tv_name_mode && focus_tool[0])
+            if (latest.pb && !page.topwx)
+                set_text(page.title_lbl, "该休息了");
+            else if (g_profile.tv_name_mode && focus_tool[0])
                 set_text(page.title_lbl, focus_tool);
             else
                 set_text(page.title_lbl, g_profile.pages[p].title);
         }
         if (page.topdot)
             lv_obj_set_style_bg_color(page.topdot,
-                lv_color_hex(online ? COL_OK : COL_ERR), 0);
+                lv_color_hex(!online ? COL_ERR : (latest.pb ? COL_WARN : COL_OK)), 0);
+        if (page.health_alert) {
+            bool local_wait = health_local_snooze_ms &&
+                millis() - health_local_snooze_ms < 30000;
+            if (latest.pb && online && !alarm_active && !local_wait)
+                lv_obj_clear_flag(page.health_alert, LV_OBJ_FLAG_HIDDEN);
+            else
+                lv_obj_add_flag(page.health_alert, LV_OBJ_FLAG_HIDDEN);
+        }
     }
-    for (uint8_t p = 0; p < view_count; ++p) {
-        PageView& page = views[p];
-        if (!page.screen) continue;
-        if (g_profile.pages[p].free) { render_free_page(page, tb); continue; }
-        for (uint8_t w = 0; w < g_profile.pages[p].count; ++w) {
+    if (current_page < view_count) {
+        PageView& page = views[current_page];
+        if (page.screen && g_profile.pages[current_page].free)
+            render_free_page(page, tb);
+        else if (page.screen) for (uint8_t w = 0; w < g_profile.pages[current_page].count; ++w) {
             WidgetView& widget = page.widgets[w];
             if (widget.kind == W_AI_LIST) render_ai(widget);
             else if (widget.kind == W_HW_CARDS) render_hardware(widget);
@@ -2604,9 +2791,6 @@ void start_ring(uint32_t now, const char* alarm_id = nullptr) {
     alarm_active = true; alarm_started_ms = now;
     for (uint8_t p = 0; p < view_count; ++p)
         lv_obj_clear_flag(views[p].alert, LV_OBJ_FLAG_HIDDEN);
-    // 设置页没有 alert 覆盖层：响铃时若停在设置页，闹钟会完全不可见
-    if (scr_settings && lv_scr_act() == scr_settings)
-        lv_scr_load(views[current_page].screen);
 }
 
 void alarm_tick() {
@@ -2656,28 +2840,32 @@ void ui_rebuild() {
     // 保留当前屏直到新首页构建完成，配置同步时不闪出一帧空白。
     // 先删除其他旧页，峰值内存最多额外保留一个旧活动屏。
     lv_obj_t* old_active = lv_scr_act();
-    overlay = 0;
+    if (work_timer) lv_timer_pause(work_timer);
+    for (auto& visual : pet_pages) visual = PetPageVisual();
+    pet_anim_frame[0] = 0;
     saver_active = false;
     // 宠物部件随旧屏幕一起销毁，必须先清零静态结构：draw_pet 开头的
     // lv_obj_del(p.root) 若摸到已释放的旧指针 = Core1 LoadProhibited
     // panic（真机复现：每次配置同步后设备静默重启，表现为同步后闪断）。
-    pet_ai = PetParts();
-    pet_page = PetParts();
+    for (auto& part : pet_ai) part = PetParts();
+    for (auto& page : pet_mini)
+        for (auto& part : page) part = MiniPet();
     pet_free_parts = PetParts();
     pet_free_used = 0;
-    lv_obj_t* old[6] = {};
+    lv_obj_t* old[10] = {};
     uint8_t old_count = view_count;
     for (uint8_t i = 0; i < old_count; ++i) old[i] = views[i].screen;
-    lv_obj_t* old_settings = scr_settings;
     lv_obj_t* old_saver = scr_saver;
     memset(views, 0, sizeof(views));
-    scr_settings = nullptr;
+    ctrl_vol_lbl = ctrl_mute_lbl = ctrl_bright_lbl = ctrl_vol_fill = nullptr;
+    ctrl_play_btn = ctrl_prev_btn = ctrl_next_btn = nullptr;
+    np_title_lbl = np_sub_lbl = np_time_lbl = np_state_lbl = np_fill = nullptr;
+    launch_count = 0;
     scr_saver = nullptr;
     saver_time_lbl = nullptr;
     saver_date_lbl = nullptr;
     for (uint8_t i = 0; i < old_count; ++i)
         if (old[i] && old[i] != old_active) lv_obj_del(old[i]);
-    if (old_settings && old_settings != old_active) lv_obj_del(old_settings);
     if (old_saver && old_saver != old_active) lv_obj_del(old_saver);
     view_count = g_profile.page_count;
     if (current_page >= view_count) current_page = 0;
@@ -2700,7 +2888,6 @@ void ui_rebuild() {
     if (old_active) lv_obj_del(old_active);
     for (uint8_t i = 0; i < view_count; ++i)
         if (i != current_page) build_page(i);
-    build_settings();
     render_all();
     // 背景/主题热更新时保证整屏重绘一次（实测缺这一步时新背景不出现）
     lv_obj_invalidate(lv_scr_act());
@@ -3016,7 +3203,7 @@ void ui_theme_tick() {
     if (idle_dim_secs > 0 && view_count) {
         bool should = lv_disp_get_inactive_time(nullptr) > (uint32_t)idle_dim_secs * 1000
                       && !tasks_active();
-        if (should && !saver_active && !overlay && !alarm_active) {
+        if (should && !saver_active && !alarm_active) {
             saver_active = true;
             build_saver();
             lv_scr_load(scr_saver);
@@ -3080,7 +3267,12 @@ void ui_set_card_opa(uint8_t opa) {
 
 void ui_set_page(uint8_t page) {
     // 上位机/托盘请求切页（PAGE=N，0 基）。同页号会被 switch_page 拦截。
-    if (page < view_count) switch_page(page, true);
+    if (page >= view_count) return;
+    // 从 Web 选页也算用户活动；否则息屏时 PAGE 已改变内部页号，
+    // 但屏幕仍停在屏保，实拍看到的仍是屏保内容。
+    lv_disp_trig_activity(nullptr);
+    if (saver_active) close_saver();
+    switch_page(page, true);
 }
 
 // ---------- 实拍（工作台「实拍」按钮 → SNAP=1 下行 → 本函数回传） ----------
@@ -3094,6 +3286,14 @@ void pet_interact_event(uint8_t action) {
     if (action == 1) pet_trigger_scene(PL_FEEDING, 1800);
     else if (action == 2) pet_trigger_scene(PL_DRINKING, 1800);
     else if (action == 3) pet_trigger_scene(PL_PLAYING, 2500);
+    // 屏幕按钮与 Web 操作共用同一条即时更新路径。以前 Web 操作要等
+    // 下一秒的 render_all 才显示动作；按钮又会重绘全部页面，造成卡顿。
+    if (action && current_page < view_count) {
+        PageView& page = views[current_page];
+        for (uint8_t w = 0; w < g_profile.pages[current_page].count; ++w)
+            if (page.widgets[w].kind == W_PET)
+                render_pet_page(page.widgets[w]);
+    }
 }
 
 void ui_send_snapshot() {

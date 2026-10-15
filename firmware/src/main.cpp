@@ -8,6 +8,7 @@
 #include "profile.h"
 #include "bgimg.h"
 #include "ui.h"
+#include "sensors.h"
 
 DHT11Raw dht(PIN_DHT);   // 自包含读取器，不用 noInterrupts()（那是 INT_WDT 崩溃根因）
 Proto proto;
@@ -15,8 +16,13 @@ Preferences prefs;
 
 // 环境数据（ui.cpp extern 引用）
 float g_temp = NAN, g_hum = NAN;
+float g_pressure = NAN, g_distance = NAN;
+char g_env_source[8] = "NA";
+char g_i2c_scan[64] = "";   // I2C 扫描诊断（sensors.h 写入）
+static int sn_sent = 0;   // g_i2c_scan 由 sensors.h 提供（已含定义）
 
 static uint32_t last_uplink = 0, last_dht = 0, last_hb = 0;
+static uint32_t last_bg_change = 0, last_interaction_prefetch = 0;
 static uint32_t last_client_data = 0;
 static bool ever_linked = false;
 static bool bright_auto = false;   // true=按时间段自动调亮度
@@ -37,6 +43,7 @@ void setup() {
     delay(200);
     profile_init();
     bgimg_init();        // 挂载确认 + 解码已存背景图（在 ui_init 前完成，首屏即带背景）
+    sensors_init();
     display_init();
     ui_init();
 }
@@ -78,6 +85,7 @@ void loop() {
     }
     if (proto.bg_changed) {
         proto.bg_changed = false;
+        last_bg_change = now;
         Serial.printf("[BG] bg_changed -> rebuild\n");
         ui_rebuild();
         rebuilt_this_pass = true;
@@ -189,20 +197,20 @@ void loop() {
         }
     }
 
-    // 2) DHT11 每 2.5s；DHT11Raw.read() 返回 true 成功，失败安全返回不崩溃
+    // 2) AHT20 主温湿源，DHT11 回退；BMP280/VL6180X 独立采样。
     if (now - last_dht > 2500) {
         last_dht = now;
-        g_temp = NAN;
-        g_hum = NAN;
-        if (dht.read()) {
+        if (!sensors_sample_environment() && dht.read()) {
             const float temp = dht.getTemperature();
             const float hum = dht.getHumidity();
             // 断线或采样失败有时被 DHT11 读成 0/0；别把它当成真实室内环境。
             if (temp >= -20 && temp <= 60 && hum >= 1 && hum <= 100) {
                 g_temp = temp;
                 g_hum = hum;
+                snprintf(g_env_source, sizeof(g_env_source), "DHT11");
             }
         }
+        sensors_sample_auxiliary();
         ui_update(proto.t);
     }
 
@@ -210,6 +218,10 @@ void loop() {
     if (now - last_uplink > 1000) {
         last_uplink = now;
         Serial.print(uplink_env(g_temp, g_hum));
+        Serial.printf("PRESSURE=%s\n", isnan(g_pressure) ? "NA" : String(g_pressure, 1).c_str());
+        Serial.printf("DISTANCE=%s\n", isnan(g_distance) ? "NA" : String(g_distance, 0).c_str());
+        Serial.printf("ENVSRC=%s\n", g_env_source);
+        if (g_i2c_scan[0] && sn_sent < 3) { Serial.printf("SN=%s\n", g_i2c_scan); ++sn_sent; }
     }
 
     // 4) 心跳 5s
@@ -221,6 +233,13 @@ void loop() {
     // 5) 链路在线判定
     ui_set_online(ever_linked && (now - last_client_data < LINK_TIMEOUT_MS));
     ui_theme_tick();
+
+    // 角色包写入完后分步预解码互动帧；每次只处理一帧，避免一次性冻结屏幕。
+    if (now > 3000 && now - last_bg_change > 2000 &&
+        now - last_interaction_prefetch > 1200) {
+        last_interaction_prefetch = now;
+        workanim_prefetch_step();
+    }
 
     lv_timer_handler();
 

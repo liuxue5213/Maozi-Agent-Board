@@ -117,11 +117,25 @@ bool album_decode_index(uint8_t idx) {
     return album_decode_path(path);
 }
 
-void album_delete(const char* name) {
-    if (!fs_ready) return;
-    char path[16];
+bool album_delete(const char* name) {
+    if (!fs_ready || !name) return false;
+    const bool album = strlen(name) == 7 && name[0] == 's' && name[1] == 'v' &&
+                       name[2] >= '1' && name[2] <= '8' && !strcmp(name + 3, ".jpg");
+    const bool pet = !strncmp(name, "pet_", 4) && strlen(name) < 28 &&
+                     strlen(name) >= 9 && !strcmp(name + strlen(name) - 4, ".jpg");
+    if (!album && !pet) return false;
+    if (pet) for (const char* p = name + 4; p < name + strlen(name) - 4; ++p)
+        if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') || *p == '_'))
+            return false;
+    char path[36];
     snprintf(path, sizeof(path), "/%s", name);
-    LittleFS.remove(path);
+    // 不存在也算删除成功；只有仍存在且 remove 失败才应报错。
+    if (LittleFS.exists(path) && !LittleFS.remove(path)) return false;
+    if (pet) {
+        pet_loaded[0] = 0;
+        workanim_invalidate();
+    }
+    return true;
 }
 
 const void* bgimg_source() { return dsc; }
@@ -255,19 +269,18 @@ bool bgimg_receive_cfg(const char* value) {
             LittleFS.remove(target);
             reject("STORAGE"); return false;
         }
+        const size_t applied_size = staging.length();
         staging = ""; stage_active = false;
-        if (!strcmp(target, "bg.jpg")) {
+        if (!strcmp(target, "/bg.jpg") || !strcmp(target, "bg.jpg")) {
             if (!bgimg_decode()) { reject("DECODE"); return false; }
             return true;   // 新背景已应用，调用方触发 ui_rebuild
         }
-        if (!strncmp(target, "pet_", 4)) {
+        if (!strncmp(target, "/pet_", 5)) {
             pet_loaded[0] = 0;   // 同名重传也要换新图
-            // workanim 的槽按「名字没变」跳过重解码——文件内容已被覆盖，
-            // 必须作废并原位重解码，否则 A/B 帧一新一旧来回闪（真机实况：
-            // 白天窗景与旧夜空 B 帧每 900ms 交替）。
+            // 双缓冲供各状态复用；任意角色帧改写后都要作废缓存。
             workanim_invalidate();
         }
-        Serial.printf("ACK=IMG,%s,%u\n", target, (unsigned)staging.length());
+        Serial.printf("ACK=IMG,%s,%u\n", target, (unsigned)applied_size);
         return true;       // 相册/角色图落盘即可，显示时按需解码
     }
     return false;
@@ -306,9 +319,12 @@ bool petimg_decode_name(const char* name) {
     Serial.printf("[PETD] decode %s exists=%d\n", path, (int)LittleFS.exists(path));
     if (!LittleFS.exists(path)) return false;
     File f = LittleFS.open(path, "r");
-    if (!f) return false;
+    if (!f) { Serial.printf("[PETD] open failed %s\n", path); return false; }
     size_t size = f.size();
-    if (size == 0 || size > MAX_IMG) { f.close(); return false; }
+    if (size == 0 || size > MAX_IMG) {
+        Serial.printf("[PETD] invalid size %s %u\n", path, (unsigned)size);
+        f.close(); return false;
+    }
     uint8_t* jpg = (uint8_t*)malloc(size);
     if (!jpg) { f.close(); return false; }
     f.read(jpg, size);
@@ -316,13 +332,24 @@ bool petimg_decode_name(const char* name) {
     if (!pet_pixels) {
         pet_pixels = (uint16_t*)heap_caps_calloc(320 * 480, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     }
-    if (!pet_pixels) { free(jpg); return false; }
+    if (!pet_pixels) {
+        Serial.printf("[PETD] no PSRAM %s free=%u\n", path,
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        free(jpg); return false;
+    }
     static JPEGDEC jpet;
-    if (!jpet.openFLASH(jpg, size, draw_mcu_pet)) { free(jpg); return false; }
+    if (!jpet.openFLASH(jpg, size, draw_mcu_pet)) {
+        Serial.printf("[PETD] jpeg open failed %s %u\n", path, (unsigned)size);
+        free(jpg); return false;
+    }
     bool ok = (jpet.decode(0, 0, 0) == 1);
     jpet.close();
     free(jpg);
-    if (!ok) return false;
+    if (!ok) {
+        Serial.printf("[PETD] jpeg decode failed %s %u\n", path, (unsigned)size);
+        return false;
+    }
+    Serial.printf("[PETD] ready %s %u\n", path, (unsigned)size);
     if (!pet_dsc) pet_dsc = new lv_img_dsc_t();
     pet_dsc->header.always_zero = 0;
     pet_dsc->header.w = 320;
@@ -338,14 +365,26 @@ const lv_img_dsc_t* petimg_source() { return pet_dsc; }
 const char* petimg_loaded() { return pet_loaded; }
 
 
-// ---- working 动画双缓冲：pet_working.jpg(A) + pet_working_b.jpg(B) 交替 ----
+// ---- 状态动画：A/B 帧及局部混合输出 ----
 static uint16_t *wa_px[2] = {};
 static lv_img_dsc_t *wa_dsc[2] = {};
 static char wa_name[2][28] = {};
+// 最多 12 张已解码帧约占 3.6MB PSRAM；复访状态时免去 JPEG 解码。
+// 画面缓冲 wa_px 与缓存分离，LRU 淘汰不会使 LVGL 引用悬空。
+struct AnimCacheEntry {
+    char name[28] = {};
+    uint16_t* pixels = nullptr;
+    uint32_t used = 0;
+};
+static AnimCacheEntry anim_cache[12];
+static uint32_t anim_cache_clock = 0;
+static uint8_t interaction_prefetch_cursor = 0;
+static uint16_t* motion_px = nullptr;
+static lv_img_dsc_t motion_dsc = {};
 
-static int wa_cur = 0;
+static uint16_t* wa_target = nullptr;
 int draw_mcu_wa(JPEGDRAW* draw) {
-    uint16_t* px = wa_px[wa_cur];
+    uint16_t* px = wa_target;
     if (!px) return 0;
     int x = draw->x, y = draw->y, w = draw->iWidth, h = draw->iHeight;
     if (x + w > 320) w = 320 - x;
@@ -358,8 +397,8 @@ int draw_mcu_wa(JPEGDRAW* draw) {
     return 1;
 }
 
-bool workanim_decode(int slot, const char* name) {
-    if (!fs_ready || slot < 0 || slot > 1) return false;
+static bool decode_wa_jpeg(const char* name, uint16_t* target) {
+    if (!fs_ready || !target) return false;
     char path[36];
     snprintf(path, sizeof(path), "/%s", name);
     if (!LittleFS.exists(path)) return false;
@@ -371,18 +410,95 @@ bool workanim_decode(int slot, const char* name) {
     if (!jpg) { f.close(); return false; }
     f.read(jpg, size);
     f.close();
-    if (!wa_px[slot]) {
-        wa_px[slot] = (uint16_t*)heap_caps_calloc(320 * 480, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    }
-    if (!wa_px[slot]) { free(jpg); return false; }
-    // draw_mcu_wa 通过全局 wa_cur 定位 slot（JPEGDEC 回调无法传参）
-    wa_cur = slot;
+    // JPEGDEC 回调无法传参，解码只在主循环进行。
+    wa_target = target;
     static JPEGDEC jwa;
-    if (!jwa.openFLASH(jpg, size, draw_mcu_wa)) { free(jpg); return false; }
+    if (!jwa.openFLASH(jpg, size, draw_mcu_wa)) {
+        Serial.printf("[PETA] jpeg open failed %s %u\n", name, (unsigned)size);
+        wa_target = nullptr;
+        free(jpg); return false;
+    }
     bool ok = (jwa.decode(0, 0, 0) == 1);
     jwa.close();
+    wa_target = nullptr;
     free(jpg);
-    if (!ok) return false;
+    if (!ok) {
+        Serial.printf("[PETA] jpeg decode failed %s %u\n", name, (unsigned)size);
+        return false;
+    }
+    return true;
+}
+
+static AnimCacheEntry* cache_find(const char* name, bool touch = true) {
+    for (auto& entry : anim_cache)
+        if (entry.pixels && !strcmp(entry.name, name)) {
+            if (touch) entry.used = ++anim_cache_clock;
+            return &entry;
+        }
+    return nullptr;
+}
+
+static AnimCacheEntry* cache_reserve(const char* name) {
+    AnimCacheEntry* entry = nullptr;
+    for (auto& candidate : anim_cache) {
+        if (!candidate.pixels) { entry = &candidate; break; }
+        if (!entry || candidate.used < entry->used) entry = &candidate;
+    }
+    if (!entry) return nullptr;
+    // 先申请新缓冲；内存不足时保留旧缓存并回退到直接 JPEG 解码。
+    uint16_t* next = (uint16_t*)heap_caps_malloc(320 * 480 * 2,
+                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!next) return nullptr;
+    if (entry->pixels) heap_caps_free(entry->pixels);
+    entry->pixels = next;
+    snprintf(entry->name, sizeof(entry->name), "%s", name);
+    entry->used = ++anim_cache_clock;
+    return entry;
+}
+
+void workanim_prefetch_step() {
+    // 每次主循环最多预解码一帧，避免一次性解码 6 帧把屏幕停住近 1 秒。
+    static const char* names[] = {
+        "pet_playing.jpg", "pet_playing_b.jpg",
+        "pet_feeding.jpg", "pet_feeding_b.jpg",
+        "pet_drinking.jpg", "pet_drinking_b.jpg",
+    };
+    if (!fs_ready || interaction_prefetch_cursor >= sizeof(names) / sizeof(names[0]))
+        return;
+    const char* name = names[interaction_prefetch_cursor++];
+    if (cache_find(name, false)) return;
+    char path[36];
+    snprintf(path, sizeof(path), "/%s", name);
+    if (!LittleFS.exists(path)) return;
+    AnimCacheEntry* entry = cache_reserve(name);
+    if (!entry) return;
+    if (!decode_wa_jpeg(name, entry->pixels)) {
+        heap_caps_free(entry->pixels);
+        *entry = AnimCacheEntry();
+        return;
+    }
+    Serial.printf("[PETA] prefetched %s free=%u\n", name,
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+}
+
+bool workanim_decode(int slot, const char* name) {
+    if (!fs_ready || slot < 0 || slot > 1) return false;
+    constexpr size_t bytes = 320 * 480 * 2;
+    if (!wa_px[slot]) wa_px[slot] = (uint16_t*)heap_caps_malloc(
+        bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!wa_px[slot]) {
+        Serial.printf("[PETA] no PSRAM %s free=%u\n", name,
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        return false;
+    }
+    AnimCacheEntry* hit = cache_find(name);
+    if (hit) {
+        memcpy(wa_px[slot], hit->pixels, bytes);
+    } else {
+        if (!decode_wa_jpeg(name, wa_px[slot])) return false;
+        AnimCacheEntry* entry = cache_reserve(name);
+        if (entry) memcpy(entry->pixels, wa_px[slot], bytes);
+    }
     if (!wa_dsc[slot]) wa_dsc[slot] = new lv_img_dsc_t();
     wa_dsc[slot]->header.always_zero = 0;
     wa_dsc[slot]->header.w = 320;
@@ -395,15 +511,52 @@ bool workanim_decode(int slot, const char* name) {
 }
 
 const lv_img_dsc_t* workanim_source(int slot) { return wa_dsc[slot]; }
-bool workanim_ready(int slot) { return wa_dsc[slot] != nullptr; }
+bool workanim_ready(int slot) { return slot >= 0 && slot <= 1 &&
+                                     wa_dsc[slot] != nullptr && wa_name[slot][0]; }
+
+const lv_img_dsc_t* workanim_blend_roi(uint8_t alpha) {
+    if (!wa_dsc[0] || !wa_dsc[1] || !wa_px[0] || !wa_px[1]) return nullptr;
+    if (!motion_px) motion_px = (uint16_t*)heap_caps_malloc(
+        PET_MOTION_W * PET_MOTION_H * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!motion_px) return nullptr;
+    // 边缘羽化：场景始终取 A，只有宠物主体逐级过渡，防止整屏跳帧。
+    for (int y = 0; y < PET_MOTION_H; ++y) {
+        int ey = y < 14 ? y : PET_MOTION_H - 1 - y;
+        if (ey > 14) ey = 14;
+        for (int x = 0; x < PET_MOTION_W; ++x) {
+            int ex = x < 14 ? x : PET_MOTION_W - 1 - x;
+            if (ex > 14) ex = 14;
+            int edge = ex < ey ? ex : ey;
+            int a = ((int)alpha * edge) / 14;
+            size_t src = (size_t)(PET_MOTION_Y + y) * IMG_W + PET_MOTION_X + x;
+            uint16_t c0 = wa_px[0][src], c1 = wa_px[1][src];
+            if (!a) { motion_px[y * PET_MOTION_W + x] = c0; continue; }
+            int r = (((c0 >> 11) & 31) * (255 - a) + ((c1 >> 11) & 31) * a + 127) / 255;
+            int g = (((c0 >> 5) & 63) * (255 - a) + ((c1 >> 5) & 63) * a + 127) / 255;
+            int b = ((c0 & 31) * (255 - a) + (c1 & 31) * a + 127) / 255;
+            motion_px[y * PET_MOTION_W + x] = (r << 11) | (g << 5) | b;
+        }
+    }
+    motion_dsc.header.always_zero = 0;
+    motion_dsc.header.w = PET_MOTION_W;
+    motion_dsc.header.h = PET_MOTION_H;
+    motion_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    motion_dsc.data = (const uint8_t*)motion_px;
+    motion_dsc.data_size = PET_MOTION_W * PET_MOTION_H * 2;
+    return &motion_dsc;
+}
 
 void workanim_invalidate() {
-    // 只摘 dsc 让 prepare 语义失效；px 缓冲保留复用，decode 原地重画。
-    // 立即重解码（文件刚落盘）：翻页计时器下一拍显示的就是新帧。
+    // 双缓冲现供任意状态复用。文件被改写后清缓存，UI 下次渲染时按
+    // 当前状态解码；不能在这里擅自换回工作帧。
     for (int s = 0; s < 2; ++s) {
         wa_name[s][0] = 0;
-        wa_dsc[s] = nullptr;
+        // 保留描述符对象；重复上传角色包时不泄漏堆内存。
     }
-    workanim_decode(0, "pet_working.jpg");
-    workanim_decode(1, "pet_working_b.jpg");
+    for (auto& entry : anim_cache) {
+        if (entry.pixels) heap_caps_free(entry.pixels);
+        entry = AnimCacheEntry();
+    }
+    anim_cache_clock = 0;
+    interaction_prefetch_cursor = 0;
 }
