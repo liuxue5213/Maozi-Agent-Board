@@ -13,6 +13,9 @@ outputs/ui-refactor-shots/
 outputs/style-verify/
 client/outputs/
 outputs/screen-regression/
+# 宠物包资产管线：源 JPEG 由 tools/pet_artwork.py 再生，不进库；
+# manifest.json（含 per-frame CRC32/尺寸/预算，审计载体）入库。
+outputs/petpack_*/pet_*.jpg
 # SMC helper 编译产物
 client/tools/smc/maozi-smcd
 # 系统杂物

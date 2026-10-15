@@ -1,0 +1,88 @@
+{
+  "name": "tuanzi",
+  "states": [
+    "idle",
+    "thinking",
+    "working",
+    "working_b",
+    "sleepy",
+    "sleeping",
+    "greeting",
+    "happy",
+    "error"
+  ],
+  "missing": [],
+  "fallback": {},
+  "frames": [
+    {
+      "state": "idle",
+      "file": "pet_idle.jpg",
+      "size_bytes": 12538,
+      "crc32": "540149D4",
+      "decoded_kb": 300
+    },
+    {
+      "state": "thinking",
+      "file": "pet_thinking.jpg",
+      "size_bytes": 11684,
+      "crc32": "093D28E4",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working",
+      "file": "pet_working.jpg",
+      "size_bytes": 13481,
+      "crc32": "8C6209E2",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working_b",
+      "file": "pet_working_b.jpg",
+      "size_bytes": 13452,
+      "crc32": "C9B3D553",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleepy",
+      "file": "pet_sleepy.jpg",
+      "size_bytes": 11472,
+      "crc32": "7FB8E469",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleeping",
+      "file": "pet_sleeping.jpg",
+      "size_bytes": 12413,
+      "crc32": "3F0CF96A",
+      "decoded_kb": 300
+    },
+    {
+      "state": "greeting",
+      "file": "pet_greeting.jpg",
+      "size_bytes": 12158,
+      "crc32": "CA85C65A",
+      "decoded_kb": 300
+    },
+    {
+      "state": "happy",
+      "file": "pet_happy.jpg",
+      "size_bytes": 11527,
+      "crc32": "EC16B9CC",
+      "decoded_kb": 300
+    },
+    {
+      "state": "error",
+      "file": "pet_error.jpg",
+      "size_bytes": 11535,
+      "crc32": "A589CB20",
+      "decoded_kb": 300
+    }
+  ],
+  "total_decoded_kb": 2700,
+  "source_cap_kb": 100,
+  "over_source_cap": [],
+  "psram_budget_kb": 3600,
+  "within_budget": true,
+  "cache_pressure": false,
+  "generated": "2026-10-15T14:18:40Z"
+}

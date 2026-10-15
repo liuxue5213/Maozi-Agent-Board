@@ -1,0 +1,88 @@
+{
+  "name": "night",
+  "states": [
+    "idle",
+    "thinking",
+    "working",
+    "working_b",
+    "sleepy",
+    "sleeping",
+    "greeting",
+    "happy",
+    "error"
+  ],
+  "missing": [],
+  "fallback": {},
+  "frames": [
+    {
+      "state": "idle",
+      "file": "pet_idle.jpg",
+      "size_bytes": 16007,
+      "crc32": "8AF8E20A",
+      "decoded_kb": 300
+    },
+    {
+      "state": "thinking",
+      "file": "pet_thinking.jpg",
+      "size_bytes": 14976,
+      "crc32": "70486BCC",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working",
+      "file": "pet_working.jpg",
+      "size_bytes": 17565,
+      "crc32": "AE3AD251",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working_b",
+      "file": "pet_working_b.jpg",
+      "size_bytes": 17468,
+      "crc32": "68D29189",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleepy",
+      "file": "pet_sleepy.jpg",
+      "size_bytes": 14725,
+      "crc32": "DA7711EB",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleeping",
+      "file": "pet_sleeping.jpg",
+      "size_bytes": 17004,
+      "crc32": "A65A1ABF",
+      "decoded_kb": 300
+    },
+    {
+      "state": "greeting",
+      "file": "pet_greeting.jpg",
+      "size_bytes": 15973,
+      "crc32": "8D838A79",
+      "decoded_kb": 300
+    },
+    {
+      "state": "happy",
+      "file": "pet_happy.jpg",
+      "size_bytes": 14677,
+      "crc32": "D8149F82",
+      "decoded_kb": 300
+    },
+    {
+      "state": "error",
+      "file": "pet_error.jpg",
+      "size_bytes": 14727,
+      "crc32": "6C2289FF",
+      "decoded_kb": 300
+    }
+  ],
+  "total_decoded_kb": 2700,
+  "source_cap_kb": 100,
+  "over_source_cap": [],
+  "psram_budget_kb": 3600,
+  "within_budget": true,
+  "cache_pressure": false,
+  "generated": "2026-10-15T14:18:40Z"
+}

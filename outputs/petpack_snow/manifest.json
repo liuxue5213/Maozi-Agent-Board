@@ -1,0 +1,88 @@
+{
+  "name": "snow",
+  "states": [
+    "idle",
+    "thinking",
+    "working",
+    "working_b",
+    "sleepy",
+    "sleeping",
+    "greeting",
+    "happy",
+    "error"
+  ],
+  "missing": [],
+  "fallback": {},
+  "frames": [
+    {
+      "state": "idle",
+      "file": "pet_idle.jpg",
+      "size_bytes": 16713,
+      "crc32": "7D4DDE64",
+      "decoded_kb": 300
+    },
+    {
+      "state": "thinking",
+      "file": "pet_thinking.jpg",
+      "size_bytes": 15890,
+      "crc32": "768EE86C",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working",
+      "file": "pet_working.jpg",
+      "size_bytes": 17973,
+      "crc32": "D909B4CE",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working_b",
+      "file": "pet_working_b.jpg",
+      "size_bytes": 17937,
+      "crc32": "7BA0327B",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleepy",
+      "file": "pet_sleepy.jpg",
+      "size_bytes": 15578,
+      "crc32": "830D1C57",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleeping",
+      "file": "pet_sleeping.jpg",
+      "size_bytes": 16172,
+      "crc32": "F7B21165",
+      "decoded_kb": 300
+    },
+    {
+      "state": "greeting",
+      "file": "pet_greeting.jpg",
+      "size_bytes": 16594,
+      "crc32": "B7147ADB",
+      "decoded_kb": 300
+    },
+    {
+      "state": "happy",
+      "file": "pet_happy.jpg",
+      "size_bytes": 15587,
+      "crc32": "242F2A65",
+      "decoded_kb": 300
+    },
+    {
+      "state": "error",
+      "file": "pet_error.jpg",
+      "size_bytes": 15534,
+      "crc32": "3BF353DA",
+      "decoded_kb": 300
+    }
+  ],
+  "total_decoded_kb": 2700,
+  "source_cap_kb": 100,
+  "over_source_cap": [],
+  "psram_budget_kb": 3600,
+  "within_budget": true,
+  "cache_pressure": false,
+  "generated": "2026-10-15T14:18:40Z"
+}

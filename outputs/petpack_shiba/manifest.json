@@ -1,13 +1,136 @@
 {
   "name": "shiba",
-  "display_name": "阿柴 · 深蓝书房",
-  "description": "奶油色柴犬；工作、休息、触摸互动和局部动作，15 帧",
-  "style": "storybook 3D illustration",
-  "resolution": "320x480",
   "states": [
-    "idle", "idle_b", "thinking", "working", "working_b", "sleepy",
-    "sleeping", "sleeping_b", "greeting", "happy", "error",
-    "feeding", "drinking", "playing", "playing_b"
+    "idle",
+    "thinking",
+    "working",
+    "working_b",
+    "sleepy",
+    "sleeping",
+    "greeting",
+    "happy",
+    "error",
+    "feeding",
+    "drinking",
+    "playing",
+    "idle_b",
+    "sleeping_b",
+    "playing_b"
   ],
-  "version": 1
+  "missing": [],
+  "fallback": {},
+  "frames": [
+    {
+      "state": "idle",
+      "file": "pet_idle.jpg",
+      "size_bytes": 36912,
+      "crc32": "34F33CAC",
+      "decoded_kb": 300
+    },
+    {
+      "state": "thinking",
+      "file": "pet_thinking.jpg",
+      "size_bytes": 37536,
+      "crc32": "26A9CC51",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working",
+      "file": "pet_working.jpg",
+      "size_bytes": 38361,
+      "crc32": "E3F301FE",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working_b",
+      "file": "pet_working_b.jpg",
+      "size_bytes": 39140,
+      "crc32": "8271D092",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleepy",
+      "file": "pet_sleepy.jpg",
+      "size_bytes": 37555,
+      "crc32": "60375C4C",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleeping",
+      "file": "pet_sleeping.jpg",
+      "size_bytes": 35694,
+      "crc32": "45221518",
+      "decoded_kb": 300
+    },
+    {
+      "state": "greeting",
+      "file": "pet_greeting.jpg",
+      "size_bytes": 38187,
+      "crc32": "DFA7A88C",
+      "decoded_kb": 300
+    },
+    {
+      "state": "happy",
+      "file": "pet_happy.jpg",
+      "size_bytes": 38560,
+      "crc32": "A901247C",
+      "decoded_kb": 300
+    },
+    {
+      "state": "error",
+      "file": "pet_error.jpg",
+      "size_bytes": 37204,
+      "crc32": "F5CDBDF3",
+      "decoded_kb": 300
+    },
+    {
+      "state": "feeding",
+      "file": "pet_feeding.jpg",
+      "size_bytes": 37733,
+      "crc32": "57AA8F31",
+      "decoded_kb": 300
+    },
+    {
+      "state": "drinking",
+      "file": "pet_drinking.jpg",
+      "size_bytes": 37176,
+      "crc32": "F73871C2",
+      "decoded_kb": 300
+    },
+    {
+      "state": "playing",
+      "file": "pet_playing.jpg",
+      "size_bytes": 39600,
+      "crc32": "036D4DE5",
+      "decoded_kb": 300
+    },
+    {
+      "state": "idle_b",
+      "file": "pet_idle_b.jpg",
+      "size_bytes": 37887,
+      "crc32": "04FE8521",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleeping_b",
+      "file": "pet_sleeping_b.jpg",
+      "size_bytes": 36886,
+      "crc32": "F4B8EDEE",
+      "decoded_kb": 300
+    },
+    {
+      "state": "playing_b",
+      "file": "pet_playing_b.jpg",
+      "size_bytes": 40454,
+      "crc32": "58676538",
+      "decoded_kb": 300
+    }
+  ],
+  "total_decoded_kb": 4500,
+  "source_cap_kb": 100,
+  "over_source_cap": [],
+  "psram_budget_kb": 3600,
+  "within_budget": false,
+  "cache_pressure": true,
+  "generated": "2026-10-15T14:18:40Z"
 }

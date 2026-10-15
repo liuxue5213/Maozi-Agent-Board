@@ -1,30 +1,176 @@
 {
   "name": "xuebai_v2",
-  "display_name": "雪白 · 晨光书房",
-  "description": "立体绒毛白猫，20 帧状态、眨眼和触摸互动；旧版雪白仍保留",
-  "style": "storybook 3D illustration",
-  "resolution": "320x480",
   "states": [
     "idle",
-    "idle_b",
+    "thinking",
     "working",
     "working_b",
-    "thinking",
-    "thinking_b",
-    "sleeping",
-    "sleeping_b",
-    "greeting",
-    "greeting_b",
-    "happy",
-    "happy_b",
-    "error",
     "sleepy",
+    "sleeping",
+    "greeting",
+    "happy",
+    "error",
     "feeding",
-    "feeding_b",
     "drinking",
-    "drinking_b",
     "playing",
+    "idle_b",
+    "thinking_b",
+    "sleeping_b",
+    "greeting_b",
+    "happy_b",
+    "feeding_b",
+    "drinking_b",
     "playing_b"
   ],
-  "version": 2
+  "missing": [],
+  "fallback": {},
+  "frames": [
+    {
+      "state": "idle",
+      "file": "pet_idle.jpg",
+      "size_bytes": 44272,
+      "crc32": "6A50CBCA",
+      "decoded_kb": 300
+    },
+    {
+      "state": "thinking",
+      "file": "pet_thinking.jpg",
+      "size_bytes": 45636,
+      "crc32": "B9966E27",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working",
+      "file": "pet_working.jpg",
+      "size_bytes": 46668,
+      "crc32": "293D4A1A",
+      "decoded_kb": 300
+    },
+    {
+      "state": "working_b",
+      "file": "pet_working_b.jpg",
+      "size_bytes": 47727,
+      "crc32": "AD87BE4A",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleepy",
+      "file": "pet_sleepy.jpg",
+      "size_bytes": 44955,
+      "crc32": "5F0FBF93",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleeping",
+      "file": "pet_sleeping.jpg",
+      "size_bytes": 43243,
+      "crc32": "C2389657",
+      "decoded_kb": 300
+    },
+    {
+      "state": "greeting",
+      "file": "pet_greeting.jpg",
+      "size_bytes": 45319,
+      "crc32": "14660471",
+      "decoded_kb": 300
+    },
+    {
+      "state": "happy",
+      "file": "pet_happy.jpg",
+      "size_bytes": 45784,
+      "crc32": "658E81BE",
+      "decoded_kb": 300
+    },
+    {
+      "state": "error",
+      "file": "pet_error.jpg",
+      "size_bytes": 45579,
+      "crc32": "1E46D30A",
+      "decoded_kb": 300
+    },
+    {
+      "state": "feeding",
+      "file": "pet_feeding.jpg",
+      "size_bytes": 45007,
+      "crc32": "BD48E078",
+      "decoded_kb": 300
+    },
+    {
+      "state": "drinking",
+      "file": "pet_drinking.jpg",
+      "size_bytes": 48603,
+      "crc32": "B094FC1A",
+      "decoded_kb": 300
+    },
+    {
+      "state": "playing",
+      "file": "pet_playing.jpg",
+      "size_bytes": 48077,
+      "crc32": "54E1D849",
+      "decoded_kb": 300
+    },
+    {
+      "state": "idle_b",
+      "file": "pet_idle_b.jpg",
+      "size_bytes": 45279,
+      "crc32": "F5A21E36",
+      "decoded_kb": 300
+    },
+    {
+      "state": "thinking_b",
+      "file": "pet_thinking_b.jpg",
+      "size_bytes": 46795,
+      "crc32": "7CFAE340",
+      "decoded_kb": 300
+    },
+    {
+      "state": "sleeping_b",
+      "file": "pet_sleeping_b.jpg",
+      "size_bytes": 44906,
+      "crc32": "1FE43DA7",
+      "decoded_kb": 300
+    },
+    {
+      "state": "greeting_b",
+      "file": "pet_greeting_b.jpg",
+      "size_bytes": 45906,
+      "crc32": "20849A3F",
+      "decoded_kb": 300
+    },
+    {
+      "state": "happy_b",
+      "file": "pet_happy_b.jpg",
+      "size_bytes": 47016,
+      "crc32": "ECE1593F",
+      "decoded_kb": 300
+    },
+    {
+      "state": "feeding_b",
+      "file": "pet_feeding_b.jpg",
+      "size_bytes": 46086,
+      "crc32": "FD540AD6",
+      "decoded_kb": 300
+    },
+    {
+      "state": "drinking_b",
+      "file": "pet_drinking_b.jpg",
+      "size_bytes": 50179,
+      "crc32": "D033C324",
+      "decoded_kb": 300
+    },
+    {
+      "state": "playing_b",
+      "file": "pet_playing_b.jpg",
+      "size_bytes": 49575,
+      "crc32": "616B6302",
+      "decoded_kb": 300
+    }
+  ],
+  "total_decoded_kb": 6000,
+  "source_cap_kb": 100,
+  "over_source_cap": [],
+  "psram_budget_kb": 3600,
+  "within_budget": false,
+  "cache_pressure": true,
+  "generated": "2026-10-15T14:18:41Z"
 }
