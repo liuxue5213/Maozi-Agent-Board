@@ -26,6 +26,14 @@ static Ds1302 rtc(PIN_DS1302_CE, PIN_DS1302_CLK, PIN_DS1302_IO);
 static bool aht_ok = false, bmp_ok = false, tof_ok = false;
 extern char g_i2c_scan[64];   // 诊断：I2C 扫描结果（main.cpp 定义）
 
+// 自恢复：连续读失败达到阈值时重新 begin()（应对 I2C 偶发卡死 / 热插拔 / 掉电）。
+// aht_ever_ok / bmp_ever_ok 记录"曾成功通信"，用于抑制从未接线器件的噪声日志。
+// bmp_addr 记住 BMP280 命中的地址（0x76/0x77），恢复时复用，避免重新盲猜。
+static const uint8_t SENSOR_RECOVER_FAILS = 5;
+static int  aht_fail = 0, bmp_fail = 0;
+static bool aht_ever_ok = false, bmp_ever_ok = false;
+static uint8_t bmp_addr = BMP280_ADDRESS_ALT;
+
 inline void sensors_init() {
     // 自动探测配置的 SDA/SCL 以及反接方向。
     // 哪种扫描到设备就用哪种——不需要用户确认接线方向
@@ -81,10 +89,10 @@ inline void sensors_init() {
     Serial.printf("[SN] AHT20    : %s\n", aht_ok ? "OK @0x38" : "not found");
     // BMP280 可能挂在 0x76（SDO→GND）或 0x77（SDO→VCC），两个地址都试
     if (bmp.begin(BMP280_ADDRESS_ALT, BMP280_CHIPID)) {
-        bmp_ok = true;
+        bmp_ok = true; bmp_addr = BMP280_ADDRESS_ALT;
         Serial.printf("[SN] BMP280   : OK @0x76\n");
     } else if (bmp.begin(BMP280_ADDRESS, BMP280_CHIPID)) {
-        bmp_ok = true;
+        bmp_ok = true; bmp_addr = BMP280_ADDRESS;
         Serial.printf("[SN] BMP280   : OK @0x77\n");
     } else {
         bmp_ok = false;
@@ -106,11 +114,21 @@ inline bool sensors_sample_environment() {
     sensors_event_t humidity, temperature;
     aht.getEvent(&humidity, &temperature);
     float t = temperature.temperature, h = humidity.relative_humidity;
-    if (!isfinite(t) || !isfinite(h) || t < -20 || t > 80 || h < 1 || h > 100)
-        return false;
-    g_temp = t; g_hum = h;
-    snprintf(g_env_source, 8, "AHT20");
-    return true;
+    if (isfinite(t) && isfinite(h) && t >= -20 && t <= 80 && h >= 1 && h <= 100) {
+        g_temp = t; g_hum = h;
+        snprintf(g_env_source, 8, "AHT20");
+        aht_ever_ok = true;
+        aht_fail = 0;
+        return true;
+    }
+    // 连续读失败达到阈值 → 重新 begin() 自恢复；仅在曾成功通信过的器件上打印，避免从未接线器件的噪声
+    if (++aht_fail >= SENSOR_RECOVER_FAILS) {
+        aht_fail = 0;
+        bool ok = aht.begin(&Wire1);
+        if (ok) aht_ever_ok = true;
+        if (aht_ever_ok) Serial.printf("[SN] AHT20 re-init: %s\n", ok ? "OK" : "LOST");
+    }
+    return false;
 }
 
 inline void sensors_sample_auxiliary() {
@@ -118,11 +136,30 @@ inline void sensors_sample_auxiliary() {
     if (bmp_ok) {
         float t_bmp = bmp.readTemperature();
         float hpa = bmp.readPressure() / 100.0f;
-        if (isfinite(hpa) && hpa >= 300 && hpa <= 1100) g_pressure = hpa;
+        bool p_valid = isfinite(hpa) && hpa >= 300 && hpa <= 1100;
+        bool t_valid = isfinite(t_bmp) && t_bmp >= -20 && t_bmp <= 80;
+        if (p_valid) g_pressure = hpa;
         // AHT20 缺失时，用 BMP280 的温度兜底（湿度仍为 NA，屏幕上会标注传感器来源）
-        if (!aht_ok && isnan(g_temp) && isfinite(t_bmp) && t_bmp >= -20 && t_bmp <= 80) {
+        if (!aht_ok && isnan(g_temp) && t_valid) {
             g_temp = t_bmp;
             snprintf(g_env_source, sizeof(g_env_source), "BMP280");
+        }
+        // 压力或温度任一有效即视为通信正常；连续失败达阈值则重新 begin() 自恢复
+        if (p_valid || t_valid) {
+            bmp_ever_ok = true;
+            bmp_fail = 0;
+        } else if (++bmp_fail >= SENSOR_RECOVER_FAILS) {
+            bmp_fail = 0;
+            bool ok = bmp.begin(bmp_addr, BMP280_CHIPID);
+            if (ok) {
+                bmp_ever_ok = true;
+                bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,
+                                Adafruit_BMP280::SAMPLING_X2,
+                                Adafruit_BMP280::SAMPLING_X16,
+                                Adafruit_BMP280::FILTER_X16,
+                                Adafruit_BMP280::STANDBY_MS_63);
+            }
+            if (bmp_ever_ok) Serial.printf("[SN] BMP280 re-init: %s\n", ok ? "OK" : "LOST");
         }
     }
     if (tof_ok) {
