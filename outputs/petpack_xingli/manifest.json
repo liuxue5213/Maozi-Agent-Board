@@ -1,0 +1,30 @@
+{
+  "name": "xingli",
+  "display_name": "星狸",
+  "description": "午夜书房里的星徽小熊猫，20 帧状态、表情与触摸动作",
+  "style": "storybook 3D illustration",
+  "resolution": "320x480",
+  "states": [
+    "idle",
+    "thinking",
+    "thinking_b",
+    "working",
+    "working_b",
+    "idle_b",
+    "sleepy",
+    "sleeping",
+    "sleeping_b",
+    "greeting",
+    "greeting_b",
+    "happy",
+    "happy_b",
+    "error",
+    "feeding",
+    "feeding_b",
+    "drinking",
+    "drinking_b",
+    "playing",
+    "playing_b"
+  ],
+  "version": 1
+}

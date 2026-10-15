@@ -1,0 +1,30 @@
+{
+  "name": "xuebai_v2",
+  "display_name": "雪白 · 晨光书房",
+  "description": "立体绒毛白猫，20 帧状态、眨眼和触摸互动；旧版雪白仍保留",
+  "style": "storybook 3D illustration",
+  "resolution": "320x480",
+  "states": [
+    "idle",
+    "idle_b",
+    "working",
+    "working_b",
+    "thinking",
+    "thinking_b",
+    "sleeping",
+    "sleeping_b",
+    "greeting",
+    "greeting_b",
+    "happy",
+    "happy_b",
+    "error",
+    "sleepy",
+    "feeding",
+    "feeding_b",
+    "drinking",
+    "drinking_b",
+    "playing",
+    "playing_b"
+  ],
+  "version": 2
+}

@@ -1,0 +1,13 @@
+{
+  "name": "shiba",
+  "display_name": "阿柴 · 深蓝书房",
+  "description": "奶油色柴犬；工作、休息、触摸互动和局部动作，15 帧",
+  "style": "storybook 3D illustration",
+  "resolution": "320x480",
+  "states": [
+    "idle", "idle_b", "thinking", "working", "working_b", "sleepy",
+    "sleeping", "sleeping_b", "greeting", "happy", "error",
+    "feeding", "drinking", "playing", "playing_b"
+  ],
+  "version": 1
+}
