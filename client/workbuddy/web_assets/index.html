@@ -75,6 +75,7 @@
           </div>
           <p class="ov-device-state" id="ov-device-state">未连接</p>
           <p class="hint" id="ov-device-sub">等待 ESP32-S3 小屏通过 USB 接入。</p>
+          <p class="hint" id="ov-sensors" aria-live="polite"></p>
           <div class="kv-row">
             <div class="kv"><span>配置版本</span><strong id="ov-version">v—</strong></div>
             <div class="kv"><span>同步状态</span><strong id="ov-sync-state">—</strong></div>
@@ -587,6 +588,8 @@
                 aria-selected="false" aria-controls="spane-weather">天气</button>
         <button type="button" class="tab" id="stab-pet" role="tab"
                 aria-selected="false" aria-controls="spane-pet">宠物</button>
+        <button type="button" class="tab" id="stab-health" role="tab"
+                aria-selected="false" aria-controls="spane-health">健康提醒</button>
         <button type="button" class="tab" id="stab-system" role="tab"
                 aria-selected="false" aria-controls="spane-system">系统</button>
       </div>
@@ -814,10 +817,6 @@
             <span>整点/半点问候（凌晨保持安静）</span>
           </label>
           <label class="field toggle">
-            <input type="checkbox" id="pet-break-on">
-            <span>久坐提醒（键鼠空闲超阈值 → 手机推送 + 宠物犯困姿态，凌晨不扰）</span>
-          </label>
-          <label class="field toggle">
             <input type="checkbox" id="pet-show-stats" checked>
             <span>角色页显示数值行（饱食/水分/活力）</span>
           </label>
@@ -828,28 +827,24 @@
           <div class="field-heading"><span>角色页信息</span></div>
           <p class="hint">独立选择要显示的内容，最多 4 项；按下方顺序排列在小屏顶部。</p>
           <div class="pet-field-grid" id="pet-fields">
-            <label class="field toggle"><input type="checkbox" value="title"><span>任务名</span></label>
+            <label class="field toggle"><input type="checkbox" value="title"><span>任务摘要</span></label>
             <label class="field toggle"><input type="checkbox" value="project"><span>项目名称</span></label>
             <label class="field toggle"><input type="checkbox" value="tool"><span>AI 工具</span></label>
             <label class="field toggle"><input type="checkbox" value="state"><span>任务状态</span></label>
             <label class="field toggle"><input type="checkbox" value="elapsed"><span>本轮用时</span></label>
             <label class="field toggle"><input type="checkbox" value="model"><span>模型名称</span></label>
-            <label class="field toggle"><input type="checkbox" value="turn_total"><span>本轮总 Token</span></label>
-            <label class="field toggle"><input type="checkbox" value="turn_out"><span>本轮输出 Token</span></label>
+            <label class="field toggle"><input type="checkbox" value="turn_total"><span>会话累计 Token</span></label>
+            <label class="field toggle"><input type="checkbox" value="turn_out"><span>会话输出 Token</span></label>
             <label class="field toggle"><input type="checkbox" value="today"><span>今日累计</span></label>
             <label class="field toggle"><input type="checkbox" value="message"><span>最近消息</span></label>
           </div>
           <label class="field">
             <span>信息密度</span>
             <select id="pet-density">
-              <option value="0">单行</option>
-              <option value="1">双行</option>
-              <option value="2">自动摘要</option>
+              <option value="0">单行轮播</option>
+              <option value="1">双行网格</option>
+              <option value="2">自动排布</option>
             </select>
-          </label>
-          <label class="field">
-            <span>提醒阈值 <output class="field-value" id="pet-break-val">45 分钟</output></span>
-            <input type="range" id="pet-break-min" min="5" max="120" step="5" value="45">
           </label>
           <div class="btn-row">
             <button type="button" class="button primary" id="pet-save">保存形象</button>
@@ -864,13 +859,15 @@
             </select>
             <button type="button" class="button primary" id="pet-pack-apply">应用此包</button>
           </div>
+          <p class="hint" id="pet-pack-progress" aria-live="polite" hidden></p>
+          <progress id="pet-pack-progress-bar" max="1" value="0" style="width:100%" hidden></progress>
           <div class="btn-row" style="gap:6px">
             <label class="button ghost" for="pet-pack-import-file" style="flex:1;text-align:center">导入包(.zip)</label>
             <input type="file" id="pet-pack-import-file" accept=".zip" class="visually-hidden">
             <button type="button" class="button" id="pet-pack-dl" style="flex:1">下载分享</button>
             <button type="button" class="button" id="pet-pack-rename" style="flex:1">改名</button>
           </div>
-          <p class="hint" id="pet-pack-note">包目录在 outputs/petpack_&lt;名称&gt;/（pet_artwork.py 生成），每包含 9 张规范帧（8 状态 + working 双帧），应用时整套 9 张重传设备（约 20 秒）；应用包会替换设备上的自定义形象（以包为准，想恢复自定义图重新上传即可）。点击上方角色卡可查看全部状态九宫格与设备裁切预览。</p>
+          <p class="hint" id="pet-pack-note">角色包包含 9 张基础状态帧，可另附互动帧与眨眼、呼吸、挥手等动作帧。应用时会整套上传，进度在上方显示；新角色会替换设备上的自定义形象。点击角色卡可预览各状态。</p>
           <label class="field toggle">
             <input type="checkbox" id="pet-autopack">
             <span>跟随昼夜自动切换（白天用「白天包」，22:00–06:00 用「夜晚包」，与屏幕氛围层同步）</span>
@@ -918,6 +915,28 @@
             <p class="hint" id="pet-allstates-note"></p>
           </div>
         </div>
+        </div>
+      </div>
+      <div class="tabpane" id="spane-health" role="tabpanel" hidden>
+        <div class="settings-pane-grid">
+          <section class="panel settings-card" aria-labelledby="health-heading">
+            <div class="panel-head"><div><h2 id="health-heading">活动与休息</h2><p class="panel-kicker">按连续使用电脑的时间提醒</p></div></div>
+            <label class="field toggle"><input type="checkbox" id="pet-break-on"><span>启用活动提醒</span></label>
+            <label class="field"><span>使用电脑多久后提醒 <output class="field-value" id="pet-break-val">45 分钟</output></span>
+              <input type="range" id="pet-break-min" min="5" max="120" step="5" value="45"></label>
+            <label class="field"><span>离开电脑多久算完成休息 <output class="field-value" id="health-rest-val">5 分钟</output></span>
+              <input type="range" id="health-rest-min" min="1" max="30" step="1" value="5"></label>
+            <label class="field toggle"><input type="checkbox" id="health-desktop-notify" checked><span>电脑本机通知（macOS）</span></label>
+            <p class="hint">仅用键鼠活动估算电脑使用时间。触发后小屏显示“休息”，本机通知可单独关闭；手机推送需先配置。01:00–06:00 和推送免打扰时段不发送通知。</p>
+            <button type="button" class="button primary" id="health-save">保存健康提醒</button>
+          </section>
+          <section class="panel settings-card" aria-labelledby="health-status-heading">
+            <div class="panel-head"><h2 id="health-status-heading">当前状态</h2></div>
+            <p id="health-live-status" aria-live="polite">等待数据…</p>
+            <progress id="health-work-progress" max="100" value="0" aria-label="本轮电脑使用进度"></progress>
+            <p class="hint" id="health-live-detail">等待客户端采集…</p>
+            <button type="button" class="button" id="health-snooze" hidden>稍后 10 分钟提醒</button>
+          </section>
         </div>
       </div>
       <div class="tabpane" id="spane-system" role="tabpanel" hidden>

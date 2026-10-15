@@ -373,6 +373,7 @@ svg { display:block; }
   background:var(--bg-surface);
   border-right:1px solid var(--line);
 }
+#health-work-progress { width:100%; height:10px; accent-color:var(--accent); }
 
 .brand { display:flex; align-items:center; gap:var(--space-3); padding:var(--space-1) var(--space-2) var(--space-4); }
 .brand-mark {
@@ -1055,6 +1056,7 @@ svg { display:block; }
 
 /* 舞台图元：位置来自 JS，颜色来自令牌 */
 .dev-el { position:absolute; }
+.dev-control-scroll { overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; touch-action:pan-y; }
 .dev-label {
   position:absolute; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
   font-weight:var(--fw-medium);

@@ -4,7 +4,7 @@ const widgets = {
   clock: ['时钟', '◷', 1], environment: ['温湿度', '◉', 1],
   reminder_list: ['提醒列表', '☷', 2], today_calendar: ['今日日历', '▣', 2],
   alarm: ['闹钟', '◴', 1], weather: ['天气', '☁', 1], countdown: ['倒计时', '⏳', 1],
-  ai_cost: ['AI 用量', '∑', 1]
+  ai_cost: ['AI 用量', '∑', 1], control: ['音乐与控制', '♫', 4]
 };
 const stateNames = {THINKING:'思考中',GENERATING:'生成中',TOOL:'执行工具',BUILD:'构建中',DONE:'已完成',ERROR:'出错',WAIT_INPUT:'等你回复',ASK:'进行中待确认'};
 // 主题预设：每套自带 card_opa，card 与 bg 必须拉开亮度差——注意校验用的是
@@ -706,10 +706,10 @@ const DEFAULT_THEME = {bg:'060A12', grad:'0E1726', card:'28384E', card_edge:'3C5
 /* 与 workbuddy/music.py 的 MUSIC_COMMAND 一致：快捷应用里用它表示
    「用默认音乐软件播放」。 */
 const MUSIC_COMMAND = '@music';
+const PAGE_MAX = 10;
+let autoPageOmitted = 0;
 
-/* 自动按工具分页：全部 + 每工具一页（页面带 filter，固件据此过滤会话）。
-   只重排 AI 页，其它页面（电脑/环境…）原样保留；总页数硬上限 6，
-   放不下时先砍靠后的工具页（那些工具的会话仍在「全部」页可见）。 */
+/* 自动分页：天气城市与手工页先占位，工具页只用剩余槽位。 */
 function autoPages(){
   const TOOL_TITLES = {claude:'Claude', codex:'Codex', zcode:'ZCode',
                        opencode:'OpenCode', workbuddy:'智能体'};
@@ -719,23 +719,30 @@ function autoPages(){
   const others=(draft.pages||[]).filter(p=>!((p.widgets||[]).includes('ai_list'))
                                           && !p.city);
   const pages=[{id:'ai', title:'全部', layout:'list', widgets:['ai_list'], filter:''}];
-  tools.forEach(t=>{
-    if(pages.length>=6) return;
-    pages.push({id:('t'+t).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,16),
-                title:TOOL_TITLES[t]||t, layout:'list', widgets:['ai_list'], filter:t});
+  const used=new Set(['ai', ...others.map(p=>p.id)]);
+  const add=(prefix, item)=>{
+    let id=prefix, suffix=1;
+    while(used.has(id)) id=(prefix.slice(0,13)+suffix++).slice(0,16);
+    used.add(id); pages.push({...item,id});
+  };
+  const toolSlots=Math.max(0,PAGE_MAX-1-wCities.length-others.length);
+  tools.forEach((t,i)=>{
+    if(i>=toolSlots) return;
+    add(('t'+t).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,16)||'tool',
+        {title:TOOL_TITLES[t]||t,layout:'list',widgets:['ai_list'],filter:t});
   });
-  wCities.forEach(c=>{
-    if(pages.length>=6) return;
-    pages.push({id:('w'+c.name).replace(/[^a-zA-Z0-9_-]/g,'').slice(0,16),
-                title:c.name, layout:'list', widgets:['weather'], city:c.name});
-  });
-  return [...pages, ...others].slice(0,6);
+  wCities.forEach((c,i)=>add(`w${i+1}`,{title:c.name,layout:'list',widgets:['weather'],city:c.name}));
+  pages.push(...others);
+  autoPageOmitted=tools.length-Math.min(tools.length,toolSlots)+Math.max(0,pages.length-PAGE_MAX);
+  pages.length=Math.min(pages.length,PAGE_MAX);
+  return pages;
 }
 function regenAutoPages(){
   const pages=autoPages();
   const changed=JSON.stringify(pages)!==JSON.stringify(draft.pages);
   draft.pages=pages;
   if(changed){ selected=0; previewPage=0; markDirty(); }
+  if(autoPageOmitted) notice(`页面上限 ${PAGE_MAX} 页，${autoPageOmitted} 个工具/页面未加入；可关闭自动分页后手动调整`,true);
   return changed;
 }
 function regenAllPages(){ regenAutoPages(); }
@@ -933,8 +940,15 @@ function devGenericContent(kind){
     return {main:time, sub, date};
   }
   if(kind === 'environment'){
-    return {main: t.temp === undefined ? '温度不可用' : `${Number(t.temp).toFixed(1)} ℃`,
-            sub: t.hum === undefined ? '传感器读取失败' : `湿度 ${Math.round(t.hum)}%`};
+    const sensor = live.sensors || {};
+    const temp = sensor.temp ?? t.temp;
+    const hum = sensor.hum ?? t.hum;
+    const pressure = sensor.pressure;
+    const source = sensor.env_source && sensor.env_source !== 'NA' ? sensor.env_source : '';
+    const detail = hum == null ? '传感器读取失败' : `湿度 ${Math.round(hum)}%`;
+    return {main: temp == null ? '温度不可用' : `${Number(temp).toFixed(1)} ℃`,
+            sub: [detail, source || (pressure == null ? '' : `${Number(pressure).toFixed(0)} hPa`)]
+              .filter(Boolean).join(' · ')};
   }
   if(kind === 'weather'){
     const w = devWx();
@@ -990,6 +1004,7 @@ function petColors(type, ctx, st){
     return '#'+m.map(v=>v.toString(16).padStart(2,'0')).join(''); };
   const c = type==='cat' ? {body:themed(0.62),edge:ctx.accent,limb:themed(0.62)}
           : type==='chick' ? {body:themed(0.38),edge:ctx.accent,limb:themed(0.38)}
+          : type==='dog' ? {body:'#B98150',edge:ctx.accent,limb:'#B98150'}
           : {body:devSemantic('robot.body'),edge:ctx.accent,limb:devSemantic('robot.body')};
   if(st==='ERROR'){ c.edge=devSemantic('status.err'); c.eye=devSemantic('status.err'); }
   else c.eye=ctx.text;
@@ -1035,19 +1050,29 @@ function devPet(card, type, st, bx, by, sz){
     n.style.opacity=opa==null?1:opa;
     if(border){n.style.border=Math.max(1,Math.round(sz))+'px solid '+border;}
     grp.append(n); return n;};
+  R(12,73,42,5,3,ctx.bg);
   if(type==='robot') R(29,0,6,6,3,devSemantic('status.ok'));
-  if(type==='cat'){ R(12,0,10,9,3,col.body,1,col.edge); R(42,0,10,9,3,col.body,1,col.edge); }
-  const hy = type==='cat'?7:5;
+  if(type==='cat'||type==='dog'){
+    const earH=type==='dog'?12:9;
+    R(12,0,10,earH,3,col.body,1,col.edge); R(42,0,10,earH,3,col.body,1,col.edge);
+    if(type==='dog'){R(14,3,6,6,2,'#DDAE83');R(44,3,6,6,2,'#DDAE83');}
+  }
+  const hy = type==='cat'||type==='dog'?7:5;
   R(10,hy,44,28,8,col.body,1,col.edge);
   R(16,hy+5,14,14,7,ctx.accent,0.5); R(34,hy+5,14,14,7,ctx.accent,0.5);
   R(19,hy+8+V.dy,8,V.eh,4,col.eye); R(37,hy+8+V.dy,8,V.eh,4,col.eye);
+  if(type==='cat'||type==='dog'){
+    R(24,hy+17,16,9,4,type==='dog'?'#F2DFC5':ctx.text);
+    R(30,hy+17,4,3,2,type==='dog'?'#382B2C':ctx.text);
+  }
   if(type==='chick') R(26,hy+17,12,6,2,'#FFB84D');
-  else R(24,hy+19,V.mw,3,1, L==='ALERT'?devSemantic('status.err'):L==='CELEBRATE'?devSemantic('status.ok'):ctx.accent);
+  else R(24,hy+22,V.mw,3,1, L==='ALERT'?devSemantic('status.err'):L==='CELEBRATE'?devSemantic('status.ok'):type==='dog'?'#765039':ctx.accent);
   const by2 = hy+30;
   R(8,by2,48,26,8,col.body,1,col.edge);
-  R(28,by2+8,8,5,2, type==='robot'?ctx.accent:col.edge);
+  R(type==='dog'?22:28,by2+8,type==='dog'?20:8,type==='dog'?11:5,3,
+    type==='robot'?ctx.accent:type==='dog'?'#F2DFC5':col.edge);
   R(0,by2+3,7,16,3,col.limb); R(57,by2+3,7,16,3,col.limb);
-  if(type==='cat') R(58,by2-12,6,22,3,col.limb);
+  if(type==='cat'||type==='dog') R(58,by2-12,6,type==='dog'?19:22,3,col.limb);
   R(16,by2+28,16,7,3,col.limb); R(34,by2+28,16,7,3,col.limb);
   // 徽标：场景层自带（?/Z/z/嗨/×）> 饿渴累（仅活动层显示，睡觉/场景时不多嘴）
   const ps=(live.telemetry||{}).ps||'';
@@ -1092,13 +1117,13 @@ function petFieldText(field){
     tool:`工具  ${task.tool||'暂无'}`,
     state:`状态  ${task.state?(stateNames[task.state]||task.state):'空闲'}`,
     elapsed:`用时  ${fmtElapsed(task.elapsed)}`,
-    model:`模型  ${usage.models?.[task.tool]||'暂无'}`,
-    turn:`本轮输出  ${token(usage.by_sid?.[sid]?.out)}`,
-    turn_out:`本轮输出  ${token(usage.by_sid?.[sid]?.out)}`,
-    turn_total:`本轮总Token  ${token(usage.by_sid?.[sid]?.total)}`,
+    model:`模型  ${usage.model_by_sid?.[sid]||'暂无'}`,
+    turn:`会话输出  ${token(usage.by_sid?.[sid]?.out)}`,
+    turn_out:`会话输出  ${token(usage.by_sid?.[sid]?.out)}`,
+    turn_total:`会话总量  ${token(usage.by_sid?.[sid]?.total)}`,
     today:`今日累计  ${token(usage.today?.total)}`,
-    message:`消息  ${usage.last_msg_by_tool?.[task.tool]||'暂无'}`,
-    title:`任务  ${task.title||usage.last_msg_by_tool?.[task.tool]||task.project||'暂无'}`};
+    message:`消息  ${usage.last_msg_by_sid?.[sid]||'暂无'}`,
+    title:`任务  ${task.title||usage.last_msg_by_sid?.[sid]||task.project||'暂无'}`};
   return values[field]||'';
 }
 /* 宠物页（W_PET）：大宠物 ×2 + 三条状态条 + 三个交互按钮，几何照抄固件 */
@@ -1108,7 +1133,7 @@ function devPetPage(screen, ctx){
   // 先画像素回退；当前设备成功应用过角色包时，再用真实 320×480 状态帧
   // 覆盖它。图片加载失败会自动移除，预览仍保持可用。
   const fallback=devAbs(el('div','dev-el'),0,0,DEV.W,DEV.H);
-  screen.append(fallback);
+  screen.prepend(fallback);
   devPet(fallback, type, st, 96, 66, 2);
   const pack=live.petpack?.ok&&live.petpack?.pack?live.petpack.pack:'';
   if(pack){
@@ -1119,31 +1144,33 @@ function devPetPage(screen, ctx){
     img.style.objectFit='cover';img.style.display='block';
     img.onload=()=>fallback.remove();
     img.onerror=()=>img.remove();
-    screen.append(img);
+    screen.insertBefore(img, fallback.nextSibling);
   }
   const ps=(live.telemetry||{}).ps||'80,75,90';
   const vals=ps.split(',').map(Number);
   const names=['饱食','水分','活力'];
+  const controls=devAbs(el('div','dev-el'),0,358,320,86);
+  controls.style.background='rgba(6,10,18,.7)'; screen.append(controls);
   // 三项数值一行，按钮与底部页码各有独立触控区域。
   if(Number(draft.pet?.show_stats??1)){
     names.forEach((label,i)=>{
-      devLabel(screen, 12+100*i, 370, 48, label, 14, 'dev-dim');
-      devLabel(screen, 62+100*i, 370, 42, String(vals[i]??0), 14, 'dev-ink');
+      devLabel(screen, 12+100*i, 364, 48, label, 20, 'dev-dim');
+      devLabel(screen, 60+100*i, 362, 44, String(vals[i]??0), 24, 'dev-ink');
     });
   }
   const pf=petFields().slice(0,4);
   const dens=Number(draft.pet?.density??2);
-  if(dens===0 && pf.length){            // 单行：合并截断
-    const row=devAbs(el('div','dev-el'),12,36,296,25);
+  if(dens===0 && pf.length){            // 单行：逐项轮播，保证字段全文可见
+    const row=devAbs(el('div','dev-el'),12,42,296,25);
     row.style.background='rgba(6,10,18,.7)';screen.append(row);
-    devLabel(row,0,0,296,pf.map(petFieldText).join('  ·  '),14,null,ctx.text);
-  }else{                                // 双行 / 自动摘要：2 列网格
-    const cols=2, rows=Math.min(2, Math.ceil(pf.length/cols));
-    pf.slice(0,cols*rows).forEach((field,i)=>{
-      const r=Math.floor(i/cols), c=i%cols;
-      const row=devAbs(el('div','dev-el'),12+c*150,36+r*26,146,25);
+    devLabel(row,5,0,286,petFieldText(pf[Math.floor(Date.now()/4000)%pf.length]),20,null,ctx.text);
+  }else{
+    const fullRows=dens===2 && pf.length<=2;
+    pf.forEach((field,i)=>{
+      const row=devAbs(el('div','dev-el'),fullRows?12:12+(i%2)*150,
+                       42+(fullRows?i:Math.floor(i/2))*32,fullRows?296:146,25);
       row.style.background='rgba(6,10,18,.7)';screen.append(row);
-      devLabel(row,0,0,146,petFieldText(field),14,null,ctx.text);
+      devLabel(row,5,0,fullRows?286:136,petFieldText(field),fullRows?20:14,null,ctx.text);
     });
   }
   if(Number(draft.pet?.show_buttons??1)){
@@ -1208,16 +1235,16 @@ function devWeatherCity(screen, ctx, page){
   const days=f?String(f).split(';'):[];
   const today=new Date().getDay();     // 0=周日
   for(let i=0;i<5;i++){
-    const row=devAbs(el('div','dev-el'), 8, 184 + 50*i, 304, 46);
+    const row=devAbs(el('div','dev-el'), 8, 176 + 53*i, 304, 50);
     row.style.background=ctx.bg;
     row.style.border='1px solid '+panelHex(draft.theme.card_edge||draft.theme.card);
     screen.append(row);
     const dp=days[i]?days[i].split(',').map(Number):null;
     const wd='日一二三四五六'[(today+i)%7];
     const name=i===0?'今天':i===1?'明天':i===2?'后天':`周${wd}`;
-    devLabel(row, 12, 4, 64, name, 20, 'dev-dim');
-    devLabel(row, 80, 4, 110, dp?weatherText(dp[0]):'--', 20);
-    devLabel(row, 194, 4, 98, dp?`${dp[1]}° ${dp[2]}°`:'', 20, null, null, 'right');
+    devLabel(row, 12, 11, 64, name, 20, 'dev-dim');
+    devLabel(row, 80, 11, 110, dp?weatherText(dp[0]):'--', 20);
+    devLabel(row, 194, 11, 98, dp?`${dp[2]}° / ${dp[1]}°`:'', 20, null, null, 'right');
   }
 }
   /* P1-1 活动舞台：会话行迷你角色（24×30），几何与固件 draw_pet_mini 同源。
@@ -1369,6 +1396,28 @@ function devGenericCard(screen, ctx, kind, x, y, w, h){
   devLabel(card, 12, 12, w-24, DEV_WIDGET_TITLES[kind] || '', 20, 'dev-dim');
   const compact = h < 110;
   const content = devGenericContent(kind);
+  if(kind==='ai_cost' && !compact){
+    const t=live.telemetry||{}, metrics=new Set(draft.ai_cost?.metrics||['today','turn','model']);
+    const rows=[];
+    const total=Number(t.aitok ?? Number(t.ait||0)*1000);
+    if(!total) rows.push('今日暂无用量');
+    else {
+      if(metrics.has('today')) rows.push(total>=1e6?`今日累计 ${(total/1e6).toFixed(1)}M`:`今日累计 ${Math.floor(total/1000)}k`);
+      if(metrics.has('turn') && Number(t.aiout)>0) rows.push(`本轮输出 ${(Number(t.aiout)/1000).toFixed(1)}k`);
+      const model=String(t.aiu||'').split(',')[1];
+      if(metrics.has('model') && model) rows.push(`当前模型 ${model}`);
+      if(metrics.has('models')) for(let i=0;i<3;i++){
+        const [name,tok]=String(t['aib'+i]||'').split(',');
+        if(name && Number(tok)>0) rows.push(`${name}  ${Number(tok)>=1e6?(Number(tok)/1e6).toFixed(1)+'M':Math.floor(Number(tok)/1000)+'k'}`);
+      }
+      if(!rows.length) rows.push('今日 0k');
+    }
+    const shown=rows.slice(0,Math.min(5,Math.max(1,Math.floor((h-56)/(h>=300?44:30)))));
+    shown.forEach((line,i)=>devLabel(card,12,h>=300 && shown.length>1 ? 62+i*(h-154)/(shown.length-1) : 44+i*30,
+        w-24,line,h>=300?(i===0?32:24):20,null,i===0?ctx.accent:ctx.text));
+    if(Number(t.inbox)>0) devLabel(card,12,h-40,w-24,`待处理 ${t.inbox} 件`,20,'dev-dim');
+    return card;
+  }
   // 大时钟卡（非紧凑 + 宽度够）：32px 时间 + 右栏「周X / YYYY/M/D」
   if(kind === 'clock' && !compact && w >= 280){
     const wd = devWeekday(devDateText());
@@ -1470,6 +1519,7 @@ function devFreePage(screen, ctx, page){
 function devBodyLayout(page){
   if(page.widgets.includes('ai_list')) return [{kind:'ai_list'}];
   if(page.widgets.includes('hw_cards')) return [{kind:'hw_cards'}];
+  if(page.widgets.includes('control')) return [{kind:'control'}];
   const slots = page.widgets.reduce((n,k) => n + devWidgetUnits(k), 0);
   const rows = Math.max(1, Math.min(2, Math.ceil(slots/2)));
   const cardH = Math.floor((DEV.BODY_H - (rows-1)*DEV.GRID_GAP) / rows);
@@ -1491,9 +1541,51 @@ function devBodyLayout(page){
   return out;
 }
 
+function devControlPage(screen, ctx){
+  const y=DEV.BODY_Y, info=live.music?.now||{};
+  const body=devAbs(el('div','dev-el dev-control-scroll'),8,y,304,DEV.BODY_H);
+  screen.append(body);
+  const music=devCard(body,0,0,304,176);
+  devLabel(music,12,8,120,'音乐',20,'dev-dim');
+  devLabel(music,184,10,108,info.title?(info.playing?'播放中':'已暂停'):'无曲目',18,'dev-dim',null,'right');
+  devLabel(music,12,38,280,info.title||'未在播放',24,'dev-ink');
+  const position=Math.floor(info.position||0), duration=Math.floor(info.duration||0);
+  const progress=duration>0 ? `${Math.floor(position/60)}:${String(position%60).padStart(2,'0')} / ${Math.floor(duration/60)}:${String(duration%60).padStart(2,'0')}` : `${Math.floor(position/60)}:${String(position%60).padStart(2,'0')}`;
+  devLabel(music,12,70,280,info.title?(info.artist||'未知歌手'):'打开播放器并选择歌曲',18,'dev-dim');
+  devLabel(music,12,96,280,info.title?progress:'',18,'dev-dim');
+  devTrack(music,12,120,280,info.duration>0 ? 100*(info.position||0)/info.duration : 0,ctx.accent);
+  [['上一首',8,88],[info.title?(info.playing?'暂停':'播放'):'打开音乐',104,96],['下一首',208,88]].forEach(([txt,x,w],i)=>{
+    const b=devCard(music,x,132,w,38);
+    if(!info.title && i!==1) b.style.opacity='.5';
+    devLabel(b,0,5,w,txt,20,'dev-ink',null,'center');
+  });
+  const vol=devCard(body,0,184,304,90);
+  devLabel(vol,12,8,280,'电脑音量',20,'dev-dim');
+  const volume=live.telemetry?.vol;
+  devTrack(vol,12,34,280,Number.isFinite(Number(volume))?Number(volume):0,ctx.accent);
+  [['−',8,54],[volume===undefined?'--':`${volume}%`,70,88],['+',160,50],[live.telemetry?.mut===1?'已静音':'静音',216,80]].forEach(([txt,x,w])=>{
+    const b=devCard(vol,x,40,w,42); devLabel(b,0,5,w,txt,20,'dev-ink',null,'center');
+  });
+  const bright=devCard(body,0,282,304,90);
+  devLabel(bright,12,8,280,'屏幕亮度',20,'dev-dim');
+  [['−',8,54],[`${draft.theme?.bright||90}%`,70,88],['+',166,54]].forEach(([txt,x,w])=>{
+    const b=devCard(bright,x,40,w,42); devLabel(b,0,5,w,txt,20,'dev-ink',null,'center');
+  });
+  const apps=draft.apps||[], rows=Math.ceil(apps.length/3);
+  const launch=devCard(body,0,380,304,44+(rows?rows*68:38));
+  devLabel(launch,12,8,280,'快捷应用',20,'dev-dim');
+  if(!apps.length) devLabel(launch,12,38,280,'暂无快捷应用',20,'dev-dim');
+  apps.slice(0,12).forEach((app,i)=>{
+    const x=6+(i%3)*100, yy=38+Math.floor(i/3)*68;
+    const b=devCard(launch,x,yy,92,60);
+    devLabel(b,0,12,92,app.name||app.id,20,'dev-ink',null,'center');
+  });
+}
+
 /* 一整屏：顶栏 + 内容 + 页脚，全部按固件坐标摆放。 */
 function devScreen(pageIndex, theme, host){
   const page = (draft.pages||[])[pageIndex] || (draft.pages||[])[0];
+  const controlScroll = host?.querySelector('.dev-control-scroll')?.scrollTop || 0;
   // host 是页面上已有的 .screen 容器；给了就填进去，不再套一层 bezel
   // （HTML 里已经是 .screen-scale > .screen-bezel > .screen 的结构）。
   const screen = host || el('div','screen');
@@ -1538,21 +1630,27 @@ function devScreen(pageIndex, theme, host){
     if(slot.kind === 'weather' && page.city){ devWeatherCity(screen, ctx, page); continue }
     if(slot.kind === 'pet'){ devPetPage(screen, ctx); continue }
     if(slot.kind === 'hw_cards'){ devHwPage(screen, ctx); continue }
+    if(slot.kind === 'control'){ devControlPage(screen, ctx); continue }
     devGenericCard(screen, ctx, slot.kind, slot.x, slot.y, slot.w, slot.h);
   }
-  // 页脚：左下角「设」按钮 + 居中页码（视觉 32×22，间距 10）
-  devLabel(screen, 4, DEV.FOOT_Y-2, 40, '设', 20, null, ctx.text, 'center');
+  const scroller=screen.querySelector('.dev-control-scroll');
+  if(scroller) scroller.scrollTop=controlScroll;
+  // 页脚：超过 6 页只展示当前页附近的 5 个页码。
   const counts = (draft.pages||[]).length;
-  const total = counts*DEV.DOT_W + (counts-1)*DEV.DOT_GAP;
+  const first=counts>6 ? Math.min(Math.max(0,pageIndex-2),counts-5) : 0;
+  const visible=counts>6 ? 5 : counts;
+  const dotW=counts>=5 ? 24 : DEV.DOT_W, dotGap=counts>=5 ? 6 : DEV.DOT_GAP;
+  const total = visible*dotW + (visible-1)*dotGap;
   const x0 = Math.floor((DEV.W-total)/2);
-  (draft.pages||[]).forEach((_,k) => {
+  (draft.pages||[]).slice(first,first+visible).forEach((_,j) => {
+    const k=first+j;
     const on = k === pageIndex;
-    const dot = devAbs(el('div','dev-el'), x0 + k*(DEV.DOT_W+DEV.DOT_GAP), DEV.FOOT_Y, DEV.DOT_W, DEV.DOT_H);
+    const dot = devAbs(el('div','dev-el'), x0 + j*(dotW+dotGap), DEV.FOOT_Y, dotW, DEV.DOT_H);
     dot.style.background = on ? ctx.accent : panelHex(theme.card);
     dot.style.borderRadius = '6px';
     dot.style.border = '1px solid ' + panelHex(theme.card_edge||theme.card);
     screen.append(dot);
-    devLabel(dot, 0, 0, DEV.DOT_W, String(k+1), 20, null,
+    devLabel(dot, 0, 0, dotW, String(k+1), 20, null,
              on ? ctx.bg : ctx.text, 'center');
   });
   return screen;
@@ -2296,8 +2394,8 @@ function renderWeatherSearch(results, q){
 /* ================= 设置 · 宠物 =================
    状态在客户端 pet.py（本机持久化，惰性衰减），设备只负责显示+触控。
    类型/名字走 profile（/api/pet-config），设备重建宠物形象。 */
-const PET_TYPES = {robot:'机器人', cat:'小猫', chick:'小鸡'};
-const PET_FACES = {robot:'🤖', cat:'🐱', chick:'🐤'};
+const PET_TYPES = {robot:'机器人', cat:'小猫', chick:'小鸡', dog:'小狗'};
+const PET_FACES = {robot:'🤖', cat:'🐱', chick:'🐤', dog:'🐶'};
 let petCache = null;
 function renderPetTab(){
   const types=$('pet-types'); if(!types) return;
@@ -2317,11 +2415,6 @@ function renderPetTab(){
   // 昼夜自动切包：仅在选项已填充时回填（refreshPetPacks 填充后也会再对一次）
   const ap=$('pet-autopack');
   if(ap) ap.checked=!!draft.pet?.autopack;
-  // 久坐提醒
-  const bo=$('pet-break-on'), bm=$('pet-break-min');
-  if(bo) bo.checked=!!(draft.pet?.break_min);
-  if(bm){const v=draft.pet?.break_min||45;bm.value=v;
-    const ov=$('pet-break-val');if(ov)ov.textContent=v+' 分钟';}
   ['pet-pack-day','pet-pack-night','pet-pack-weather'].forEach((id,i)=>{
     const keys=['day_pack','night_pack','weather_pack'];
     const sel=$(id), v=draft.pet?.[keys[i]];
@@ -2357,10 +2450,36 @@ async function petRefresh(){
   renderPetStats();
 }
 
+let healthEditing=false;
 function renderSettings(){
   renderMusic();renderMusicNow();
-  renderWeatherTab(); petRefresh(); renderPetTab();
+  renderWeatherTab(); petRefresh(); renderPetTab(); renderHealthTab(!healthEditing);
   switchSettingsTab(settingsTab);
+}
+function renderHealthTab(fill=false){
+  const p=live?.profile?.pet||{};
+  if(fill){
+    $('pet-break-on').checked=!!p.break_min;
+    $('pet-break-min').value=p.break_min||45;
+    $('health-rest-min').value=p.rest_min||5;
+    $('health-desktop-notify').checked=p.desktop_notify!==0;
+  }
+  $('pet-break-val').textContent=$('pet-break-min').value+' 分钟';
+  $('health-rest-val').textContent=$('health-rest-min').value+' 分钟';
+  const h=live?.work_break||{};
+  const labels={off:'提醒已关闭',unavailable:'无法读取键鼠活动',working:'电脑使用中',break:'暂离电脑',due:'该活动、休息了',snoozed:'提醒已延后',rested:'已完成休息'};
+  $('health-live-status').textContent=`${labels[h.state]||'等待数据'} · 本轮使用 ${h.work_minutes||0} 分钟${h.due?' · 已提醒':''}`;
+  const target=Math.max(1,Number(h.work_target_minutes)||45)*60;
+  $('health-work-progress').value=Math.min(100,Math.round((Number(h.work_seconds)||0)/target*100));
+  $('health-snooze').hidden=!h.due;
+  const restLeft=Math.max(0,Math.ceil(((h.rest_target_minutes||5)*60-(Number(h.rest_seconds)||0))/60));
+  const snoozeLeft=Math.max(0,Math.ceil(((Number(h.snoozed_until)||0)*1000-Date.now())/60000));
+  $('health-live-detail').textContent=h.state==='off'?'启用后开始记录本轮电脑使用时间。'
+    :h.state==='unavailable'?'当前系统无法读取键鼠活动；不会推测工作时长。'
+    :h.state==='rested'?'休息已完成；下次使用电脑时开始新一轮。'
+    :h.state==='snoozed'?`仍在本轮工作中；约 ${snoozeLeft} 分钟后再次提醒。`
+    :h.due?`已达到提醒时间；离开电脑后约 ${restLeft} 分钟完成休息。`
+    :`距活动提醒约 ${Math.max(0,Math.ceil((target-(Number(h.work_seconds)||0))/60))} 分钟；短暂离开会暂停计时。`;
 }
 function renderEntries(key){
   const root=$(key+'-list');root.replaceChildren();
@@ -2593,6 +2712,16 @@ function renderOverview(){
   $('ov-device-state').textContent=connected?'已连接':'未连接';
   $('ov-device-state').className='ov-device-state'+(connected?' ok':'');
   $('ov-device-sub').textContent=connected?live.device.replace('connected:','串口 '):'等待 ESP32-S3 小屏通过 USB 接入。';
+  const sensor=live.sensors||{};
+  const sensorParts=[];
+  if(connected){
+    sensorParts.push(`环境来源 ${sensor.env_source||'待检测'}`);
+    if(sensor.temp!=null&&Number.isFinite(Number(sensor.temp)))sensorParts.push(`${Number(sensor.temp).toFixed(1)}℃`);
+    if(sensor.hum!=null&&Number.isFinite(Number(sensor.hum)))sensorParts.push(`湿度 ${Math.round(Number(sensor.hum))}%`);
+    if(sensor.pressure!=null&&Number.isFinite(Number(sensor.pressure)))sensorParts.push(`气压 ${Math.round(Number(sensor.pressure))} hPa`);
+    if(sensor.distance!=null&&Number.isFinite(Number(sensor.distance)))sensorParts.push(`距离 ${Math.round(Number(sensor.distance))} mm`);
+  }
+  $('ov-sensors').textContent=sensorParts.join(' · ');
   $('ov-version').textContent=`v${saved?.version||'—'}`;
   $('ov-applied').textContent=live.applied_version?`设备已应用 v${live.applied_version}`:'设备尚未应用配置';
   $('ov-task-count').textContent=`${tasks.length} 个进行中`;
@@ -2966,7 +3095,7 @@ async function renderMusic(){
   sel.value=configured;
   if(note){
     if(!info.supported){
-      note.textContent='当前系统不支持统一读取播放信息（仅 macOS 支持）。';
+      note.textContent='当前系统无法读取播放信息；控制按钮仍可使用。';
     }else if(!(info.apps||[]).length){
       note.textContent='没有在本机发现音乐软件；可在下方「快捷应用」里直接填启动命令。';
     }else{
@@ -2983,7 +3112,7 @@ function renderMusicNow(){
   const data=info.now||{};
   if(info.supported===false){
     pill.textContent='控制可用';
-    now.textContent='播放控制正常；为保证上位机稳定，暂不读取曲名与进度。';
+    now.textContent='暂时无法读取曲名与进度；请检查播放器是否已开始播放。';
     return
   }
   if(!data.title){
@@ -3004,6 +3133,7 @@ const SETTINGS_TABS = {
   music:  ['stab-music', 'spane-music'],
   weather:['stab-weather','spane-weather'],
   pet:   ['stab-pet',   'spane-pet'],
+  health:['stab-health','spane-health'],
   system: ['stab-system','spane-system'],
 };
 let settingsTab = 'music';
@@ -3100,7 +3230,7 @@ function renderTaskView(){
 /* ================= 轮询与保存 ================= */
 function render(){
   renderOverview();
-  if(currentView==='settings'){renderMusicNow();renderSelfcheck()}
+  if(currentView==='settings'){renderMusicNow();renderSelfcheck();renderHealthTab()}
   if(currentView==='tasks')renderTaskView();if(currentView==='saver')renderSaverView();if(currentView==='extras')renderExtras()}
 
 /* ================= 运行自检（设置 → 系统） =================
@@ -3220,7 +3350,22 @@ function absorb(next){
   sampleUsage();
   if(currentView==='saver'&&!$('btn-saver-detail').dataset.init){renderSaverView();$('btn-saver-detail').dataset.init='1'}
   render();
+  renderPackProgress();
   updateFreshness();
+}
+function renderPackProgress(){
+  const info=$('pet-pack-progress'), bar=$('pet-pack-progress-bar');
+  if(!info||!bar)return;
+  const p=live.pack_progress||{};
+  const active=!!p.active;
+  info.hidden=bar.hidden=!active;
+  if(active){
+    const total=Math.max(1,Number(p.total)||1), sent=Number(p.sent)||0;
+    info.textContent=`正在上传「${p.name||'角色包'}」：${sent}/${total} 张已确认 · ${p.current||'准备中'}`;
+    bar.max=total;bar.value=Math.min(total,sent);
+  }
+  const btn=$('pet-pack-apply');
+  if(btn)btn.disabled=active;
 }
 /* 优化#10：任务跨过关键节点（完成/出错/等你）时主动 toast。
    只在「状态变化 → 终态」边沿触发；轮询/SSE 重复投递同一状态不会重复提醒。 */
@@ -3538,7 +3683,7 @@ function bind(){
   $('btn-saver-cancel').onclick=()=>{sv.dial=draft.theme.saver??0;sv.mode=(draft.theme.idledim??60)===0?'always':'theme';sv.changed=false;saveSVLocal();renderSaverView();notice('已还原为当前配置的息屏设置')};
 
   // ---- 页面编排 ----
-  $('add-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);draft.pages.push({id:uniqueId('p'),title:'新页面',layout:'grid_2x2',widgets:['clock']});selected=draft.pages.length-1;markDirty()};
+  $('add-page').onclick=()=>{if(draft.pages.length>=PAGE_MAX)return notice(`最多 ${PAGE_MAX} 页`,true);draft.pages.push({id:uniqueId('p'),title:'新页面',layout:'grid_2x2',widgets:['clock']});selected=draft.pages.length-1;markDirty()};
   $('page-title').onchange=e=>{current().title=e.target.value;markDirty()};
   $('page-layout').onchange=e=>{
     current().layout=e.target.value;
@@ -3551,7 +3696,7 @@ function bind(){
     }
     markDirty(); renderPalette(); renderInspector();
   };
-  $('duplicate-page').onclick=()=>{if(draft.pages.length>=6)return notice('最多 6 页',true);const copy=structuredClone(current());copy.id=uniqueId('p');copy.title+=' 副本';draft.pages.splice(selected+1,0,copy);selected++;markDirty()};
+  $('duplicate-page').onclick=()=>{if(draft.pages.length>=PAGE_MAX)return notice(`最多 ${PAGE_MAX} 页`,true);const copy=structuredClone(current());copy.id=uniqueId('p');copy.title+=' 副本';draft.pages.splice(selected+1,0,copy);selected++;markDirty()};
   $('delete-page').onclick=()=>{if(draft.pages.length===1)return notice('至少保留 1 页',true);
     const trash=(draft._trash=JSON.parse(localStorage.getItem('workbuddy-pagetrash')||'[]'));
     trash.unshift({page:structuredClone(draft.pages[selected]),at:Date.now()});
@@ -3578,7 +3723,7 @@ function bind(){
         const b=el('button','button',`${it.page.title}（${fmtT(it.at)}）`);
         b.style.flex='1';
         b.onclick=()=>{
-          if(draft.pages.length>=6)return notice('最多 6 页，先删一页再恢复',true);
+          if(draft.pages.length>=PAGE_MAX)return notice(`最多 ${PAGE_MAX} 页，先删一页再恢复`,true);
           draft.pages.push(structuredClone(it.page));selected=draft.pages.length-1;
           const t=trashRead();t.splice(idx,1);trashWrite(t);
           markDirty();renderSafety('trash');renderPages();renderTaskPages();
@@ -3707,6 +3852,29 @@ function bind(){
   }
   $('usage-budget')?.addEventListener('input',collectAiCost);
   $('pet-break-min').oninput=e=>{const ov=$('pet-break-val');if(ov)ov.textContent=e.target.value+' 分钟';};
+  $('pet-break-min').addEventListener('input',()=>{healthEditing=true});
+  $('pet-break-on').addEventListener('change',()=>{healthEditing=true});
+  $('health-rest-min').oninput=e=>{ healthEditing=true; $('health-rest-val').textContent=e.target.value+' 分钟'; };
+  $('health-desktop-notify').onchange=()=>{healthEditing=true};
+  $('health-save').onclick=pending($('health-save'),async()=>{
+    try{
+      const workMin=$('pet-break-on').checked?Number($('pet-break-min').value):0;
+      const restMin=Number($('health-rest-min').value);
+      const desktopNotify=$('health-desktop-notify').checked?1:0;
+      const r=await request('/api/health-config',{work_min:workMin,rest_min:restMin,desktop_notify:desktopNotify});
+      if(draft) draft.pet={...(draft.pet||{}),break_min:workMin,rest_min:restMin,desktop_notify:desktopNotify};
+      healthEditing=false;
+      notice(`健康提醒已保存（v${r.version}）`);
+      poll();
+    }catch(e){notice(e.message,true)}
+  });
+  $('health-snooze').onclick=pending($('health-snooze'),async()=>{
+    try{
+      const r=await request('/api/health-action',{action:'snooze'});
+      notice(r.status||'已延后');
+      poll();
+    }catch(e){notice(e.message,true)}
+  });
   // 主题文件化：导出当前主题为 JSON；导入把 theme 段合并进草稿
   $('theme-dl').onclick=()=>{
     const a=document.createElement('a');
@@ -3762,7 +3930,7 @@ function bind(){
   document.querySelectorAll('[data-generate-widget]').forEach(button=>button.onclick=()=>{
     const kind=button.dataset.generateWidget;
     if((draft.pages||[]).some(page=>(page.widgets||[]).includes(kind))){notice('这个组件已经在小屏页面中');return}
-    if((draft.pages||[]).length>=6){notice('小屏最多 6 页，请先在“屏幕编辑”删除或合并一页',true);return}
+    if((draft.pages||[]).length>=PAGE_MAX){notice(`小屏最多 ${PAGE_MAX} 页，请先在“屏幕编辑”删除或合并一页`,true);return}
     const [title,prefix]=schedulePages[kind];
     draft.pages.push({id:uniqueId(prefix),title,layout:'grid_2x2',widgets:[kind]});
     previewPage=draft.pages.length-1;selected=previewPage;markDirty();renderExtras();
@@ -3866,7 +4034,6 @@ function bind(){
         name:$('pet-name').value.trim()||'帽子',
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
         autopack:$('pet-autopack')?.checked?1:0,
-        break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         show_stats:$('pet-show-stats')?.checked?1:0,
         show_buttons:$('pet-show-buttons')?.checked?1:0,
         density, fields,
@@ -3877,7 +4044,6 @@ function bind(){
         name:$('pet-name').value.trim()||'帽子',
         sleep:$('pet-sleep')?.checked?1:0, greet:$('pet-greet')?.checked?1:0,
         autopack:$('pet-autopack')?.checked?1:0,
-        break_min:$('pet-break-on')?.checked?($('pet-break-min')?.value||45):0,
         show_stats:$('pet-show-stats')?.checked?1:0,
         show_buttons:$('pet-show-buttons')?.checked?1:0,
         density, fields,
@@ -3963,8 +4129,8 @@ function bind(){
     try{
       const result=await request('/api/music-play',{});
       notice(result.ok
-        ? `${result.app}${result.launched?' 已启动，已发送播放指令':' 已发送播放指令'}`
-        : `没能播放：${result.reason||'系统里没有正在播放的软件'}`);
+        ? `${result.app} 已开始播放`
+        : `没能播放：${result.reason||'系统里没有正在播放的软件'}`, !result.ok);
       poll();
     }catch(err){notice(err.message,true)}
   });
@@ -4119,7 +4285,7 @@ function bind(){
       return;
     }
     packs.forEach(p=>{
-      const o=el('option','',`${p.name}（${p.frames} 帧）`); o.value=p.name; sel.append(o);
+      const o=el('option','',`${p.manifest?.display_name||p.name}（${p.frames} 帧）`); o.value=p.name; sel.append(o);
     });
   }
   async function refreshPetPacks(){
@@ -4157,8 +4323,8 @@ function bind(){
     notice(`正在应用场景包「${name}」…（约 20 秒）`);
     try{
       const r=await request('/api/petpack-apply',{name});
-      notice(r.status||`已下发 ${r.sent} 张`);
-      logHist('bg',`场景包「${name}」已应用（${r.sent} 张）`);
+      notice(r.status||`已下发 ${r.sent} 张`,!r.ok);
+      if(r.ok)logHist('bg',`场景包「${name}」已应用（${r.sent} 张）`);
     }catch(e){notice('应用失败：'+e.message,true)}
   };
   // 导入：网页读 zip → base64 → 服务端校验落盘 → 刷新列表
@@ -4212,9 +4378,15 @@ function bind(){
   // ---- 角色库全状态预览（P0-5）：卡片视图 + 九宫格 Modal ----
   const PET_CANON = ['idle','thinking','working','working_b','sleepy',
                      'sleeping','greeting','happy','error'];
+  const PET_INTERACTIONS = ['feeding','drinking','playing','idle_b','thinking_b',
+                            'sleeping_b','greeting_b','happy_b','feeding_b',
+                            'drinking_b','playing_b'];
   const PET_CANON_LABEL = {idle:'待机',thinking:'思考',working:'工作',
     working_b:'工作·双帧',sleepy:'犯困',sleeping:'睡眠',greeting:'问候',
-    happy:'开心',error:'出错'};
+    happy:'开心',error:'出错',feeding:'喂食',drinking:'喝水',playing:'玩耍',
+    idle_b:'眨眼',thinking_b:'思考表情',sleeping_b:'呼吸',greeting_b:'挥手',
+    happy_b:'开心表情',feeding_b:'进食动作',
+    drinking_b:'喝水动作',playing_b:'玩耍动作'};
   const PET_FALLBACK_DEFAULT = 'idle';
   function petUseRoles(name){
     const p = draft.pet || {}; const roles = [];
@@ -4236,7 +4408,7 @@ function bind(){
       thumb.src = `/api/petpack-thumb?name=${encodeURIComponent(p.name)}&t=${Date.now()}`;
       thumb.alt = p.name; card.append(thumb);
       const body = el('div','pet-card-body');
-      body.append(el('div','pet-card-name', p.name));
+      body.append(el('div','pet-card-name', p.manifest?.display_name||p.name));
       body.append(el('div','pet-card-meta', `${p.frames} 帧`));
       const badges = el('div','pet-card-badges');
       petUseRoles(p.name).forEach(r=> badges.append(el('span','badge use', `当前·${r}`)));
@@ -4250,11 +4422,11 @@ function bind(){
   }
   function openPetAllStates(name, packInfo){
     const mask = $('pet-allstates'); if(!mask) return;
-    $('pet-allstates-title').textContent = `全部状态 · ${name}`;
+    $('pet-allstates-title').textContent = `全部状态 · ${packInfo?.manifest?.display_name||name}`;
     const grid = $('pet-allstates-grid'); grid.replaceChildren();
     const fallbackMap = (packInfo && packInfo.fallback) || {};
     const present = new Set((packInfo && packInfo.frame_list) || []);
-    PET_CANON.forEach(st=>{
+    [...PET_CANON,...PET_INTERACTIONS.filter(st=>present.has(st))].forEach(st=>{
       const cell = el('div','pet-cell');
       cell.append(el('div','pet-cell-label', PET_CANON_LABEL[st] || st));
       const crop = el('div','pet-cell-crop');     // 设备裁切预览（320×480 竖屏, cover）
@@ -4273,7 +4445,7 @@ function bind(){
     $('pet-allstates-note').textContent = miss.length
       ? `缺帧状态（${miss.join('/')}）设备端该状态不更新、停在上一帧；预览显示其回退帧。`
         + '裁切框模拟 320×480 竖屏实际显示范围（cover 裁切）。'
-      : '9 帧齐全，设备各状态均有专属帧。裁切框模拟 320×480 竖屏实际显示范围。';
+      : `${PET_CANON.length + PET_INTERACTIONS.filter(st=>present.has(st)).length} 帧齐全，设备各状态均有专属帧。裁切框模拟 320×480 竖屏实际显示范围。`;
     mask.hidden = false;
   }
   $('pet-allstates-close').onclick = ()=>{ const m = $('pet-allstates'); if(m) m.hidden = true; };
@@ -4282,7 +4454,10 @@ function bind(){
   });
 
   // ---- 彩色角色图（图集管线）：文件名映射状态，逐张走 IMG 通道 ----
-  const PET_STATES=['working','thinking','sleeping','greeting','happy','error','idle','sleepy'];
+  const PET_STATES=['working','working_b','thinking','thinking_b','sleeping','sleeping_b',
+                    'greeting','greeting_b','happy','happy_b','error','idle','idle_b',
+                    'sleepy','feeding','feeding_b','drinking','drinking_b',
+                    'playing','playing_b'];
   const PET_IMG_KEY='workbuddy-petimg';
   const petImgSet=()=>{ try{ return new Set(JSON.parse(localStorage.getItem(PET_IMG_KEY)||'[]')); }catch(e){ return new Set() } };
   const petImgMark=names=>{ const st=petImgSet(); names.forEach(n=>st.add(n));
