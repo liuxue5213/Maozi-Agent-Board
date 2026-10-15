@@ -53,6 +53,7 @@ struct Telemetry {
         char artist[25] = "";
         int16_t pos = 0, dur = 0;
         bool playing = false;
+        uint32_t received_ms = 0;  // 本地推进进度的基准时刻
     } np;
     uint32_t done_at_ms[3] = {0, 0, 0};   // 收到该 DN 行的时刻，用于本地推进年龄
     char remind[48] = "";
@@ -87,7 +88,7 @@ struct Telemetry {
     // 服务端收件箱待处理数（页脚琥珀角标「N件」；-1 = 尚未收到）
     int inbox = -1;
     bool inbox_changed = false;
-    uint8_t pb = 0;                            // 久坐提醒（客户端输入空闲超阈值）
+    uint8_t pb = 0;                            // 连续电脑使用达到活动提醒阈值
     char ast[48] = "";                         // 今日会话数按工具（zcode:3 · claude:1）
     char afm[67] = "";                         // 焦点会话最近消息（≤22 汉字 UTF-8）
     // 天气（客户端 30 分钟刷新）
@@ -97,6 +98,8 @@ struct Telemetry {
     // AI 用量（K tokens）
     char ai_model[16] = "";
     long ai_tok_out = -1;                      // 焦点会话本轮输出
+    long ai_tok_total = -1;                    // 焦点会话本轮总量
+    char ai_title[67] = "";                    // 任务摘要（最近消息或项目名）
     long day_tok_total = -1;                   // 今日总 token
     // 分模型今日消耗（AIB0..2 = 模型名,token；按消耗降序）
     char ai_by_model[3][20] = {};

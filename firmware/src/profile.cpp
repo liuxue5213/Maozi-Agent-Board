@@ -37,6 +37,7 @@ WidgetKind widget_kind(const char* name) {
     if (!strcmp(name, "countdown")) return W_COUNTDOWN;
     if (!strcmp(name, "ai_cost")) return W_AI_COST;
     if (!strcmp(name, "pet")) return W_PET;
+    if (!strcmp(name, "control")) return W_CONTROL;
     return W_INVALID;
 }
 
@@ -87,7 +88,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
     if ((doc["schema"] | 0) != 1) return false;
     uint32_t version = doc["version"] | 0;
     JsonArrayConst pages = doc["pages"].as<JsonArrayConst>();
-    if (!version || pages.isNull() || pages.size() < 1 || pages.size() > 6) return false;
+    if (!version || pages.isNull() || pages.size() < 1 || pages.size() > 10) return false;
     reset_profile(out);
     out.version = version;
     out.page_count = pages.size();
@@ -95,7 +96,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
     JsonObjectConst pet_cfg = doc["pet"].as<JsonObjectConst>();
     if (!pet_cfg.isNull()) {
         const char* ptype = pet_cfg["type"] | "robot";
-        if (strcmp(ptype, "robot") && strcmp(ptype, "cat") && strcmp(ptype, "chick"))
+        if (strcmp(ptype, "robot") && strcmp(ptype, "cat") && strcmp(ptype, "chick") && strcmp(ptype, "dog"))
             ptype = "robot";
         copy_text(out.pet_type, sizeof(out.pet_type), ptype);
         copy_text(out.pet_name, sizeof(out.pet_name), pet_cfg["name"] | "帽子");
@@ -105,6 +106,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         out.pet_show_buttons = (pet_cfg["show_buttons"] | 1) ? 1 : 0;
         uint8_t ov = (uint8_t)constrain((int)(pet_cfg["overlay"] | 0), 0, 2);
         out.pet_overlay = ov;
+        out.pet_density = (uint8_t)constrain((int)(pet_cfg["density"] | 2), 0, 2);
         JsonArrayConst fields = pet_cfg["fields"].as<JsonArrayConst>();
         if (!fields.isNull()) {
             for (const char* field : fields) {
@@ -118,6 +120,9 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
                 else if (!strcmp(field, "turn")) code = 6;
                 else if (!strcmp(field, "today")) code = 7;
                 else if (!strcmp(field, "message")) code = 8;
+                else if (!strcmp(field, "title")) code = 9;
+                else if (!strcmp(field, "turn_total")) code = 10;
+                else if (!strcmp(field, "turn_out")) code = 6;
                 if (code) out.pet_fields[out.pet_field_n++] = code;
             }
         } else if (ov == 1) {
@@ -135,7 +140,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
         out.tv_tl_mode = tv_cfg["tl_mode"] | 0;
         out.tv_tl_time = tv_cfg["tl_time"] | 0;
         uint8_t idle_pg = tv_cfg["idle_page"] | 0;
-        out.tv_idle_page = (idle_pg <= 6) ? idle_pg : 0;
+        out.tv_idle_page = (idle_pg <= 10) ? idle_pg : 0;
         out.tv_name_mode = ((tv_cfg["name_mode"] | 0) == 1) ? 1 : 0;
         out.tv_tl_range = ((tv_cfg["tl_range"] | 0) == 1) ? 1 : 0;
         out.tv_task_detail = (uint8_t)constrain((int)(tv_cfg["task_detail"] | 0), 0, 2);
@@ -258,7 +263,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
             if (kind == W_INVALID) return false;
             for (uint8_t k = 0; k < j; ++k) if (dst.widgets[k] == kind) return false;
             dst.widgets[j] = kind;
-            uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS || kind == W_PET) ? 4 :
+            uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS || kind == W_PET || kind == W_CONTROL) ? 4 :
                 (kind == W_REMINDERS || kind == W_CALENDAR ? 2 : 1);
             units += needed;
             if (needed == 4 && dst.count != 1) return false;
@@ -268,7 +273,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
             uint8_t slot = 0;
             for (uint8_t j = 0; j < dst.count; ++j) {
                 WidgetKind kind = dst.widgets[j];
-                uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS || kind == W_PET) ? 4 :
+                uint8_t needed = (kind == W_AI_LIST || kind == W_HW_CARDS || kind == W_PET || kind == W_CONTROL) ? 4 :
                     (kind == W_REMINDERS || kind == W_CALENDAR ? 2 : 1);
                 if (needed == 2 && (slot % 2)) ++slot;
                 slot += needed;
@@ -328,7 +333,7 @@ bool decode_profile(JsonDocument& doc, DeviceProfile& out) {
 
 void set_defaults() {
     reset_profile(g_profile);
-    g_profile.page_count = 3;
+    g_profile.page_count = 4;
     copy_text(g_profile.pages[0].id, 17, "ai");
     copy_text(g_profile.pages[0].title, 25, "AI 工作台");
     g_profile.pages[0].list = true;
@@ -340,6 +345,10 @@ void set_defaults() {
     copy_text(g_profile.pages[2].title, 25, "环境");
     g_profile.pages[2].widgets[0] = W_ENVIRONMENT;
     g_profile.pages[2].widgets[1] = W_CLOCK; g_profile.pages[2].count = 2;
+    copy_text(g_profile.pages[3].id, 17, "control");
+    copy_text(g_profile.pages[3].title, 25, "控制");
+    g_profile.pages[3].list = true;
+    g_profile.pages[3].widgets[0] = W_CONTROL; g_profile.pages[3].count = 1;
 }
 
 bool load_slot(const char* filename, DeviceProfile& target) {
@@ -362,7 +371,8 @@ const char* profile_widget_name(WidgetKind kind) {
     case W_AI_LIST: return "ai_list"; case W_HW_CARDS: return "hw_cards";
     case W_CLOCK: return "clock"; case W_ENVIRONMENT: return "environment";
     case W_REMINDERS: return "reminder_list"; case W_CALENDAR: return "today_calendar";
-    case W_ALARM: return "alarm"; default: return "invalid";
+    case W_ALARM: return "alarm"; case W_CONTROL: return "control";
+    default: return "invalid";
     }
 }
 

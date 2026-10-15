@@ -18,6 +18,15 @@
 // ---- DHT11 ----
 #define PIN_DHT   4
 
+// ---- I2C 传感器（VL6180X + AHT20 + BMP280）----
+#define PIN_SSDA  47
+#define PIN_SSCL  48
+
+// ---- DS1302 RTC ----
+#define PIN_DS1302_CE  40
+#define PIN_DS1302_IO  42
+#define PIN_DS1302_CLK 41
+
 // ---- 预留（本期不启用，引脚已锁定）----
 #define PIN_LED1  1
 #define PIN_LED2  2

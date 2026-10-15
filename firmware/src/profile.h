@@ -4,7 +4,7 @@
 enum WidgetKind : uint8_t {
     W_AI_LIST, W_HW_CARDS, W_CLOCK, W_ENVIRONMENT,
     W_REMINDERS, W_CALENDAR, W_ALARM, W_WEATHER, W_COUNTDOWN, W_AI_COST,
-    W_PET, W_FREE, W_INVALID
+    W_PET, W_CONTROL, W_FREE, W_INVALID
 };
 
 // 自由布局页组件（竞品拖拽编辑器 v1：固定尺寸、坐标自由）
@@ -52,7 +52,7 @@ struct AppEntry {
 struct DeviceProfile {
     uint32_t version = 1;
     uint8_t page_count = 0;
-    PageConfig pages[6];
+    PageConfig pages[10];
     uint8_t reminder_count = 0, calendar_count = 0, alarm_count = 0, app_count = 0, countdown_count = 0;
     ScheduleItem reminders[20], calendar[50], alarms[16], countdowns[8];
     AppEntry apps[12];
@@ -66,8 +66,9 @@ struct DeviceProfile {
     uint8_t pet_show_stats = 1;    // 角色页数值行（竞品#29 显示内容勾选）
     uint8_t pet_show_buttons = 1;  // 角色页喂食/喝水/运动按钮
     uint8_t pet_overlay = 0;       // 叠加指标：0=无 1=今日Token 2=焦点会话
-    uint8_t pet_fields[4] = {};    // 1项目 2工具 3状态 4用时 5模型 6本轮输出 7今日 8最近消息
+    uint8_t pet_fields[4] = {};    // 1项目 2工具 3状态 4用时 5模型 6本轮输出 7今日 8消息 9任务摘要 10本轮总量
     uint8_t pet_field_n = 0;
+    uint8_t pet_density = 2;       // 0 单行轮播 1 双行网格 2 自动按字段数排布
     // 任务视图 tv.* 参数（竞品对齐）：AI 页渲染细节 + 空闲时切页
     uint8_t tv_other_tasks = 1;  // AI 页其他会话 3 行：1 显示 / 0 隐藏
     uint8_t tv_task_value = 0;   // 其他任务行右侧：0 用时 / 1 隐藏（仅项目名）

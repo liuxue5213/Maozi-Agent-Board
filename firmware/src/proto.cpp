@@ -185,9 +185,11 @@ void Proto::handle(const char* line) {
             bg_changed = true;
             return;
         }
-        if (!strncmp(v, "DELETE,", 8)) {          // 相册：删除 /svN.jpg
-            album_delete(v + 8);
-            bg_changed = true;
+        if (!strncmp(v, "DELETE,", 7)) {          // 删除 /svN.jpg 或 /pet_<状态>.jpg
+            bool ok = album_delete(v + 7);
+            Serial.printf("%s=IMG,%s,%s\n", ok ? "ACK" : "NAK",
+                          ok ? "DELETED" : "DELETE_FAIL", v + 7);
+            if (ok) bg_changed = true;
             return;
         }
         if (bgimg_receive_cfg(v)) bg_changed = true;
@@ -224,6 +226,7 @@ void Proto::handle(const char* line) {
         t.np.pos = fields[2] ? atoi(fields[2]) : 0;
         t.np.dur = fields[3] ? atoi(fields[3]) : 0;
         t.np.playing = fields[4] && atoi(fields[4]) == 1;
+        t.np.received_ms = millis();
         dirty = true;
         return;
     }
@@ -262,6 +265,11 @@ void Proto::handle(const char* line) {
     }
     if (!strcmp(key, "AIU")) {
         // AIU=<tool>,<model>,<elapsed> → 提取模型名展示
+        if (!*v) {
+            t.ai_model[0] = 0;
+            dirty = true;
+            return;
+        }
         char buf[64];
         strncpy(buf, v, sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = 0;
@@ -365,6 +373,21 @@ void Proto::handle(const char* line) {
         dirty = true;
         return;
     }
+    if (!strcmp(key, "AITOK")) {
+        t.day_tok_total = atol(v);           // 精确 token，覆盖兼容用的 AIT 千位数
+        dirty = true;
+        return;
+    }
+    if (!strcmp(key, "AITITLE")) {
+        snprintf(t.ai_title, sizeof(t.ai_title), "%s", v);
+        dirty = true;
+        return;
+    }
+    if (!strcmp(key, "AITOTAL")) {
+        t.ai_tok_total = *v ? atol(v) : -1;
+        dirty = true;
+        return;
+    }
     if (!strncmp(key, "AIB", 3) && key[3] >= '0' && key[3] <= '2') {
         // AIB<n>=模型名,今日token（逗号分割；名字里的逗号已由客户端截断）
         uint8_t idx = key[3] - '0';
@@ -398,7 +421,7 @@ void Proto::handle(const char* line) {
     else if (!strcmp(key, "VOL"))      t.vol = atoi(v);
     else if (!strcmp(key, "MUT"))      t.mut = atoi(v);
     else if (!strcmp(key, "AIOUT")) {
-        t.ai_tok_out = atol(v);
+        t.ai_tok_out = *v ? atol(v) : -1;
         dirty = true;
         return;
     }
