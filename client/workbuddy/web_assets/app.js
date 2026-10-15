@@ -2501,7 +2501,7 @@ function renderEntries(key){
   const count=$(key+'-count');
   if(count)count.textContent=`${items.filter(x=>x.enabled!==false).length}/${items.length} 启用`;
   if(!items.length){
-    const names={reminders:'提醒',calendar:'日程',alarms:'闹钟',countdowns:'倒计时',apps:'快捷应用'};
+    const names={reminders:'提醒',calendar:'日程',alarms:'闹钟',countdowns:'倒计时',birthdays:'生日',apps:'快捷应用'};
     root.append(el('div','empty',`还没有${names[key]||'内容'}，从下方新增。`));
     return
   }
@@ -2532,10 +2532,15 @@ function renderEntries(key){
       del.onclick=()=>{items.splice(i,1);markDirty();renderEntries(key)};
       head.append(del);row.append(head);
       const fields=el('div','schedule-entry-fields');
-      if(key==='calendar'||key==='countdowns')fields.append(input('date',item.date,'date'));
-      fields.append(input('time',item.time,'time'));
-      const textField=key==='calendar'||key==='countdowns'?'title':key==='alarms'?'label':'text';
-      fields.append(input('text',item[textField],textField,{calendar:'日程内容',countdowns:'目标名称',alarms:'闹钟名称',reminders:'提醒内容'}[key]));
+      if(key==='birthdays'){
+        fields.append(input('text',item.name,'name','称呼，如 妈妈'));
+        fields.append(input('text',item.date,'date','月-日，如 05-12'));
+      }else{
+        if(key==='calendar'||key==='countdowns')fields.append(input('date',item.date,'date'));
+        fields.append(input('time',item.time,'time'));
+        const textField=key==='calendar'||key==='countdowns'?'title':key==='alarms'?'label':'text';
+        fields.append(input('text',item[textField],textField,{calendar:'日程内容',countdowns:'目标名称',alarms:'闹钟名称',reminders:'提醒内容'}[key]));
+      }
       row.append(fields);
       if(key==='reminders'||key==='alarms'){
         const repeat=el('label','repeat','重复');const sel=el('select');
@@ -3175,7 +3180,7 @@ function openSettings(tab){
 
 /* ================= 视图路由 ================= */
 function renderExtras(){
-  ['reminders','calendar','alarms','countdowns','apps'].forEach(key=>{if(draft&&draft[key])renderEntries(key)});
+  ['reminders','calendar','alarms','countdowns','birthdays','apps'].forEach(key=>{if(draft&&draft[key])renderEntries(key)});
   document.querySelectorAll('[data-generate-widget]').forEach(button=>{
     const kind=button.dataset.generateWidget;
     const exists=(draft.pages||[]).some(page=>(page.widgets||[]).includes(kind));
@@ -3955,6 +3960,7 @@ function bind(){
       key==='alarms'?{id:uniqueId('a'),time:'09:00',label:'新闹钟',weekdays:[1,2,3,4,5,6,7],enabled:true}:
       key==='apps'?{id:uniqueId('app'),name:'新应用',command:'open -a Finder'}:
       key==='countdowns'?{id:uniqueId('c'),date:today,time:'20:00',title:'新目标',enabled:true}:
+      key==='birthdays'?{id:uniqueId('b'),name:'新生日',date:'01-01',enabled:true}:
         {id:uniqueId('r'),time:'09:00',text:'新提醒',weekdays:[1,2,3,4,5,6,7],enabled:true});
     markDirty();renderEntries(key)
   });
@@ -4244,7 +4250,7 @@ function bind(){
   $('reset-btn').onclick=()=>{
     if(!confirm('恢复默认档案？当前未保存修改会丢失。'))return;
     draft={schema:1,version:saved.version,pages:defaultPages(),
-           reminders:[],calendar:[],alarms:[],apps:[],countdowns:[],
+           reminders:[],calendar:[],alarms:[],apps:[],countdowns:[],birthdays:[],
            theme:structuredClone(DEFAULT_THEME)};
     selected=0;previewPage=0;markDirty();
   };
