@@ -280,6 +280,17 @@ class UsageScanner:
                 self.last_error = f"{type(exc).__name__}: {exc}"[:120]
             time.sleep(60)
 
+    def _root_dir(self, name: str) -> Path | None:
+        """来源根目录；未配置或为空时返回 None。
+
+        ⚠️ 绝不能让 Path("") 退化成当前目录：`Path("").is_dir()` 为真，会让
+        claude 的 glob("*/*.jsonl") 与 codex 的 rglob("rollout-*.jsonl") 去扫
+        运行目录整棵树——既慢，又会把无关的 *.jsonl 混进用量统计（在依赖真实
+        会话数据的环境里表现为「用完量用例偶发失败」）。
+        """
+        raw = str(self.roots.get(name, "") or "").strip()
+        return Path(raw) if raw else None
+
     def _scan_once(self):
         today = time.strftime("%Y-%m-%d")
         # 增量读取器只返回新增行，所以汇总也必须在同一天内累加；旧实现每次
@@ -319,8 +330,9 @@ class UsageScanner:
             by_sid = {sid: dict(values) for sid, values in self.by_sid.items()}
 
         # ZCode：rollout 增量
-        zroot = Path(self.roots.get("zcode", "")) / "rollout"
-        if zroot.is_dir():
+        zbase = self._root_dir("zcode")
+        zroot = (zbase / "rollout") if zbase else None
+        if zroot and zroot.is_dir():
             for f in zroot.glob("model-io-sess_*.jsonl"):
                 if time.time() - f.stat().st_mtime > 3 * 86400:
                     continue
@@ -364,8 +376,8 @@ class UsageScanner:
                         models["zcode"] = model
 
         # Claude：今天的 JSONL 增量
-        croot = Path(self.roots.get("claude", ""))
-        if croot.is_dir():
+        croot = self._root_dir("claude")
+        if croot and croot.is_dir():
             cutoff = time.time() - 86400
             for f in croot.glob("*/*.jsonl"):
                 try:
@@ -413,8 +425,8 @@ class UsageScanner:
         # Codex：任务状态监听早已支持；这里补齐同一 rollout 的模型与精确用量。
         # 只累计 token_usage_record（单次响应），绝不累计 token_count 中不断增长的
         # total_token_usage，否则一轮会被重复计算多次。
-        xroot = Path(self.roots.get("codex", ""))
-        if xroot.is_dir():
+        xroot = self._root_dir("codex")
+        if xroot and xroot.is_dir():
             try:
                 xfiles = xroot.rglob("rollout-*.jsonl")
                 for f in xfiles:
