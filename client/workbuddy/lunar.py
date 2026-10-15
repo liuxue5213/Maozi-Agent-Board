@@ -148,15 +148,22 @@ def solar_term(year: int, month: int, day: int) -> tuple[str, int]:
     raise ValueError("节气推算失败")
 
 
-def saver_line(y: int, m: int, d: int, now: float | None = None) -> str:
-    """屏保日期行文案：农历必带；下一节气 ≤15 天才带倒计时（对齐竞品）。"""
+def saver_line(y: int, m: int, d: int, now: float | None = None,
+               birthday_suffix: str = "") -> str:
+    """屏保日期行文案：农历必带。
+
+    生日临近（由调用方算好 —— birthday.saver_suffix）时**优先**显示生日倒计时；
+    否则下一节气 ≤15 天才带节气倒计时（对齐竞品）。
+    """
     line = f"农历{lunar_date(y, m, d)}"
+    if birthday_suffix:
+        return f"{line}·{birthday_suffix}"
     term, days = solar_term(y, m, d)
     if days <= 15:
         line += f"·距{term}还有{days}天"
     return line
 
 
-def today_line(now: float | None = None) -> str:
+def today_line(now: float | None = None, birthday_suffix: str = "") -> str:
     t = time.localtime(now if now is not None else time.time())
-    return saver_line(t.tm_year, t.tm_mon, t.tm_mday, now)
+    return saver_line(t.tm_year, t.tm_mon, t.tm_mday, now, birthday_suffix)

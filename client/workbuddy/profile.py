@@ -27,6 +27,7 @@ DEFAULT_PROFILE = {
         {"id": "control", "title": "控制", "layout": "list", "widgets": ["control"]},
     ],
     "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
+    "birthdays": [],
     "weather": {"city": ""},
     "theme": {"bg": "060A12", "grad": "0E1726", "card": "28384E", "accent": "4CC9F0",
               "text": "F1F5F9", "sub": "A6B6C9", "card_edge": "3C5070", "bright": 90},
@@ -93,6 +94,23 @@ def _days(value):
     if not isinstance(value, list) or any(type(x) is not int or x < 1 or x > 7 for x in value):
         raise ValueError("星期需为 1 到 7 的数组")
     return sorted(set(value))
+
+
+def _birthday_md(value):
+    """生日日期归一化为 MM-DD：接受 MM-DD 或 YYYY-MM-DD（年份忽略，按每年重复）。"""
+    parts = str(value or "").strip().split("-")
+    try:
+        if len(parts) == 3:
+            m, d = int(parts[1]), int(parts[2])
+        elif len(parts) == 2:
+            m, d = int(parts[0]), int(parts[1])
+        else:
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise ValueError("生日日期需为 MM-DD 或 YYYY-MM-DD") from exc
+    if not (1 <= m <= 12 and 1 <= d <= 31):
+        raise ValueError("生日日期不合法")
+    return f"{m:02d}-{d:02d}"
 
 
 def validate_profile(raw):
@@ -171,6 +189,7 @@ def validate_profile(raw):
         budget_daily_k = 0
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
+           "birthdays": [],
     "weather": {"city": ""}, "theme": {}, "smc": {"interval": 20},
     "usage": {"budget_daily_k": budget_daily_k},
     "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
@@ -413,6 +432,24 @@ def validate_profile(raw):
         clean["title"] = _label(item.get("title", ""), 48)
         out["countdowns"].append(clean)
 
+    # 生日提醒（多身份）：只存称呼 + 月-日，按年重复；客户端据「临近一个月」算屏保倒计时
+    birthdays = raw.get("birthdays", [])
+    if not isinstance(birthdays, list) or len(birthdays) > 8:
+        raise ValueError("生日最多 8 条")
+    bd_ids = set()
+    for item in birthdays:
+        if not isinstance(item, dict):
+            raise ValueError("生日格式无效")
+        bid = str(item.get("id", ""))
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,16}", bid) or bid in bd_ids:
+            raise ValueError("生日 ID 无效或重复")
+        bd_ids.add(bid)
+        name = _label(item.get("name", ""), 12)
+        if not name:
+            raise ValueError("生日需填写称呼")
+        out["birthdays"].append({"id": bid, "enabled": bool(item.get("enabled", True)),
+                                 "name": name, "date": _birthday_md(item.get("date"))})
+
     apps = raw.get("apps", [])
     if not isinstance(apps, list) or len(apps) > 12:
         raise ValueError("快捷应用最多 12 个")
@@ -612,7 +649,11 @@ def save_profile(profile):
 
 
 def encode_profile(profile):
-    payload = _payload(validate_profile(profile))
+    clean = validate_profile(profile)
+    # 生日是纯客户端特性：设备只需客户端算好的 lunar 屏保行，下发它会平白撑大
+    # CFG 包、逼近固件 JsonDocument 容量，故从线路载荷里剔除。
+    clean.pop("birthdays", None)
+    payload = _payload(clean)
     version = profile["version"]
     crc = zlib.crc32(payload) & 0xFFFFFFFF
     lines = [f"CFG=BEGIN,{version},{len(payload)},{crc:08X}\n"]

@@ -1781,10 +1781,17 @@ class App:
                     t["aitotal"] = str(acc.get("total", 0))
         t["time"] = time.strftime("%H%M%S")
         t["date"] = time.strftime("%Y-%m-%d")
-        # 农历+节气倒计时（屏保日期行；计算失败不打扰主循环）
+        # 屏保日期行：农历 + 生日/节气倒计时（生日临近优先；计算失败不打扰主循环）
         try:
             from .lunar import today_line
-            t["lunar"] = today_line(now)
+            birthday_suffix = ""
+            try:
+                from .birthday import today_suffix
+                bdays = (self.profile or {}).get("birthdays") or []
+                birthday_suffix = today_suffix(bdays, now)
+            except Exception:
+                birthday_suffix = ""
+            t["lunar"] = today_line(now, birthday_suffix)
         except Exception:
             pass
         # 连续使用电脑达到阈值 → pb=1（宠物提示休息）+ 一次性推送
