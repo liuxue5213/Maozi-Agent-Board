@@ -73,7 +73,7 @@ def test_saver_suffix_texts():
 # ---- 屏保行：生日优先于节气 ----
 
 def test_lunar_line_prioritizes_birthday():
-    line = lunar.saver_line(2026, 10, 16, birthday_suffix="妈妈生日还有4天")
+    line = lunar.saver_line(2026, 10, 16, event_suffix="妈妈生日还有4天")
     assert line.startswith("农历") and line.endswith("·妈妈生日还有4天")
     # 无生日后缀时仍是「农历…」形态
     assert lunar.saver_line(2026, 10, 16).startswith("农历")

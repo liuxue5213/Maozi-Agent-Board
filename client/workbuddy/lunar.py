@@ -148,22 +148,57 @@ def solar_term(year: int, month: int, day: int) -> tuple[str, int]:
     raise ValueError("节气推算失败")
 
 
+def _lunar_year_days(info: int) -> int:
+    days = sum(_month_days(info, m) for m in range(1, 13))
+    leap = _leap_month(info)
+    if leap:
+        days += _leap_days(info)
+    return days
+
+
+def lunar_to_solar(year: int, month: int, day: int):
+    """农历 (年, 月, 日) → 公历 datetime.date（不含闰月；与 lunar_date 互逆）。
+
+    用于按农历固定的节日（春节/元宵/端午/七夕/中秋/重阳…）。
+    """
+    import datetime
+    if not 1900 <= year <= 2100:
+        raise ValueError("农历年表只覆盖 1900-2100")
+    offset = sum(_lunar_year_days(_LUNAR_INFO[y - 1900])
+                 for y in range(1900, year))
+    info = _LUNAR_INFO[year - 1900]
+    leap = _leap_month(info)
+    for m in range(1, month):
+        offset += _month_days(info, m)
+        if leap and m == leap:
+            offset += _leap_days(info)
+    offset += day - 1
+    return datetime.date(1900, 1, 31) + datetime.timedelta(days=offset)
+
+
+def term_date(year: int, index: int):
+    """第 index 个节气（0=小寒…6=清明…23=冬至）在 year 年的公历日期。"""
+    import datetime
+    m, d = _term_day(year, index)
+    return datetime.date(year, m, d)
+
+
 def saver_line(y: int, m: int, d: int, now: float | None = None,
-               birthday_suffix: str = "") -> str:
+               event_suffix: str = "") -> str:
     """屏保日期行文案：农历必带。
 
-    生日临近（由调用方算好 —— birthday.saver_suffix）时**优先**显示生日倒计时；
-    否则下一节气 ≤15 天才带节气倒计时（对齐竞品）。
+    有 `event_suffix`（调用方算好的生日/节日倒计时，如「妈妈生日还有4天」/
+    「距元旦还有20天」）时**优先**用它；否则下一节气 ≤15 天才带节气倒计时。
     """
     line = f"农历{lunar_date(y, m, d)}"
-    if birthday_suffix:
-        return f"{line}·{birthday_suffix}"
+    if event_suffix:
+        return f"{line}·{event_suffix}"
     term, days = solar_term(y, m, d)
     if days <= 15:
         line += f"·距{term}还有{days}天"
     return line
 
 
-def today_line(now: float | None = None, birthday_suffix: str = "") -> str:
+def today_line(now: float | None = None, event_suffix: str = "") -> str:
     t = time.localtime(now if now is not None else time.time())
-    return saver_line(t.tm_year, t.tm_mon, t.tm_mday, now, birthday_suffix)
+    return saver_line(t.tm_year, t.tm_mon, t.tm_mday, now, event_suffix)

@@ -10,6 +10,8 @@ from copy import deepcopy
 from datetime import date
 from pathlib import Path
 
+from .holiday import keys as _holiday_keys
+
 PROFILE_PATH = Path.home() / ".workbuddy" / "profile.json"
 WIDGET_UNITS = {
     "ai_list": 4, "hw_cards": 4, "clock": 1, "environment": 1,
@@ -27,7 +29,7 @@ DEFAULT_PROFILE = {
         {"id": "control", "title": "控制", "layout": "list", "widgets": ["control"]},
     ],
     "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
-    "birthdays": [],
+    "birthdays": [], "holidays": [],
     "weather": {"city": ""},
     "theme": {"bg": "060A12", "grad": "0E1726", "card": "28384E", "accent": "4CC9F0",
               "text": "F1F5F9", "sub": "A6B6C9", "card_edge": "3C5070", "bright": 90},
@@ -189,7 +191,7 @@ def validate_profile(raw):
         budget_daily_k = 0
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
-           "birthdays": [],
+           "birthdays": [], "holidays": [],
     "weather": {"city": ""}, "theme": {}, "smc": {"interval": 20},
     "usage": {"budget_daily_k": budget_daily_k},
     "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
@@ -450,6 +452,21 @@ def validate_profile(raw):
         out["birthdays"].append({"id": bid, "enabled": bool(item.get("enabled", True)),
                                  "name": name, "date": _birthday_md(item.get("date"))})
 
+    # 节日（从预设目录里选）：被选中即屏保常显「距 X 还有 N 天」，无临近门槛
+    holidays = raw.get("holidays", [])
+    if not isinstance(holidays, list) or len(holidays) > 12:
+        raise ValueError("节日最多选 12 个")
+    valid_holidays = set(_holiday_keys())
+    seen_holidays = set()
+    for key in holidays:
+        hol = str(key)
+        if hol not in valid_holidays:
+            raise ValueError(f"未知节日：{hol}")
+        if hol in seen_holidays:
+            raise ValueError(f"节日重复：{hol}")
+        seen_holidays.add(hol)
+        out["holidays"].append(hol)
+
     apps = raw.get("apps", [])
     if not isinstance(apps, list) or len(apps) > 12:
         raise ValueError("快捷应用最多 12 个")
@@ -650,9 +667,10 @@ def save_profile(profile):
 
 def encode_profile(profile):
     clean = validate_profile(profile)
-    # 生日是纯客户端特性：设备只需客户端算好的 lunar 屏保行，下发它会平白撑大
-    # CFG 包、逼近固件 JsonDocument 容量，故从线路载荷里剔除。
+    # 生日/节日是纯客户端特性：设备只需客户端算好的 lunar 屏保行，下发它们会平白
+    # 撑大 CFG 包、逼近固件 JsonDocument 容量，故从线路载荷里剔除。
     clean.pop("birthdays", None)
+    clean.pop("holidays", None)
     payload = _payload(clean)
     version = profile["version"]
     crc = zlib.crc32(payload) & 0xFFFFFFFF

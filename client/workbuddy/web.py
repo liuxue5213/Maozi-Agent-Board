@@ -333,6 +333,11 @@ def start_settings_server(app, port):
             if path == "/api/pet":
                 self._json(200, app.pet.snapshot())
                 return
+            if path == "/api/holidays":
+                # 可选节日目录（设置页「节日提醒」勾选用）
+                from . import holiday as holiday_module
+                self._json(200, {"holidays": holiday_module.catalog()})
+                return
             if path == "/api/music-apps":
                 # 本机装了哪些音乐软件 + 当前默认 + 是否在跑（设置页用）
                 from . import music as music_module
