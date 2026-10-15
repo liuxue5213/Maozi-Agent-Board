@@ -1,5 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules
+import platform
+import subprocess
+
+native_readers = []
+if platform.system() == 'Darwin':
+    subprocess.run(['clang', '-fobjc-arc', '-fblocks',
+                    'workbuddy/macos_now_playing.m', '-framework', 'Foundation',
+                    '-o', 'workbuddy/macos_now_playing'], check=True)
+    native_readers.append(('workbuddy/macos_now_playing', 'workbuddy'))
+    subprocess.run(['clang', '-std=c11', 'workbuddy/macos_volume.c',
+                    '-framework', 'CoreAudio', '-framework', 'AudioToolbox',
+                    '-o', 'workbuddy/macos_volume'], check=True)
+    native_readers.append(('workbuddy/macos_volume', 'workbuddy'))
 
 hiddenimports = []
 hiddenimports += collect_submodules('workbuddy')
@@ -8,7 +21,7 @@ hiddenimports += collect_submodules('workbuddy')
 a = Analysis(
     ['workbuddy_agent.py'],
     pathex=[],
-    binaries=[],
+    binaries=native_readers,
     datas=[('workbuddy/web_assets', 'workbuddy/web_assets')],
     hiddenimports=hiddenimports,
     hookspath=[],
