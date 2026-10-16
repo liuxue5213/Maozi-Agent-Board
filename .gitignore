@@ -27,3 +27,7 @@ firmware/tools/.font-cache/*.otf
 .workbuddy-ai/
 .zcodeignore
 firmware-diag/.pio/
+
+# PyInstaller 构建期由 spec 顶层 clang 编译的原生二进制（构建产物，勿入库）
+client/workbuddy/macos_now_playing
+client/workbuddy/macos_volume
