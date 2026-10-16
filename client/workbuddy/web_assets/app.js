@@ -3183,6 +3183,7 @@ const SETTINGS_TABS = {
   music:  ['stab-music', 'spane-music'],
   weather:['stab-weather','spane-weather'],
   sensor: ['stab-sensor','spane-sensor'],
+  led:    ['stab-led','spane-led'],
   pet:   ['stab-pet',   'spane-pet'],
   health:['stab-health','spane-health'],
   system: ['stab-system','spane-system'],
@@ -3283,7 +3284,7 @@ function renderTaskView(){
 /* ================= 轮询与保存 ================= */
 function render(){
   renderOverview();
-  if(currentView==='settings'){renderMusicNow();renderSelfcheck();renderHealthTab();renderSensorPane()}
+  if(currentView==='settings'){renderMusicNow();renderSelfcheck();renderHealthTab();renderSensorPane();renderLedTab()}
   if(currentView==='tasks')renderTaskView();if(currentView==='saver')renderSaverView();if(currentView==='extras')renderExtras()}
 
 /* ================= 运行自检（设置 → 系统） =================
@@ -3321,6 +3322,16 @@ function renderSensorPane(){
                         ?`${Math.round(live.telemetry_age)} 秒前更新`:'暂无数据'],
                      ['传感器总线', s.sensor_bus||'—']]);
   const src=$('sensor-source'); if(src) src.textContent=s.env_source||'—';
+}
+/* 设置 → 灯珠：板载 RGB 灯珠的开/关与颜色（下发走下行的 RGB= 字段） */
+function renderLedTab(){
+  const on=$('led-on'); if(!on||!draft) return;
+  const led=draft.led||(draft.led={on:false,color:'4CC9F0'});
+  const hex='#'+String(led.color||'4CC9F0').replace('#','').toUpperCase();
+  on.checked=!!led.on;
+  const c=$('led-color'); if(c) c.value=hex;
+  const cv=$('led-color-val'); if(cv) cv.textContent=hex;
+  const st=$('led-state'); if(st) st.textContent=led.on?'已开启':'已关闭';
 }
 function renderSelfcheck(){
   const root=$('selfcheck-list'); if(!root||!live)return;
@@ -3970,6 +3981,13 @@ function bind(){
       notice(r.status||'已延后');
       poll();
     }catch(e){notice(e.message,true)}
+  });
+  // ---- 灯珠（板载 RGB）----
+  $('led-on').onchange=e=>{ (draft.led=draft.led||{}).on=e.target.checked; markDirty(); renderLedTab(); };
+  $('led-color').oninput=e=>{ (draft.led=draft.led||{}).color=e.target.value.replace('#','').toUpperCase(); markDirty(); renderLedTab(); };
+  $('led-apply').onclick=pending($('led-apply'),async()=>{
+    try{ await save(); await applyToDevice(); notice('灯珠设置已保存并下发到设备'); }
+    catch(e){ notice(e.message,true) }
   });
   // 主题文件化：导出当前主题为 JSON；导入把 theme 段合并进草稿
   $('theme-dl').onclick=()=>{

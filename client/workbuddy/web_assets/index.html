@@ -608,6 +608,8 @@
                 aria-selected="false" aria-controls="spane-weather">天气</button>
         <button type="button" class="tab" id="stab-sensor" role="tab"
                 aria-selected="false" aria-controls="spane-sensor">传感器</button>
+        <button type="button" class="tab" id="stab-led" role="tab"
+                aria-selected="false" aria-controls="spane-led">灯珠</button>
         <button type="button" class="tab" id="stab-pet" role="tab"
                 aria-selected="false" aria-controls="spane-pet">宠物</button>
         <button type="button" class="tab" id="stab-health" role="tab"
@@ -834,6 +836,29 @@
           <div class="entry-list" id="sensor-link"></div>
           <p class="hint">读数长期为 —— 时：确认设备在线；BMP280/AHT20 接线为 SDA=GPIO2、SCL=GPIO1；
             并已烧录带传感器读取的最新固件（本机可用 firmware/tools/i2c_sensor_probe 单独测接线）。</p>
+        </section>
+        </div>
+      </div>
+      <div class="tabpane" id="spane-led" role="tabpanel" hidden>
+        <div class="settings-pane-grid">
+        <section class="panel settings-card" aria-labelledby="led-heading">
+          <div class="panel-head">
+            <div><h2 id="led-heading">板载灯珠</h2><p class="panel-kicker">ESP32-S3 板载 WS2812 类 RGB 灯珠</p></div>
+            <span class="count-pill muted" id="led-state">已关闭</span>
+          </div>
+          <label class="field toggle">
+            <input type="checkbox" id="led-on">
+            <span>开启灯珠（关闭即熄灭）</span>
+          </label>
+          <label class="field">
+            <span>颜色 <output class="field-value" id="led-color-val">#4CC9F0</output></span>
+            <input type="color" id="led-color" value="#4CC9F0">
+          </label>
+          <div class="btn-row">
+            <button type="button" class="button primary" id="led-apply">保存并应用到设备</button>
+          </div>
+          <p class="hint">灯珠在 <b>GPIO48</b>（ESP32-S3-DevKitC-1 板载；个别版本为 GPIO38，可在 firmware/src/config.h 改 PIN_RGB）。
+            需先烧录带灯珠驱动的固件。开启后随遥测每帧下发（RGB=r,g,b），关闭即发 0,0,0 熄灭。</p>
         </section>
         </div>
       </div>
