@@ -75,6 +75,7 @@ _ORDER = [
     # 固件从未渲染它们（grep 证实），内容与 ai0 完全重复，白占约 70 字节/帧。
     "temp", "hum",
     "lunar",   # 农历+节气倒计时（屏保日期行；无值自动省略）
+    "rgb",     # 板载 RGB 灯珠（r,g,b，各 0-255；0,0,0=熄灭）
 ]
 
 
@@ -124,6 +125,17 @@ def now_playing_wire(info: dict | None) -> str:
                      str(seconds(info.get("position"))),
                      str(seconds(info.get("duration"))),
                      "1" if info.get("playing") else "0"))
+
+
+def led_wire(led) -> str:
+    """板载灯珠的下行值：{'on': bool, 'color': 'RRGGBB'} → 'r,g,b'（关闭 = '0,0,0'）。"""
+    if not isinstance(led, dict) or not led.get("on"):
+        return "0,0,0"
+    h = str(led.get("color") or "").strip().lstrip("#")
+    try:
+        return ",".join(str(int(h[i:i + 2], 16)) for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return "0,0,0"     # 颜色非法 → 按熄灭处理，绝不发脏值
 
 
 def encode_telemetry(t: dict, fw_proto=None) -> str:

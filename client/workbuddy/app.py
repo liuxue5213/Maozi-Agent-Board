@@ -1802,6 +1802,12 @@ class App:
             t["lunar"] = today_line(now, event_suffix)
         except Exception:
             pass
+        # 板载 RGB 灯珠：客户端「灯珠」面板 → 下行 RGB=r,g,b（0,0,0=熄灭）
+        try:
+            from .protocol import led_wire
+            t["rgb"] = led_wire((self.profile or {}).get("led"))
+        except Exception:
+            t["rgb"] = "0,0,0"
         # 连续使用电脑达到阈值 → pb=1（宠物提示休息）+ 一次性推送
         try:
             t["pb"] = self._break_tick(now)

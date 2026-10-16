@@ -30,6 +30,7 @@ DEFAULT_PROFILE = {
     ],
     "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
     "birthdays": [], "holidays": [],
+    "led": {"on": False, "color": "4CC9F0"},
     "weather": {"city": ""},
     "theme": {"bg": "060A12", "grad": "0E1726", "card": "28384E", "accent": "4CC9F0",
               "text": "F1F5F9", "sub": "A6B6C9", "card_edge": "3C5070", "bright": 90},
@@ -209,6 +210,7 @@ def validate_profile(raw):
     out = {"schema": 1, "version": int(raw.get("version", 1)), "pages": [],
            "reminders": [], "calendar": [], "alarms": [], "apps": [], "countdowns": [],
            "birthdays": [], "holidays": [],
+           "led": {"on": False, "color": "4CC9F0"},
     "weather": {"city": ""}, "theme": {}, "smc": {"interval": 20},
     "usage": {"budget_daily_k": budget_daily_k},
     "pet": {"type": ptype, "name": _label(pet.get("name", "") or "帽子", 12),
@@ -471,6 +473,15 @@ def validate_profile(raw):
         seen_holidays.add(hol)
         out["holidays"].append(hol)
 
+    # 板载 RGB 灯珠（客户端「灯珠」面板）：开关 + 颜色。由下行 RGB=r,g,b 生效，
+    # 不进 CFG 载荷（encode_profile 会剔除）。
+    led_raw = raw.get("led")
+    led = led_raw if isinstance(led_raw, dict) else {}
+    color = str(led.get("color", "") or "").strip().lstrip("#").upper()
+    if not re.fullmatch(r"[0-9A-F]{6}", color):
+        color = "4CC9F0"
+    out["led"] = {"on": bool(led.get("on", False)), "color": color}
+
     apps = raw.get("apps", [])
     if not isinstance(apps, list) or len(apps) > 12:
         raise ValueError("快捷应用最多 12 个")
@@ -675,6 +686,7 @@ def encode_profile(profile):
     # 撑大 CFG 包、逼近固件 JsonDocument 容量，故从线路载荷里剔除。
     clean.pop("birthdays", None)
     clean.pop("holidays", None)
+    clean.pop("led", None)   # 灯珠由下行 RGB= 字段生效，不进 CFG 载荷
     payload = _payload(clean)
     version = profile["version"]
     crc = zlib.crc32(payload) & 0xFFFFFFFF
