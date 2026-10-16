@@ -1,0 +1,2 @@
+FW=proto:0.2,n16r8,schema:1,pages:6,widgets:10,apps:12,reminders:20,calendar:50,alarms:16
+SN=none
