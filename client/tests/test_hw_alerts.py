@@ -18,16 +18,19 @@ from workbuddy.app import App
 
 
 class _FakeApp:
-    """只提供三个告警状态机用到的最小面：cfg / last / link / health。"""
+    """只提供告警状态机用到的最小面：cfg / last / link / health。"""
 
     def __init__(self, **kw):
         self.last = {}
         self.link = None
         self.events = []
+        self._last_tick_at = 0.0
         self.cfg = SimpleNamespace(
             hw_cpu_temp=kw.get("hw_cpu_temp", 85.0),
             hw_fan_min=kw.get("hw_fan_min", 1200),
-            hw_dev_off_sec=kw.get("hw_dev_off_sec", 30))
+            hw_dev_off_sec=kw.get("hw_dev_off_sec", 30),
+            hw_stale_sec=kw.get("hw_stale_sec", 60),          # 设备静默（链路在无数据）
+            hw_loop_stale_sec=kw.get("hw_loop_stale_sec", 30))  # 客户端循环冻结
         self.health = self          # 鸭子类型：event() 记录到 self.events
 
     def event(self, kind, **fields):
@@ -216,7 +219,9 @@ class StaleAlertTests(unittest.TestCase):
         app.link = SimpleNamespace(status="connected:/dev/x")
         App._update_stale_alert(app, 1000)
         app.link = SimpleNamespace(status="stale:/dev/x")
-        App._update_stale_alert(app, 1041)
+        App._update_stale_alert(app, 1020)          # 20s：未满阈值
+        self.assertFalse(app._stale_alert["active"])
+        App._update_stale_alert(app, 1041)          # 41s：告警
         self.assertTrue(app._stale_alert["active"])
         app.link = SimpleNamespace(status="connected:/dev/x")
         App._update_stale_alert(app, 1100)
@@ -239,6 +244,7 @@ class DeviceVsStaleRegressionTests(unittest.TestCase):
 
     def test_stale_status_not_counted_as_offline(self):
         app = _FakeApp(hw_dev_off_sec=5)
+        app.cfg.hw_stale_sec = 10
         app.link = SimpleNamespace(status="connected:/dev/x")
         App._update_device_alert(app, 1000)          # 锚定曾连接
         app.link = SimpleNamespace(status="stale:/dev/x")   # 静默但链路在
@@ -250,6 +256,122 @@ class DeviceVsStaleRegressionTests(unittest.TestCase):
         App._update_stale_alert(app, 1000)
         App._update_stale_alert(app, 1041)
         self.assertTrue(app._stale_alert["active"])
+
+
+class FrozenAlertTests(unittest.TestCase):
+    """数据冻结（客户端采集循环自身停滞，telemetry_age 持续增长）。
+
+    与 StaleAlertTests（设备静默：链路在但小屏不说话）互补——冻结管的是
+    循环卡死/崩溃：界面全部读数停在旧值，必须告警而非让用户误以为实时。
+    """
+
+    def test_fires_only_after_threshold_plus_15s_sustain(self):
+        app = _FakeApp()
+        app._last_tick_at = 1000.0
+        App._update_frozen_alert(app, 1020)      # age=20 < 30：未越阈
+        self.assertFalse(app._frozen_alert["active"])
+        App._update_frozen_alert(app, 1031)      # age=31 越阈，但持续仅 0s
+        self.assertFalse(app._frozen_alert["active"])
+        App._update_frozen_alert(app, 1044)      # 越阈后持续 13s：仍未满 15s
+        self.assertFalse(app._frozen_alert["active"])
+        App._update_frozen_alert(app, 1046)      # 越阈后持续 15s：告警
+        self.assertTrue(app._frozen_alert["active"])
+        self.assertEqual(app.kinds(), ["hw_alert"])
+        self.assertEqual(app.events[0][1].get("sensor"), "frozen")
+        self.assertGreaterEqual(app.events[0][1].get("age"), 30)
+
+    def test_fresh_tick_keeps_quiet(self):
+        app = _FakeApp()
+        app._last_tick_at = 1000.0
+        for t in (1002, 1005, 1010, 1020):       # 采集正常：age 始终很小
+            App._update_frozen_alert(app, t)
+        self.assertFalse(app._frozen_alert["active"])
+        self.assertEqual(app.events, [])
+
+    def test_recovers_with_hysteresis(self):
+        app = _FakeApp()
+        app._last_tick_at = 1000.0
+        App._update_frozen_alert(app, 1031)   # 越阈，since=1031
+        App._update_frozen_alert(app, 1046)   # 持续 15s → 告警
+        self.assertTrue(app._frozen_alert["active"])
+        app._last_tick_at = 2000.0                # 循环恢复：age 变负/很小
+        App._update_frozen_alert(app, 2001)
+        self.assertFalse(app._frozen_alert["active"])
+        self.assertEqual(app.kinds(), ["hw_alert", "hw_recovered"])
+
+    def test_never_sampled_keeps_quiet(self):
+        app = _FakeApp()                          # _last_tick_at = 0.0（启动阶段）
+        App._update_frozen_alert(app, 5000)
+        App._update_frozen_alert(app, 9000)
+        self.assertFalse(app._frozen_alert["active"])
+        self.assertEqual(app.events, [])
+
+    def test_disabled_when_threshold_zero(self):
+        app = _FakeApp(hw_loop_stale_sec=0)
+        app._last_tick_at = 1000.0
+        for t in range(1000, 1200, 10):
+            App._update_frozen_alert(app, t)
+        self.assertFalse(app._frozen_alert["active"])
+        self.assertEqual(app.events, [])
+
+    def test_threshold_change_resets_debounce(self):
+        app = _FakeApp()
+        app._last_tick_at = 1000.0
+        App._update_frozen_alert(app, 1031)       # 越阈，since=1031
+        app.cfg.hw_loop_stale_sec = 60            # 改阈值：旧计时作废
+        App._update_frozen_alert(app, 1040)       # 新阈值下 age=40 < 60：未越限
+        self.assertFalse(app._frozen_alert["active"])
+        App._update_frozen_alert(app, 1075)       # age=75 越限，since=1075
+        App._update_frozen_alert(app, 1091)       # 越限后持续 16s：告警
+        self.assertTrue(app._frozen_alert["active"])
+
+
+class FrozenWatchdogThreadTests(unittest.TestCase):
+    """看门狗线程契约：必须独立驱动 _update_frozen_alert，并能响应 _stop 退出。
+
+    这是"采集循环死亡时告警仍能触发"的架构保证——状态机在循环内则同生共死。
+    """
+
+    def test_watchdog_drives_alert_and_exits_on_stop(self):
+        import threading
+        app = _FakeApp()
+        app._last_tick_at = 1000.0
+        app._stop = False
+        app._frozen_interval = 0.01      # 测试缩小周期，避免等满 5s
+        calls = []
+
+        def fake_update(now):
+            calls.append(now)
+            app._stop = True          # 首次调用后即请求退出，保证测试确定性
+
+        app._update_frozen_alert = fake_update
+        th = threading.Thread(target=App._frozen_watchdog_loop, args=(app,),
+                              daemon=True)
+        th.start()
+        th.join(timeout=3.0)
+        self.assertFalse(th.is_alive())            # 收到 _stop 后必须退出
+        self.assertGreaterEqual(len(calls), 1)     # 至少驱动了一次
+
+    def test_watchdog_survives_alert_exceptions(self):
+        import threading
+        app = _FakeApp()
+        app._stop = False
+        app._frozen_interval = 0.01
+        calls = []
+
+        def boom(now):
+            calls.append(now)
+            if len(calls) >= 2:
+                app._stop = True       # 第二次异常后退出，证明循环越过异常继续
+            raise RuntimeError("watchdog must not die")
+
+        app._update_frozen_alert = boom
+        th = threading.Thread(target=App._frozen_watchdog_loop, args=(app,),
+                              daemon=True)
+        th.start()
+        th.join(timeout=3.0)
+        self.assertFalse(th.is_alive())
+        self.assertGreaterEqual(len(calls), 2)     # 异常被吞，循环继续
 
 
 if __name__ == "__main__":

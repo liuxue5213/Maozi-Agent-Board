@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -17,6 +18,7 @@ class HealthLog:
         self.day = ""
         self.path: Path | None = None
         self.count = 0
+        self._lock = threading.Lock()   # 看门狗线程与采集循环会并发写日志
 
     def _rotate(self):
         today = time.strftime("%Y-%m-%d")
@@ -26,18 +28,19 @@ class HealthLog:
             self.count = 0
 
     def event(self, kind: str, **fields):
-        try:
-            self._rotate()
-            if self.count >= DAILY_CAP or self.path is None:
-                return
-            record = {"ts": time.strftime("%H:%M:%S"), "kind": kind}
-            record.update(fields)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
-            self.count += 1
-        except OSError:
-            pass  # 日志失败绝不能影响主功能
+        with self._lock:
+            try:
+                self._rotate()
+                if self.count >= DAILY_CAP or self.path is None:
+                    return
+                record = {"ts": time.strftime("%H:%M:%S"), "kind": kind}
+                record.update(fields)
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+                self.count += 1
+            except OSError:
+                pass  # 日志失败绝不能影响主功能
 
     def recent_lines(self, days: int = 7) -> list[str]:
         """导出诊断包用：最近 N 天的日志行。"""

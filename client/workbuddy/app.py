@@ -236,6 +236,9 @@ class App:
         self._stop = False
         threading.Thread(target=self._np_loop, daemon=True,
                          name="now-playing").start()
+        # 数据冻结看门狗：必须独立于采集循环——循环卡死时其自身状态机无法报警
+        threading.Thread(target=self._frozen_watchdog_loop, daemon=True,
+                         name="frozen-watchdog").start()
         self.on_quit = None   # 托盘「退出」回调：用于停掉托盘/窗口线程
         self.window_visible = True  # 主窗口是否可见（隐藏到托盘时为 False）
 
@@ -796,6 +799,60 @@ class App:
         elif not stale and not state["active"]:
             state["since"] = None
 
+    def _update_frozen_alert(self, now: float):
+        """数据冻结状态机：客户端采集循环自身停滞（telemetry_age 持续增长）。
+
+        与 _update_stale_alert（设备静默：链路在但小屏不说话）互补——本状态机
+        管"客户端循环卡死/崩溃"：那时 self.last 停在旧值上，界面显示的一切读数
+        都已冻结，必须明确告警，而非让用户把冻结值当成实时数据。
+
+        ⚠️ 必须由看门狗线程驱动（见 _frozen_watchdog_loop）——若放在采集循环内，
+        循环一旦死亡，状态机自身也停止运行，永远无法触发。越过阈值后还需再持续
+        15s 才告警（防网络 hang 等瞬时停顿误报）；恢复走滞回；阈值变更重置；0=关闭。
+        """
+        if not hasattr(self, "_frozen_alert"):
+            self._frozen_alert = {"since": None, "active": False}
+        cfg = getattr(self, "cfg", None)
+        limit = int(getattr(cfg, "hw_loop_stale_sec", 30) or 0)
+        if getattr(self, "_frozen_thr_at", None) != limit:
+            self._frozen_thr_at = limit
+            self._frozen_alert = {"since": None, "active": False}
+        if limit <= 0:
+            return                          # 规则关闭
+        last = getattr(self, "_last_tick_at", 0.0) or 0.0
+        if last <= 0:
+            return                          # 从未成功采集过（启动阶段）：不告警
+        age = now - last
+        frozen = age >= limit
+        state = self._frozen_alert
+        if frozen and state["since"] is None:
+            state["since"] = now
+        if (frozen and not state["active"] and state["since"] is not None
+                and now - state["since"] >= 15):
+            state["active"] = True
+            self.health.event("hw_alert", sensor="frozen", age=round(age, 1))
+        elif not frozen and age <= limit - 10 and state["active"]:
+            state["active"] = False
+            state["since"] = None
+            self.health.event("hw_recovered", sensor="frozen", age=round(age, 1))
+        elif not frozen and not state["active"]:
+            state["since"] = None
+
+    def _frozen_watchdog_loop(self):
+        """数据冻结看门狗：独立于采集循环的后台线程，每 5s 检查一次
+        telemetry_age。采集循环卡死/崩溃时它自身的状态机无法报警，故由本线程
+        驱动；设备静默（链路在但无数据）归 tick 内的 _update_stale_alert，不走这里。
+        间隔可用 _frozen_interval 覆盖（测试用）；_stop 置位后当轮即退出。"""
+        interval = float(getattr(self, "_frozen_interval", 5.0) or 5.0)
+        while not self._stop:
+            try:
+                self._update_frozen_alert(time.time())
+            except Exception:
+                pass                          # 看门狗自身异常绝不能影响主程序
+            if self._stop:
+                break                         # 更新期间被要求停止：当轮即退出
+            time.sleep(interval)
+
     def inbox_items(self) -> list:
         """聚合待处理事项（加锁入口）。status_snapshot 已持有 profile_lock，
         必须走 _inbox_items_locked——普通 Lock 不可重入，否则自死锁。"""
@@ -885,6 +942,15 @@ class App:
             items.append({"id": "hw:stale", "kind": "hw", "sev": "warn",
                           "title": "数据陈旧",
                           "detail": "小屏在线但持续无新数据（疑似死机/卡顿，检查设备）"})
+        if getattr(self, "_frozen_alert", {}).get("active"):
+            age = time.time() - (getattr(self, "_last_tick_at", 0.0) or 0.0)
+            limit = int(getattr(getattr(self, "cfg", None),
+                                "hw_loop_stale_sec", 30) or 0)
+            items.append({"id": "hw:frozen", "kind": "hw", "sev": "bad",
+                          "title": "数据已冻结",
+                          "detail": (f"客户端采集停滞 {int(age)} 秒"
+                                     f"（阈值 {limit}s，读数非实时）"
+                                     if age >= 0 else "客户端采集停滞")})
         seen = self._inbox_seen()
         now2 = time.time()
         return [x for x in items
