@@ -3546,8 +3546,28 @@ async function applyToDevice(){
     if(dirty)await save(true);
     await request('/api/sync',{});
     logHist('sync',`已请求应用配置 v${saved?.version||'—'}`);
-    notice('已提交到设备，等待设备应用回执');
-    await poll();
+    renderSyncState(); // 立即反映「传输中」，按钮进入禁用+「正在应用…」
+    // 闭环：主动轮询等待设备回执（ACK→设备已应用 / NAK→同步失败）。
+    // 固件 10s 无回执会被 app.py 判为「同步失败：设备无响应（超时）」，故等 12s 足够覆盖。
+    // 后台 2.5s 轮询也会更新 live，这里显式 poll 让结论更快落地、且能拿确定性结果。
+    const deadline=Date.now()+12000;
+    let st=live.profile_status;
+    while(st!=='设备已应用'&&st!=='同步失败'&&Date.now()<deadline){
+      await new Promise(r=>setTimeout(r,500));
+      await poll();
+      st=live.profile_status;
+    }
+    if(st==='设备已应用'){
+      const ver=live.applied_version??saved?.version??'—';
+      notice(`设备已应用配置 v${ver}`);
+      logHist('sync',`设备已应用配置 v${ver}`);
+    }else if(st==='同步失败'){
+      notice(`同步失败${live.profile_error?'：'+live.profile_error:''}`,true);
+      logHist('sync',`同步失败${live.profile_error?': '+live.profile_error:''}`);
+    }else{
+      notice('已提交到设备，等待回执…（可在自检面板查看实时状态）');
+    }
+    renderSyncState();
   }catch(e){notice(e.message,true)}
 }
 function bind(){
