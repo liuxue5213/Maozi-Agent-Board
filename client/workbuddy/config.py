@@ -63,6 +63,18 @@ class Config:
     # 磁盘使用率（%）。设备角标与收件箱共用。
     hw_cpu_temp: float = 85.0
     hw_disk: int = 90
+    # 风扇异常：CPU 已达"高温阈值-10℃"（明显发热）且风扇转速持续 60s ≤ 此值
+    # （rpm）→ 判"散热异常"。0 = 关闭。低温下风扇停转是正常节能，故必须与
+    # 温度条件同时满足才告警；风扇读不到（None）时不判。
+    hw_fan_min: int = 1200
+    # 设备断连：曾连接过、随后持续掉线超过此秒数 → 判"设备离线"告警。
+    # 从未接过的设备不告警（客户端可无设备运行）。0 = 关闭。
+    hw_dev_off_sec: int = 30
+    # 数据陈旧：设备曾连接、链路仍在（connected/stale）但持续无新数据超过此秒数
+    # → 判"数据陈旧"告警（疑似设备死机/卡顿）。与 hw_dev_off_sec 互补：
+    # 断连=链路丢失；陈旧=链路在但静默。serial_link 自身已在 >15s 无数据时
+    # 把 status 置为 stale:，本阈值在其之上再加一层防抖。0 = 关闭。
+    hw_stale_sec: int = 60
     reminders: list = field(default_factory=list)  # [{"time":"09:30","text":"站会"}]
     theme: dict = field(default_factory=lambda: {
         "bg": "0B1220", "card": "141E32", "accent": "22D3EE",

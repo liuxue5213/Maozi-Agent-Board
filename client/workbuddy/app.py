@@ -680,12 +680,120 @@ class App:
             state["since"] = now
         if hot and not state["active"] and now - state["since"] >= 60:
             state["active"] = True
-            self.health.event("hw_alert", kind="cpu_temp", temp=temp)
+            self.health.event("hw_alert", sensor="cpu_temp", temp=temp)
         elif not hot and temp <= threshold - 10 and state["active"]:
             state["active"] = False
             state["since"] = None
-            self.health.event("hw_recovered", kind="cpu_temp", temp=temp)
+            self.health.event("hw_recovered", sensor="cpu_temp", temp=temp)
         elif not hot and not state["active"]:
+            state["since"] = None
+
+    def _update_fan_alert(self, now: float):
+        """风扇异常状态机：CPU 已明显发热但风扇持续低转（疑似散热故障）。
+        与 _hw_alert 同构：{since, active}、60s 防抖、滞回恢复、阈值变更重置。"""
+        if not hasattr(self, "_fan_alert"):
+            self._fan_alert = {"since": None, "active": False}
+        cfg = getattr(self, "cfg", None)
+        fan_min = int(getattr(cfg, "hw_fan_min", 1200) or 0)
+        temp_thr = float(getattr(cfg, "hw_cpu_temp", 85.0) or 85.0)
+        if getattr(self, "_fan_thr_at", None) != (fan_min, temp_thr):
+            # 阈值被调整：旧防抖计时对新阈值无意义，全部重置
+            self._fan_thr_at = (fan_min, temp_thr)
+            self._fan_alert = {"since": None, "active": False}
+        if fan_min <= 0:
+            return                          # 规则关闭
+        temp = self.last.get("cputemp")
+        fan = self.last.get("fan")
+        if not isinstance(temp, (int, float)) or not isinstance(fan, (int, float)):
+            return                          # 缺温度或风扇读数（读不到=None）：不误报
+        # 只有"已经热了"才判风扇异常——冷机风扇停转是正常节能行为
+        bad = temp >= temp_thr - 10 and fan <= fan_min
+        state = self._fan_alert
+        if bad and state["since"] is None:
+            state["since"] = now
+        if (bad and not state["active"] and state["since"] is not None
+                and now - state["since"] >= 60):
+            state["active"] = True
+            self.health.event("hw_alert", sensor="fan_stall", temp=temp, fan=fan)
+        elif not bad and state["active"]:
+            state["active"] = False
+            state["since"] = None
+            self.health.event("hw_recovered", sensor="fan_stall", temp=temp, fan=fan)
+        elif not bad and not state["active"]:
+            state["since"] = None
+
+    def _update_device_alert(self, now: float):
+        """设备断连状态机：曾连接过、随后持续掉线（链路丢失）超过阈值。
+        掉线时长从"最后一次见到在线"起算——比从首次发现掉线起算更准
+        （设备真实掉线时刻在两次 tick 之间，只能以最后一次在线为锚点）。
+        从未接过的设备不告警——客户端设计为可无设备运行。
+        注意：serial_link 的 `stale:` 状态（链路在但 >15s 无数据）不算断连，
+        交给 _update_stale_alert 处理，否则静默设备会被误报为「已断开」。"""
+        if not hasattr(self, "_dev_alert"):
+            self._dev_alert = {"since": None, "active": False}
+        if not hasattr(self, "_dev_was_up"):
+            self._dev_was_up = False
+        if not hasattr(self, "_dev_last_up"):
+            self._dev_last_up = None
+        cfg = getattr(self, "cfg", None)
+        limit = int(getattr(cfg, "hw_dev_off_sec", 30) or 0)
+        if getattr(self, "_dev_thr_at", None) != limit:
+            # 阈值被调整：旧告警状态对新阈值无意义，重置
+            self._dev_thr_at = limit
+            self._dev_alert = {"since": None, "active": False}
+        if limit <= 0:
+            return                          # 规则关闭
+        link = getattr(self, "link", None)
+        status = str(getattr(link, "status", "")) if link else ""
+        up = status.startswith("connected:")
+        stale = status.startswith("stale:")  # 链路在但 15s 无数据
+        if up or stale:
+            self._dev_was_up = True
+            self._dev_last_up = now
+        if not self._dev_was_up or self._dev_last_up is None:
+            return                          # 从未连过：不告警
+        # 仅"链路彻底丢失"（非 connected 且非 stale）算断连
+        off = not up and not stale
+        state = self._dev_alert
+        if off and not state["active"] and now - self._dev_last_up >= limit:
+            state["active"] = True
+            self.health.event("hw_alert", sensor="device_offline")
+        elif (up or stale) and state["active"]:
+            state["active"] = False
+            self.health.event("hw_recovered", sensor="device_offline")
+
+    def _update_stale_alert(self, now: float):
+        """数据陈旧状态机：设备曾连接，链路仍在（connected/stale）但持续无新数据。
+        与 device_offline 互补——断连=链路丢失；陈旧=链路在但小屏静默（疑似死机/卡顿）。"""
+        if not hasattr(self, "_stale_alert"):
+            self._stale_alert = {"since": None, "active": False}
+        if not getattr(self, "_dev_was_up", False):
+            return                          # 从未连过：不告警
+        cfg = getattr(self, "cfg", None)
+        limit = int(getattr(cfg, "hw_stale_sec", 60) or 0)
+        if getattr(self, "_stale_thr_at", None) != limit:
+            self._stale_thr_at = limit
+            self._stale_alert = {"since": None, "active": False}
+        if limit <= 0:
+            return                          # 规则关闭
+        link = getattr(self, "link", None)
+        status = str(getattr(link, "status", "")) if link else ""
+        connected = status.startswith("connected:")
+        stale = status.startswith("stale:")  # 链路在但 15s 无数据
+        if not (connected or stale):
+            return                          # 链路都丢了：那是断连，归 device_offline 管
+        state = self._stale_alert
+        if stale and state["since"] is None:
+            state["since"] = now
+        if (stale and not state["active"] and state["since"] is not None
+                and now - state["since"] >= limit):
+            state["active"] = True
+            self.health.event("hw_alert", sensor="data_stale")
+        elif not stale and state["active"]:
+            state["active"] = False
+            state["since"] = None
+            self.health.event("hw_recovered", sensor="data_stale")
+        elif not stale and not state["active"]:
             state["since"] = None
 
     def inbox_items(self) -> list:
@@ -761,6 +869,22 @@ class App:
                 items.append({"id": "hw:cputemp", "kind": "hw", "sev": "bad",
                               "title": f"CPU {temp:.0f}℃",
                               "detail": f"持续高于 {limit:.0f}℃（检查风扇/负载）"})
+        if getattr(self, "_fan_alert", {}).get("active"):
+            temp = self.last.get("cputemp")
+            fan = self.last.get("fan")
+            if isinstance(temp, (int, float)) and isinstance(fan, (int, float)):
+                fan_min = int(getattr(getattr(self, "cfg", None), "hw_fan_min", 1200) or 0)
+                items.append({"id": "hw:fan", "kind": "hw", "sev": "bad",
+                              "title": f"风扇 {int(fan)} rpm",
+                              "detail": f"CPU {temp:.0f}℃ 但风扇低于 {fan_min} rpm（散热异常）"})
+        if getattr(self, "_dev_alert", {}).get("active"):
+            items.append({"id": "hw:device", "kind": "hw", "sev": "warn",
+                          "title": "设备已断开",
+                          "detail": "小屏曾连接，现持续离线（检查 USB 线/供电）"})
+        if getattr(self, "_stale_alert", {}).get("active"):
+            items.append({"id": "hw:stale", "kind": "hw", "sev": "warn",
+                          "title": "数据陈旧",
+                          "detail": "小屏在线但持续无新数据（疑似死机/卡顿，检查设备）"})
         seen = self._inbox_seen()
         now2 = time.time()
         return [x for x in items
@@ -1817,6 +1941,20 @@ class App:
         # CPU 高温告警状态机（防抖 60s + 滞回恢复）
         try:
             self._update_hw_alert(now)
+        except Exception:
+            pass
+        # 风扇异常 / 设备断连告警状态机（与 CPU 高温同构）
+        try:
+            self._update_fan_alert(now)
+        except Exception:
+            pass
+        try:
+            self._update_device_alert(now)
+        except Exception:
+            pass
+        # 数据陈旧告警状态机（链路在但静默，与 device_offline 互补）
+        try:
+            self._update_stale_alert(now)
         except Exception:
             pass
         # 收件箱待处理数：设备页脚角标（INBOX=）与 Web 红点共用
