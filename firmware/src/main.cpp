@@ -46,6 +46,9 @@ void setup() {
     sensors_init();
     display_init();
     ui_init();
+    // 板载 RGB 灯珠上电即熄灭：此前固件从不驱动该脚，灯珠会保持上电锁存色「一直亮」。
+    // 之后由客户端「灯珠」面板经下行 RGB=r,g,b 控制。
+    neopixelWrite(PIN_RGB, 0, 0, 0);
 }
 
 void send_fw_handshake() {
@@ -140,6 +143,10 @@ void loop() {
                 prefs.putString("saver_msg", proto.t.savermsg);
                 prefs.end();
             }
+        }
+        if (proto.t.led_changed) {
+            proto.t.led_changed = false;
+            neopixelWrite(PIN_RGB, proto.t.led_r, proto.t.led_g, proto.t.led_b);
         }
         if (proto.t.topbar_changed) {
             proto.t.topbar_changed = false;

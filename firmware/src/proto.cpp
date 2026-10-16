@@ -199,6 +199,17 @@ void Proto::handle(const char* line) {
     if (!strcmp(key, "TIME"))  { t.clock_hms = (uint32_t)atol(v); dirty = true; return; }
     if (!strcmp(key, "DATE"))  { snprintf(t.date, sizeof(t.date), "%s", v); dirty = true; return; }
     if (!strcmp(key, "REMIND")) { strncpy(t.remind, v, sizeof(t.remind) - 1); dirty = true; return; }
+    if (!strcmp(key, "RGB")) {
+        // 板载 RGB 灯珠：RGB=r,g,b（0-255）。灯珠变化不影响屏幕，直接 return、不置 dirty。
+        int r = 0, g = 0, b = 0;
+        if (sscanf(v, "%d,%d,%d", &r, &g, &b) == 3) {
+            t.led_r = (uint8_t)constrain(r, 0, 255);
+            t.led_g = (uint8_t)constrain(g, 0, 255);
+            t.led_b = (uint8_t)constrain(b, 0, 255);
+            t.led_changed = true;
+        }
+        return;
+    }
     if (!strncmp(key, "WF", 2) && key[2] >= '0' && key[2] <= '2') {
         handle_wf(key[2] - '0', v);
         return;

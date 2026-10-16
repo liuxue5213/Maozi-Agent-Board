@@ -29,6 +29,12 @@
 #define PIN_DS1302_IO  42
 #define PIN_DS1302_CLK 41
 
+// ---- 板载 RGB 灯珠（WS2812 类，单线可寻址）----
+// ESP32-S3-DevKitC-1 板载灯珠通常在 GPIO48（个别版本在 GPIO38）。换板或外接灯珠时改这里。
+// 客户端「灯珠」面板通过下行 RGB=r,g,b 控制（0,0,0 = 熄灭）；固件用 Arduino 内核自带的
+// neopixelWrite() 驱动（无需额外库）。此前无人驱动该脚 → 灯珠保持上电锁存色「一直亮」。
+#define PIN_RGB   48
+
 // ---- 预留（本期不启用）----
 // GPIO1/2 已分配给传感器 I2C，不能再作为 LED 使用。
 #define PIN_LED3  3

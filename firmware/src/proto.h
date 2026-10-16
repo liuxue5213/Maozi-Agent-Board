@@ -122,6 +122,9 @@ struct Telemetry {
     bool brightauto_changed = false;
     char savermsg[64] = "";
     bool savermsg_changed = false;
+    // 板载 RGB 灯珠（客户端「灯珠」面板；下行 RGB=r,g,b，0,0,0=熄灭）
+    uint8_t led_r = 0, led_g = 0, led_b = 0;
+    bool led_changed = false;
 
     bool cpu_temp_valid = false;
     bool gpu_valid = false;
