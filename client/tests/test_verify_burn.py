@@ -54,9 +54,18 @@ def test_evaluate_ok_sample():
     assert "AHT20" in joined
     assert "BMP280" in joined
     assert "VL6180X" in joined
+    # 新字段：led:1 / slot:ota_0
+    assert rep["led"] == "1"
+    assert rep["slot"] == "ota_0"
     assert rep["pass"] is True
-    # 三项都应为 True
-    assert all(c[1] is True for c in rep["checks"])
+    verdicts = {c[0]: c[1] for c in rep["checks"]}
+    # 版本/页面/传感器/灯珠 四项硬校验都应通过
+    assert verdicts["协议版本"] is True
+    assert verdicts["页面能力"] is True
+    assert verdicts["传感器 I2C"] is True
+    assert verdicts["灯珠能力"] is True
+    # 运行分区是信息级（None），不阻断 pass
+    assert verdicts["运行分区"] is None
 
 
 def test_evaluate_old_firmware_fails():
@@ -97,6 +106,39 @@ def test_evaluate_no_sn_line():
     verdicts = {c[0]: c[1] for c in rep["checks"]}
     assert verdicts["传感器 I2C"] is None
     # 版本与页面通过 → 整体仍视为 pass（传感器需人工看日志）
+    assert rep["pass"] is True
+
+
+def test_led_capability_present():
+    rep = VB.evaluate("FW=proto:0.3.2,pages:10,led:1,slot:ota_0")
+    verdicts = {c[0]: c[1] for c in rep["checks"]}
+    assert verdicts["灯珠能力"] is True
+    assert rep["led"] == "1"
+    assert rep["slot"] == "ota_0"
+
+
+def test_led_capability_absent_graceful():
+    # 旧固件不发出 led/slot → 降级为 None，不误判 FAIL
+    rep = VB.evaluate("FW=proto:0.3.2,pages:10")
+    verdicts = {c[0]: c[1] for c in rep["checks"]}
+    assert verdicts["灯珠能力"] is None
+    assert verdicts["运行分区"] is None
+    assert rep["pass"] is True
+
+
+def test_led_capability_disabled():
+    # led:0 表示该构建未启用板载 RGB（PIN_RGB 未定义）
+    rep = VB.evaluate("FW=proto:0.3.2,pages:10,led:0")
+    verdicts = {c[0]: c[1] for c in rep["checks"]}
+    assert verdicts["灯珠能力"] is False
+    assert rep["pass"] is False
+
+
+def test_slot_factory_informational():
+    # slot:factory 是信息级（首次 USB 烧录/回退），永不阻断 PASS
+    rep = VB.evaluate("FW=proto:0.3.2,pages:10,slot:factory")
+    verdicts = {c[0]: c[1] for c in rep["checks"]}
+    assert verdicts["运行分区"] is None
     assert rep["pass"] is True
 
 

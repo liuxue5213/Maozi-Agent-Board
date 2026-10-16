@@ -10,8 +10,11 @@
   3. 传感器 I2C 扫描命中 AHT20/BMP280/VL6180X —— 固件 config.h 已对齐
      SDA=GPIO2 / SCL=GPIO1（与旧文档的 GPIO1/2 相反；写反也能用，但首选要对齐）
 
-灯珠 RGB 不在握手里暴露能力位，烧录含 a8ca483 即支持，烧后到网页「灯珠」面板
-开关+取色验证即可（详见 P0-3 清单）。
+灯珠 RGB 能力现由握手 `led:1` 暴露（固件含 a8ca483 即会发 1），verify_burn 据此
+直接断言灯珠已烧入；运行分区由 `slot:<label>` 暴露（ota_0/ota_1/factory），
+用于确认设备跑在 OTA 槽而非 factory（信息级，不阻断 PASS）。
+
+旧固件不发出这两个字段时，对应项降级为 `·`（不误判）。
 
 用法：
   # 真机：监听开机握手（默认约 8s 超时，够设备重启后发 FW= 与 SN=）
@@ -21,12 +24,16 @@
   python3 tools/verify_burn.py --sample tools/samples/burn_ok.txt
 
   # 从管道读一行 FW=（或 SN=）
-  echo 'FW=proto:0.3.2,n16r8,schema:1,pages:10,widgets:10,apps:12' \\
+  echo 'FW=proto:0.3.2,n16r8,schema:1,pages:10,widgets:10,apps:12,led:1,slot:ota_0' \\
     | python3 tools/verify_burn.py --stdin
+
+  # 脚本化：JSON 输出（含每项 ok/msg 与顶层 pass）
+  python3 tools/verify_burn.py --sample tools/samples/burn_ok.txt --json
 """
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import time
@@ -76,7 +83,7 @@ def parse_sn_line(line: str) -> list[str]:
 
 
 def evaluate(fw_line: str, sn_line: str | None = None) -> dict:
-    """对一段握手文本做版本/能力/传感器三项校验，返回结构化结果。
+    """对一段握手文本做版本/能力/传感器/灯珠四项校验，返回结构化结果。
 
     纯函数，无 IO —— 便于离线单元测试（见 tests/test_verify_burn.py）。
     """
@@ -88,6 +95,8 @@ def evaluate(fw_line: str, sn_line: str | None = None) -> dict:
         pages_n = int(pages) if pages is not None else None
     except ValueError:
         pages_n = None
+    led_raw = fw.get("led")
+    slot = fw.get("slot")
 
     found_sensors: list[str] = []
     if sn_line:
@@ -132,8 +141,26 @@ def evaluate(fw_line: str, sn_line: str | None = None) -> dict:
             checks.append(("传感器 I2C", False,
                            f"缺失 {', '.join(missing)}（已探测：{detail}）"))
 
+    # 4) 灯珠 RGB 能力（led:1 表示固件含 a8ca483 驱动）
+    if led_raw is None:
+        checks.append(("灯珠能力", None,
+                       "握手未含 led: 字段（旧固件）；烧后到网页「灯珠」面板开关+取色验证"))
+    elif led_raw.strip() == "1":
+        checks.append(("灯珠能力", True, "led:1 —— 板载 RGB 驱动已烧入（a8ca483）"))
+    else:
+        checks.append(("灯珠能力", False,
+                       f"led:{led_raw} —— 该构建未启用板载 RGB（PIN_RGB 未定义）"))
+
+    # 5) 运行分区（信息级，永不阻断 PASS）
+    if slot is None:
+        checks.append(("运行分区", None,
+                       "握手未含 slot: 字段（旧固件）；信息级，不影响判定"))
+    else:
+        tip = "（OTA 槽，烧录生效）" if slot.startswith("ota") else "（factory，首次 USB 烧录或回退）"
+        checks.append(("运行分区", None, f"slot:{slot} {tip}"))
+
     status = all(c[1] is not False for c in checks)
-    return {"version": version, "pages": pages_n,
+    return {"version": version, "pages": pages_n, "led": led_raw, "slot": slot,
             "sensors": found_sensors, "checks": checks, "pass": status}
 
 
@@ -148,6 +175,19 @@ def _render(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _render_json(report: dict) -> str:
+    payload = {
+        "pass": report["pass"],
+        "version": ".".join(map(str, report["version"])) if report["version"] else None,
+        "pages": report["pages"],
+        "led": report["led"],
+        "slot": report["slot"],
+        "sensors": report["sensors"],
+        "checks": [{"name": n, "ok": ok, "msg": m} for n, ok, m in report["checks"]],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="烧录后固件握手校验（只读）")
     ap.add_argument("-p", "--port", default="/dev/cu.usbserial-A5069RR4")
@@ -157,6 +197,8 @@ def main() -> int:
     ap.add_argument("--sample", help="从文件读握手样本（离线演练，不连串口）")
     ap.add_argument("--stdin", action="store_true",
                     help="从 stdin 读一行 FW=（或 SN=）")
+    ap.add_argument("--json", action="store_true",
+                    help="输出 JSON（含每项 ok/msg 与顶层 pass），便于脚本/CI 消费")
     args = ap.parse_args()
 
     fw_line: str | None = None
@@ -201,7 +243,7 @@ def main() -> int:
         return 1
 
     report = evaluate(fw_line, sn_line)
-    print(_render(report))
+    print(_render_json(report) if args.json else _render(report))
     return 0 if report["pass"] else 1
 
 
