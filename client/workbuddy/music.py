@@ -397,10 +397,10 @@ def play_default(cfg, settle: float = 2.5) -> dict:
             name = app["name"]
             if launched:
                 reason = (f"已为你启动{name}并切到前台；它还没有可播放的歌曲，"
-                          f"请在里面选一首歌后再点一次「打开并发送播放」")
+                          f"请在里面选一首歌后再点一次播放")
             else:
                 reason = (f"{name}已在运行但当前没有正在播放；请在该软件里选一首歌，"
-                          f"然后再次点击「打开并发送播放」")
+                          f"然后再点一次播放")
             return {"ok": False, "app": name, "launched": launched,
                     "activated": bool(activated), "reason": reason}
         if session.get("bundle") != app["id"]:
