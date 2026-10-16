@@ -415,6 +415,12 @@ svg { display:block; }
   flex:none; width:20px; text-align:center;
   font-size:var(--fs-md); line-height:1;
 }
+.nav-group-label {
+  margin-top:var(--space-3);
+  padding:0 var(--space-3);
+  font-size:var(--fs-xs); font-weight:var(--fw-bold);
+  letter-spacing:.06em; color:var(--text-tertiary);
+}
 
 .sidebar-foot {
   margin-top:auto; padding-top:var(--space-3);
@@ -1706,6 +1712,7 @@ svg { display:block; }
   .nav::-webkit-scrollbar { display:none; }
   .nav-item { white-space:nowrap; padding:7px var(--space-2); gap:var(--space-1); }
   .nav-item.active { box-shadow:none; }
+  .nav-group-label { display:none; }
   .sidebar-foot { margin-left:auto; padding:0; border:0; }
   .ver { display:none; }
   .freshness { display:none; }
